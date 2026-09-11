@@ -1,0 +1,38 @@
+import { useEffect } from 'react';
+import { toast } from 'sonner';
+import { ErrorState, LoadingState } from '@/components/feedback';
+import { errorMessage } from '@/lib/errors';
+import { useSettings } from '../hooks/useSettings';
+import { SettingsForm } from './SettingsForm';
+
+export function SettingsPage() {
+  const settingsQuery = useSettings();
+
+  // A failed refresh keeps the form and the user's edits on screen, so it is reported with a toast
+  // as before. Only failures seen on this visit count, not one left in the cache by an earlier one.
+  useEffect(() => {
+    if (settingsQuery.isRefetchError && settingsQuery.isFetchedAfterMount) {
+      toast.error(errorMessage(settingsQuery.error, 'Failed to fetch settings'));
+    }
+  }, [settingsQuery.isRefetchError, settingsQuery.isFetchedAfterMount, settingsQuery.error]);
+
+  if (settingsQuery.isPending) {
+    return <LoadingState />;
+  }
+
+  // Only a failed first load replaces the page: there is nothing to edit yet.
+  if (settingsQuery.isLoadingError) {
+    return <ErrorState error={settingsQuery.error} onRetry={() => void settingsQuery.refetch()} />;
+  }
+
+  return (
+    <div>
+      <div className="mb-8">
+        <h1 className="text-3xl font-bold text-gray-900 mb-2">Settings</h1>
+        <p className="text-gray-600">Configure your POS system preferences</p>
+      </div>
+
+      <SettingsForm settings={settingsQuery.data} />
+    </div>
+  );
+}

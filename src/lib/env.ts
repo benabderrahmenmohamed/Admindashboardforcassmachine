@@ -1,14 +1,38 @@
-function required(name: string, value: string | undefined): string {
-  if (!value) {
-    throw new Error(`Missing ${name}: copy .env.example to .env and fill it in.`);
+import { AppError } from './errors';
+
+export type BackendKind = 'memory' | 'supabase' | 'rest';
+
+const BACKEND_KINDS: readonly string[] = ['memory', 'supabase', 'rest'];
+
+function isBackendKind(value: string): value is BackendKind {
+  return BACKEND_KINDS.includes(value);
+}
+
+/** The adapter the composition root builds, from VITE_BACKEND (default: supabase). */
+export function backendKind(): BackendKind {
+  const value = import.meta.env.VITE_BACKEND ?? 'supabase';
+  if (!isBackendKind(value)) {
+    throw new AppError(
+      'CONFIG_ERROR',
+      `VITE_BACKEND must be memory, supabase or rest; got "${value}".`,
+    );
   }
   return value;
 }
 
-export const env = {
-  supabaseUrl: required('VITE_SUPABASE_URL', import.meta.env.VITE_SUPABASE_URL).replace(/\/+$/, ''),
-  supabaseAnonKey: required('VITE_SUPABASE_ANON_KEY', import.meta.env.VITE_SUPABASE_ANON_KEY),
-};
+function required(name: string, value: string | undefined): string {
+  if (!value) {
+    throw new AppError(
+      'CONFIG_ERROR',
+      `Missing ${name}: copy .env.example to .env and fill it in.`,
+    );
+  }
+  return value;
+}
 
-// The Figma Make edge function that currently serves all catalog, settings and order data.
-export const edgeFunctionUrl = `${env.supabaseUrl}/functions/v1/make-server-81f0b18a`;
+export function supabaseEnv(): { url: string; anonKey: string } {
+  return {
+    url: required('VITE_SUPABASE_URL', import.meta.env.VITE_SUPABASE_URL).replace(/\/+$/, ''),
+    anonKey: required('VITE_SUPABASE_ANON_KEY', import.meta.env.VITE_SUPABASE_ANON_KEY),
+  };
+}

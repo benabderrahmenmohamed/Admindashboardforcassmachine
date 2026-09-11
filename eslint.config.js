@@ -5,6 +5,56 @@ import { defineConfig, globalIgnores } from 'eslint/config';
 import globals from 'globals';
 import tseslint from 'typescript-eslint';
 
+const BACKEND_MESSAGE =
+  'Reach the backend through ports (useBackend); only src/lib/backend.ts chooses an adapter.';
+
+const adapterImports = {
+  group: ['@/adapters/**', '**/adapters/**'],
+  message: BACKEND_MESSAGE,
+};
+
+const supabaseImports = {
+  group: ['@supabase/*', '@supabase/**'],
+  message: 'Supabase is an adapter detail: import it only under src/adapters/supabase.',
+};
+
+/** Backend settings are for the composition root and adapters. */
+const envImports = {
+  name: '@/lib/env',
+  importNames: ['supabaseEnv'],
+  message: BACKEND_MESSAGE,
+};
+
+// no-restricted-imports only sees static imports: these catch import() and import.meta.glob.
+const dynamicBackendImports = [
+  { selector: 'ImportExpression[source.value=/adapters|@supabase/]', message: BACKEND_MESSAGE },
+  {
+    selector: "MemberExpression[object.type='MetaProperty'][property.name=/^glob/]",
+    message: 'import.meta.glob can pull in an adapter: import modules by name.',
+  },
+];
+
+const networkGlobals = ['fetch', 'XMLHttpRequest', 'WebSocket', 'EventSource'].map((name) => ({
+  name,
+  message: BACKEND_MESSAGE,
+}));
+
+/** Adapters never import each other; what they share lives in src/lib or src/ports. */
+function otherAdapters(...names) {
+  return {
+    group: names.flatMap((name) => [
+      `@/adapters/${name}`,
+      `@/adapters/${name}/**`,
+      `../${name}`,
+      `../${name}/**`,
+    ]),
+    message: 'Adapters never import each other: share code through src/lib or src/ports.',
+  };
+}
+
+const DETERMINISTIC_MESSAGE =
+  'Domain modules stay deterministic: take the time or a random value as an argument.';
+
 export default defineConfig([
   // supabase/functions is Deno code from the Figma Make export; it is deleted once the app
   // talks to tables and RPCs directly.
@@ -25,12 +75,95 @@ export default defineConfig([
     },
   },
   {
-    // Effect-based data loading kept from the Figma Make export. The rule cannot see that the
-    // setState calls happen after an await, so every loader called from a mount effect is
-    // flagged. These pages move to TanStack Query next, which removes the pattern and this block.
-    files: ['src/app/pages/Categories.tsx', 'src/app/pages/POS.tsx', 'src/app/pages/Products.tsx'],
+    // UI, ports and shared helpers never depend on a concrete backend.
+    files: ['src/**/*.{ts,tsx}'],
+    ignores: ['src/adapters/**', 'src/lib/backend.ts'],
     rules: {
-      'react-hooks/set-state-in-effect': 'off',
+      'no-restricted-imports': [
+        'error',
+        { paths: [envImports], patterns: [adapterImports, supabaseImports] },
+      ],
+      'no-restricted-syntax': ['error', ...dynamicBackendImports],
+    },
+  },
+  {
+    // Screens, hooks and components make no requests of their own.
+    files: [
+      'src/app/**/*.{ts,tsx}',
+      'src/components/**/*.{ts,tsx}',
+      'src/features/**/*.{ts,tsx}',
+      'src/routes/**/*.{ts,tsx}',
+    ],
+    rules: {
+      'no-restricted-globals': ['error', ...networkGlobals],
+    },
+  },
+  {
+    files: ['src/adapters/memory/**/*.{ts,tsx}'],
+    rules: {
+      'no-restricted-imports': [
+        'error',
+        { patterns: [supabaseImports, otherAdapters('supabase', 'rest')] },
+      ],
+    },
+  },
+  {
+    files: ['src/adapters/supabase/**/*.{ts,tsx}'],
+    rules: {
+      'no-restricted-imports': ['error', { patterns: [otherAdapters('memory', 'rest')] }],
+    },
+  },
+  {
+    // Pure domain modules: no React, no data layer, no backend, no clock, no randomness, no I/O.
+    files: ['src/lib/money.ts', 'src/features/pos/cart.ts'],
+    rules: {
+      'no-restricted-imports': [
+        'error',
+        {
+          paths: [envImports],
+          patterns: [
+            adapterImports,
+            supabaseImports,
+            {
+              group: [
+                'react',
+                'react-dom',
+                'react-router',
+                '@tanstack/*',
+                '@/lib/backend',
+                '@/lib/backend-context',
+                '@/lib/env',
+                '@/lib/query',
+                '**/lib/backend',
+                '**/lib/backend-context',
+                '**/lib/env',
+                '**/lib/query',
+              ],
+              message: 'Domain modules stay framework-free so they run and test anywhere.',
+            },
+          ],
+        },
+      ],
+      'no-restricted-syntax': [
+        'error',
+        ...dynamicBackendImports,
+        { selector: "NewExpression[callee.name='Date']", message: DETERMINISTIC_MESSAGE },
+      ],
+      'no-restricted-properties': [
+        'error',
+        { object: 'Date', property: 'now', message: DETERMINISTIC_MESSAGE },
+        { object: 'Math', property: 'random', message: DETERMINISTIC_MESSAGE },
+        { object: 'crypto', property: 'getRandomValues', message: DETERMINISTIC_MESSAGE },
+        { object: 'crypto', property: 'randomUUID', message: DETERMINISTIC_MESSAGE },
+      ],
+      'no-restricted-globals': [
+        'error',
+        ...networkGlobals,
+        ...['localStorage', 'sessionStorage', 'indexedDB'].map((name) => ({
+          name,
+          message: 'Domain modules do no I/O.',
+        })),
+      ],
     },
   },
   {
