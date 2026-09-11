@@ -1,6 +1,6 @@
-import React, { useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useAuth } from '../contexts/AuthContext';
-import { projectId, publicAnonKey } from '/utils/supabase/info';
+import { edgeFunctionUrl, env } from '../../lib/env';
 import { Button } from '../components/ui/button';
 import { Label } from '../components/ui/label';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '../components/ui/card';
@@ -27,47 +27,41 @@ export function Settings() {
   });
 
   useEffect(() => {
-    fetchSettings();
-  }, []);
-
-  const fetchSettings = async () => {
-    try {
-      const response = await fetch(
-        `https://${projectId}.supabase.co/functions/v1/make-server-81f0b18a/settings`,
-        {
+    const fetchSettings = async () => {
+      try {
+        const response = await fetch(`${edgeFunctionUrl}/settings`, {
           headers: {
-            'Authorization': `Bearer ${publicAnonKey}`,
+            Authorization: `Bearer ${env.supabaseAnonKey}`,
           },
+        });
+        const data = (await response.json()) as { settings?: POSSettings };
+        if (response.ok && data.settings) {
+          setSettings(data.settings);
         }
-      );
-      const data = await response.json();
-      if (response.ok && data.settings) {
-        setSettings(data.settings);
+      } catch (error) {
+        console.error('Error fetching settings:', error);
+        toast.error('Failed to fetch settings');
+      } finally {
+        setLoading(false);
       }
-    } catch (error) {
-      console.error('Error fetching settings:', error);
-      toast.error('Failed to fetch settings');
-    } finally {
-      setLoading(false);
-    }
-  };
+    };
+
+    void fetchSettings();
+  }, []);
 
   const handleSave = async () => {
     setSaving(true);
     try {
-      const response = await fetch(
-        `https://${projectId}.supabase.co/functions/v1/make-server-81f0b18a/settings`,
-        {
-          method: 'PUT',
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${accessToken}`,
-          },
-          body: JSON.stringify(settings),
-        }
-      );
+      const response = await fetch(`${edgeFunctionUrl}/settings`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${accessToken}`,
+        },
+        body: JSON.stringify(settings),
+      });
 
-      const data = await response.json();
+      const data = (await response.json()) as { error?: string };
 
       if (response.ok) {
         toast.success('Settings saved successfully');
@@ -117,9 +111,13 @@ export function Settings() {
               }
               className="space-y-4"
             >
-              <Card className={`cursor-pointer transition-all ${
-                settings.mode === 'table' ? 'border-blue-600 border-2 bg-blue-50' : 'border-gray-200'
-              }`}>
+              <Card
+                className={`cursor-pointer transition-all ${
+                  settings.mode === 'table'
+                    ? 'border-blue-600 border-2 bg-blue-50'
+                    : 'border-gray-200'
+                }`}
+              >
                 <CardContent className="pt-6">
                   <div className="flex items-start gap-4">
                     <RadioGroupItem value="table" id="table" className="mt-1" />
@@ -145,9 +143,13 @@ export function Settings() {
                 </CardContent>
               </Card>
 
-              <Card className={`cursor-pointer transition-all ${
-                settings.mode === 'barcode' ? 'border-blue-600 border-2 bg-blue-50' : 'border-gray-200'
-              }`}>
+              <Card
+                className={`cursor-pointer transition-all ${
+                  settings.mode === 'barcode'
+                    ? 'border-blue-600 border-2 bg-blue-50'
+                    : 'border-gray-200'
+                }`}
+              >
                 <CardContent className="pt-6">
                   <div className="flex items-start gap-4">
                     <RadioGroupItem value="barcode" id="barcode" className="mt-1" />
@@ -208,7 +210,9 @@ export function Settings() {
                 min="0"
                 max="100"
                 value={settings.taxRate}
-                onChange={(e) => setSettings({ ...settings, taxRate: parseFloat(e.target.value) || 0 })}
+                onChange={(e) =>
+                  setSettings({ ...settings, taxRate: parseFloat(e.target.value) || 0 })
+                }
                 className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
               />
             </div>
@@ -228,7 +232,7 @@ export function Settings() {
 
         {/* Save Button */}
         <div className="flex justify-end">
-          <Button onClick={handleSave} disabled={saving} size="lg">
+          <Button onClick={() => void handleSave()} disabled={saving} size="lg">
             {saving ? (
               <>
                 <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white mr-2"></div>

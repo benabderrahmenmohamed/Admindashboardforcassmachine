@@ -1,12 +1,18 @@
-import React, { useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
+import type { FormEvent } from 'react';
 import { useAuth } from '../contexts/AuthContext';
-import { projectId, publicAnonKey } from '/utils/supabase/info';
+import { edgeFunctionUrl, env } from '../../lib/env';
 import { Button } from '../components/ui/button';
 import { Input } from '../components/ui/input';
 import { Label } from '../components/ui/label';
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card';
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '../components/ui/dialog';
-import { Badge } from '../components/ui/badge';
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from '../components/ui/dialog';
 import { toast } from 'sonner';
 import { Plus, Trash2, FolderTree } from 'lucide-react';
 
@@ -27,21 +33,14 @@ export function Categories() {
     color: '#3b82f6',
   });
 
-  useEffect(() => {
-    fetchCategories();
-  }, []);
-
   const fetchCategories = async () => {
     try {
-      const response = await fetch(
-        `https://${projectId}.supabase.co/functions/v1/make-server-81f0b18a/categories`,
-        {
-          headers: {
-            'Authorization': `Bearer ${publicAnonKey}`,
-          },
-        }
-      );
-      const data = await response.json();
+      const response = await fetch(`${edgeFunctionUrl}/categories`, {
+        headers: {
+          Authorization: `Bearer ${env.supabaseAnonKey}`,
+        },
+      });
+      const data = (await response.json()) as { categories?: Category[]; error?: string };
       if (response.ok) {
         setCategories(data.categories || []);
       } else {
@@ -55,29 +54,30 @@ export function Categories() {
     }
   };
 
-  const handleSubmit = async (e: React.FormEvent) => {
+  useEffect(() => {
+    void fetchCategories();
+  }, []);
+
+  const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
 
     try {
-      const response = await fetch(
-        `https://${projectId}.supabase.co/functions/v1/make-server-81f0b18a/categories`,
-        {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${accessToken}`,
-          },
-          body: JSON.stringify(formData),
-        }
-      );
+      const response = await fetch(`${edgeFunctionUrl}/categories`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${accessToken}`,
+        },
+        body: JSON.stringify(formData),
+      });
 
-      const data = await response.json();
+      const data = (await response.json()) as { error?: string };
 
       if (response.ok) {
         toast.success('Category created successfully');
         setIsDialogOpen(false);
         resetForm();
-        fetchCategories();
+        void fetchCategories();
       } else {
         toast.error(data.error || 'Failed to create category');
       }
@@ -91,21 +91,18 @@ export function Categories() {
     if (!confirm('Are you sure you want to delete this category?')) return;
 
     try {
-      const response = await fetch(
-        `https://${projectId}.supabase.co/functions/v1/make-server-81f0b18a/categories/${id}`,
-        {
-          method: 'DELETE',
-          headers: {
-            'Authorization': `Bearer ${accessToken}`,
-          },
-        }
-      );
+      const response = await fetch(`${edgeFunctionUrl}/categories/${id}`, {
+        method: 'DELETE',
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+        },
+      });
 
-      const data = await response.json();
+      const data = (await response.json()) as { error?: string };
 
       if (response.ok) {
         toast.success('Category deleted successfully');
-        fetchCategories();
+        void fetchCategories();
       } else {
         toast.error(data.error || 'Failed to delete category');
       }
@@ -148,10 +145,13 @@ export function Categories() {
           <h1 className="text-3xl font-bold text-gray-900 mb-2">Categories</h1>
           <p className="text-gray-600">Organize your products with categories</p>
         </div>
-        <Dialog open={isDialogOpen} onOpenChange={(open) => {
-          setIsDialogOpen(open);
-          if (!open) resetForm();
-        }}>
+        <Dialog
+          open={isDialogOpen}
+          onOpenChange={(open) => {
+            setIsDialogOpen(open);
+            if (!open) resetForm();
+          }}
+        >
           <DialogTrigger asChild>
             <Button>
               <Plus className="mr-2 h-4 w-4" />
@@ -162,7 +162,7 @@ export function Categories() {
             <DialogHeader>
               <DialogTitle>Add New Category</DialogTitle>
             </DialogHeader>
-            <form onSubmit={handleSubmit} className="space-y-4">
+            <form onSubmit={(e) => void handleSubmit(e)} className="space-y-4">
               <div className="space-y-2">
                 <Label htmlFor="name">Category Name *</Label>
                 <Input
@@ -194,10 +194,14 @@ export function Categories() {
                 </div>
               </div>
               <div className="flex justify-end gap-2">
-                <Button type="button" variant="outline" onClick={() => {
-                  setIsDialogOpen(false);
-                  resetForm();
-                }}>
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => {
+                    setIsDialogOpen(false);
+                    resetForm();
+                  }}
+                >
                   Cancel
                 </Button>
                 <Button type="submit">Create Category</Button>
@@ -219,7 +223,9 @@ export function Categories() {
             <div className="text-center py-12">
               <FolderTree className="w-12 h-12 text-gray-400 mx-auto mb-4" />
               <p className="text-gray-600 mb-2">No categories yet</p>
-              <p className="text-sm text-gray-500">Create your first category to organize products</p>
+              <p className="text-sm text-gray-500">
+                Create your first category to organize products
+              </p>
             </div>
           ) : (
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
@@ -242,7 +248,7 @@ export function Categories() {
                       <Button
                         variant="ghost"
                         size="sm"
-                        onClick={() => handleDelete(category.id)}
+                        onClick={() => void handleDelete(category.id)}
                         className="text-red-600 hover:text-red-700 hover:bg-red-50"
                       >
                         <Trash2 className="w-4 h-4" />

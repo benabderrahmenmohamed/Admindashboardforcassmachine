@@ -37,7 +37,7 @@ app.get("/make-server-81f0b18a/health", (c) => {
 // Signup route
 app.post("/make-server-81f0b18a/signup", async (c) => {
   try {
-    const { email, password, name, role } = await c.req.json();
+    const { email, password, name } = await c.req.json();
     
     if (!email || !password || !name) {
       return c.json({ error: "Email, password, and name are required" }, 400);
@@ -46,7 +46,10 @@ app.post("/make-server-81f0b18a/signup", async (c) => {
     const { data, error } = await supabase.auth.admin.createUser({
       email,
       password,
-      user_metadata: { name, role: role || 'worker' },
+      user_metadata: { name },
+      // Roles live in app_metadata, which only the service role can write. Every
+      // self-service signup is a worker; admins are promoted from the SQL editor.
+      app_metadata: { role: 'worker' },
       // Automatically confirm the user's email since an email server hasn't been configured.
       email_confirm: true
     });
@@ -104,7 +107,7 @@ app.post("/make-server-81f0b18a/products", async (c) => {
     }
 
     // Check if user is admin
-    if (user.user_metadata?.role !== 'admin') {
+    if (user.app_metadata?.role !== 'admin') {
       return c.json({ error: "Forbidden - admin role required" }, 403);
     }
 
@@ -149,7 +152,7 @@ app.put("/make-server-81f0b18a/products/:id", async (c) => {
     }
 
     // Check if user is admin
-    if (user.user_metadata?.role !== 'admin') {
+    if (user.app_metadata?.role !== 'admin') {
       return c.json({ error: "Forbidden - admin role required" }, 403);
     }
 
@@ -187,7 +190,7 @@ app.delete("/make-server-81f0b18a/products/:id", async (c) => {
     }
 
     // Check if user is admin
-    if (user.user_metadata?.role !== 'admin') {
+    if (user.app_metadata?.role !== 'admin') {
       return c.json({ error: "Forbidden - admin role required" }, 403);
     }
 
@@ -229,7 +232,7 @@ app.post("/make-server-81f0b18a/categories", async (c) => {
       return c.json({ error: "Unauthorized - admin access required" }, 401);
     }
 
-    if (user.user_metadata?.role !== 'admin') {
+    if (user.app_metadata?.role !== 'admin') {
       return c.json({ error: "Forbidden - admin role required" }, 403);
     }
 
@@ -265,7 +268,7 @@ app.delete("/make-server-81f0b18a/categories/:id", async (c) => {
       return c.json({ error: "Unauthorized - admin access required" }, 401);
     }
 
-    if (user.user_metadata?.role !== 'admin') {
+    if (user.app_metadata?.role !== 'admin') {
       return c.json({ error: "Forbidden - admin role required" }, 403);
     }
 
@@ -301,7 +304,7 @@ app.put("/make-server-81f0b18a/settings", async (c) => {
       return c.json({ error: "Unauthorized - admin access required" }, 401);
     }
 
-    if (user.user_metadata?.role !== 'admin') {
+    if (user.app_metadata?.role !== 'admin') {
       return c.json({ error: "Forbidden - admin role required" }, 403);
     }
 
@@ -381,47 +384,6 @@ app.post("/make-server-81f0b18a/orders", async (c) => {
     return c.json({ order });
   } catch (error) {
     console.log(`Error creating order: ${error}`);
-    return c.json({ error: String(error) }, 500);
-  }
-});
-
-// Update order
-app.put("/make-server-81f0b18a/orders/:id", async (c) => {
-  try {
-    const accessToken = c.req.header('Authorization')?.split(' ')[1];
-    const { data: { user }, error: authError } = await supabase.auth.getUser(accessToken);
-    
-    if (!user || authError) {
-      return c.json({ error: "Unauthorized" }, 401);
-    }
-
-    const id = c.req.param('id');
-    const existingOrder = await kv.get(`order:${id}`);
-    
-    if (!existingOrder) {
-      return c.json({ error: "Order not found" }, 404);
-    }
-
-    const updates = await c.req.json();
-    
-    // Recalculate total if items changed
-    let total = existingOrder.total;
-    if (updates.items) {
-      total = updates.items.reduce((sum: number, item: any) => sum + (item.price * item.quantity), 0);
-    }
-
-    const updatedOrder = {
-      ...existingOrder,
-      ...updates,
-      id,
-      total,
-      updatedAt: new Date().toISOString()
-    };
-
-    await kv.set(`order:${id}`, updatedOrder);
-    return c.json({ order: updatedOrder });
-  } catch (error) {
-    console.log(`Error updating order: ${error}`);
     return c.json({ error: String(error) }, 500);
   }
 });

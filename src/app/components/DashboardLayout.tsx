@@ -1,9 +1,39 @@
-import React, { useEffect } from 'react';
+import { useEffect } from 'react';
 import { Outlet, Link, useNavigate, useLocation } from 'react-router';
 import { useAuth } from '../contexts/AuthContext';
 import { Button } from './ui/button';
 import { Home, Package, FolderTree, Settings as SettingsIcon, LogOut, Menu } from 'lucide-react';
 import { Sheet, SheetContent, SheetTrigger } from './ui/sheet';
+
+const navItems = [
+  { path: '/dashboard', label: 'Dashboard', icon: Home },
+  { path: '/dashboard/products', label: 'Products', icon: Package },
+  { path: '/dashboard/categories', label: 'Categories', icon: FolderTree },
+  { path: '/dashboard/settings', label: 'Settings', icon: SettingsIcon },
+];
+
+function NavLinks({ pathname, mobile = false }: { pathname: string; mobile?: boolean }) {
+  return (
+    <nav className={mobile ? 'flex flex-col space-y-2' : 'space-y-1'}>
+      {navItems.map((item) => {
+        const Icon = item.icon;
+        const isActive = pathname === item.path;
+        return (
+          <Link
+            key={item.path}
+            to={item.path}
+            className={`flex items-center gap-3 px-4 py-3 rounded-lg transition-colors ${
+              isActive ? 'bg-blue-600 text-white' : 'text-gray-700 hover:bg-gray-100'
+            }`}
+          >
+            <Icon className="w-5 h-5" />
+            <span className="font-medium">{item.label}</span>
+          </Link>
+        );
+      })}
+    </nav>
+  );
+}
 
 export function DashboardLayout() {
   const { user, loading, logout } = useAuth();
@@ -12,17 +42,17 @@ export function DashboardLayout() {
 
   useEffect(() => {
     if (!loading && !user) {
-      navigate('/');
+      void navigate('/');
     }
     // Redirect workers to POS
     if (!loading && user && user.role === 'worker') {
-      navigate('/pos');
+      void navigate('/pos');
     }
   }, [user, loading, navigate]);
 
   const handleLogout = async () => {
     await logout();
-    navigate('/');
+    void navigate('/');
   };
 
   if (loading) {
@@ -39,36 +69,6 @@ export function DashboardLayout() {
   if (!user) {
     return null;
   }
-
-  const navItems = [
-    { path: '/dashboard', label: 'Dashboard', icon: Home },
-    { path: '/dashboard/products', label: 'Products', icon: Package },
-    { path: '/dashboard/categories', label: 'Categories', icon: FolderTree },
-    { path: '/dashboard/settings', label: 'Settings', icon: SettingsIcon },
-  ];
-
-  const NavLinks = ({ mobile = false }: { mobile?: boolean }) => (
-    <nav className={mobile ? 'flex flex-col space-y-2' : 'space-y-1'}>
-      {navItems.map((item) => {
-        const Icon = item.icon;
-        const isActive = location.pathname === item.path;
-        return (
-          <Link
-            key={item.path}
-            to={item.path}
-            className={`flex items-center gap-3 px-4 py-3 rounded-lg transition-colors ${
-              isActive
-                ? 'bg-blue-600 text-white'
-                : 'text-gray-700 hover:bg-gray-100'
-            }`}
-          >
-            <Icon className="w-5 h-5" />
-            <span className="font-medium">{item.label}</span>
-          </Link>
-        );
-      })}
-    </nav>
-  );
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -91,12 +91,8 @@ export function DashboardLayout() {
                   {user.role}
                 </span>
               </div>
-              <NavLinks mobile />
-              <Button
-                variant="outline"
-                className="w-full mt-6"
-                onClick={handleLogout}
-              >
+              <NavLinks pathname={location.pathname} mobile />
+              <Button variant="outline" className="w-full mt-6" onClick={() => void handleLogout()}>
                 <LogOut className="mr-2 h-4 w-4" />
                 Logout
               </Button>
@@ -121,14 +117,10 @@ export function DashboardLayout() {
               </span>
             </div>
 
-            <NavLinks />
+            <NavLinks pathname={location.pathname} />
 
             <div className="mt-8 pt-6 border-t border-gray-200">
-              <Button
-                variant="outline"
-                className="w-full"
-                onClick={handleLogout}
-              >
+              <Button variant="outline" className="w-full" onClick={() => void handleLogout()}>
                 <LogOut className="mr-2 h-4 w-4" />
                 Logout
               </Button>

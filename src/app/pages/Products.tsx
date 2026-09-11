@@ -1,12 +1,25 @@
-import React, { useEffect, useState } from 'react';
+import { useEffect, useState, type FormEvent } from 'react';
 import { useAuth } from '../contexts/AuthContext';
-import { projectId, publicAnonKey } from '/utils/supabase/info';
+import { edgeFunctionUrl, env } from '../../lib/env';
 import { Button } from '../components/ui/button';
 import { Input } from '../components/ui/input';
 import { Label } from '../components/ui/label';
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card';
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '../components/ui/dialog';
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../components/ui/table';
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from '../components/ui/dialog';
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from '../components/ui/table';
 import { Badge } from '../components/ui/badge';
 import { toast } from 'sonner';
 import { Plus, Pencil, Trash2, Package, Search } from 'lucide-react';
@@ -19,14 +32,21 @@ interface Product {
   barcode: string;
   description: string;
   image: string;
+  stock?: number;
+  available?: boolean;
   createdAt: string;
   updatedAt: string;
+}
+
+interface Category {
+  id: string;
+  name: string;
 }
 
 export function Products() {
   const { accessToken } = useAuth();
   const [products, setProducts] = useState<Product[]>([]);
-  const [categories, setCategories] = useState<any[]>([]);
+  const [categories, setCategories] = useState<Category[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
   const [isDialogOpen, setIsDialogOpen] = useState(false);
@@ -44,22 +64,14 @@ export function Products() {
     available: true,
   });
 
-  useEffect(() => {
-    fetchProducts();
-    fetchCategories();
-  }, []);
-
   const fetchProducts = async () => {
     try {
-      const response = await fetch(
-        `https://${projectId}.supabase.co/functions/v1/make-server-81f0b18a/products`,
-        {
-          headers: {
-            'Authorization': `Bearer ${publicAnonKey}`,
-          },
-        }
-      );
-      const data = await response.json();
+      const response = await fetch(`${edgeFunctionUrl}/products`, {
+        headers: {
+          Authorization: `Bearer ${env.supabaseAnonKey}`,
+        },
+      });
+      const data = (await response.json()) as { products?: Product[]; error?: string };
       if (response.ok) {
         setProducts(data.products || []);
       } else {
@@ -75,15 +87,12 @@ export function Products() {
 
   const fetchCategories = async () => {
     try {
-      const response = await fetch(
-        `https://${projectId}.supabase.co/functions/v1/make-server-81f0b18a/categories`,
-        {
-          headers: {
-            'Authorization': `Bearer ${publicAnonKey}`,
-          },
-        }
-      );
-      const data = await response.json();
+      const response = await fetch(`${edgeFunctionUrl}/categories`, {
+        headers: {
+          Authorization: `Bearer ${env.supabaseAnonKey}`,
+        },
+      });
+      const data = (await response.json()) as { categories?: Category[] };
       if (response.ok) {
         setCategories(data.categories || []);
       }
@@ -92,30 +101,37 @@ export function Products() {
     }
   };
 
-  const handleSubmit = async (e: React.FormEvent) => {
+  useEffect(() => {
+    void fetchProducts();
+    void fetchCategories();
+  }, []);
+
+  const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
 
     try {
       const url = editingProduct
-        ? `https://${projectId}.supabase.co/functions/v1/make-server-81f0b18a/products/${editingProduct.id}`
-        : `https://${projectId}.supabase.co/functions/v1/make-server-81f0b18a/products`;
+        ? `${edgeFunctionUrl}/products/${editingProduct.id}`
+        : `${edgeFunctionUrl}/products`;
 
       const response = await fetch(url, {
         method: editingProduct ? 'PUT' : 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${accessToken}`,
+          Authorization: `Bearer ${accessToken}`,
         },
         body: JSON.stringify(formData),
       });
 
-      const data = await response.json();
+      const data = (await response.json()) as { error?: string };
 
       if (response.ok) {
-        toast.success(editingProduct ? 'Product updated successfully' : 'Product created successfully');
+        toast.success(
+          editingProduct ? 'Product updated successfully' : 'Product created successfully',
+        );
         setIsDialogOpen(false);
         resetForm();
-        fetchProducts();
+        void fetchProducts();
       } else {
         toast.error(data.error || 'Operation failed');
       }
@@ -129,21 +145,18 @@ export function Products() {
     if (!confirm('Are you sure you want to delete this product?')) return;
 
     try {
-      const response = await fetch(
-        `https://${projectId}.supabase.co/functions/v1/make-server-81f0b18a/products/${id}`,
-        {
-          method: 'DELETE',
-          headers: {
-            'Authorization': `Bearer ${accessToken}`,
-          },
-        }
-      );
+      const response = await fetch(`${edgeFunctionUrl}/products/${id}`, {
+        method: 'DELETE',
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+        },
+      });
 
-      const data = await response.json();
+      const data = (await response.json()) as { error?: string };
 
       if (response.ok) {
         toast.success('Product deleted successfully');
-        fetchProducts();
+        void fetchProducts();
       } else {
         toast.error(data.error || 'Failed to delete product');
       }
@@ -153,7 +166,7 @@ export function Products() {
     }
   };
 
-  const handleEdit = (product: any) => {
+  const handleEdit = (product: Product) => {
     setEditingProduct(product);
     setFormData({
       name: product.name,
@@ -182,10 +195,11 @@ export function Products() {
     });
   };
 
-  const filteredProducts = products.filter((product) =>
-    product.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    product.category.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    product.barcode.toLowerCase().includes(searchTerm.toLowerCase())
+  const filteredProducts = products.filter(
+    (product) =>
+      product.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      product.category.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      product.barcode.toLowerCase().includes(searchTerm.toLowerCase()),
   );
 
   if (loading) {
@@ -203,10 +217,13 @@ export function Products() {
           <h1 className="text-3xl font-bold text-gray-900 mb-2">Products</h1>
           <p className="text-gray-600">Manage your product inventory</p>
         </div>
-        <Dialog open={isDialogOpen} onOpenChange={(open) => {
-          setIsDialogOpen(open);
-          if (!open) resetForm();
-        }}>
+        <Dialog
+          open={isDialogOpen}
+          onOpenChange={(open) => {
+            setIsDialogOpen(open);
+            if (!open) resetForm();
+          }}
+        >
           <DialogTrigger asChild>
             <Button>
               <Plus className="mr-2 h-4 w-4" />
@@ -215,11 +232,9 @@ export function Products() {
           </DialogTrigger>
           <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
             <DialogHeader>
-              <DialogTitle>
-                {editingProduct ? 'Edit Product' : 'Add New Product'}
-              </DialogTitle>
+              <DialogTitle>{editingProduct ? 'Edit Product' : 'Add New Product'}</DialogTitle>
             </DialogHeader>
-            <form onSubmit={handleSubmit} className="space-y-4">
+            <form onSubmit={(e) => void handleSubmit(e)} className="space-y-4">
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div className="space-y-2">
                   <Label htmlFor="name">Product Name *</Label>
@@ -251,7 +266,9 @@ export function Products() {
                   >
                     <option value="">Select category</option>
                     {categories.map((cat) => (
-                      <option key={cat.id} value={cat.name}>{cat.name}</option>
+                      <option key={cat.id} value={cat.name}>
+                        {cat.name}
+                      </option>
                     ))}
                   </select>
                 </div>
@@ -294,10 +311,14 @@ export function Products() {
                 />
               </div>
               <div className="flex justify-end gap-2">
-                <Button type="button" variant="outline" onClick={() => {
-                  setIsDialogOpen(false);
-                  resetForm();
-                }}>
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => {
+                    setIsDialogOpen(false);
+                    resetForm();
+                  }}
+                >
                   Cancel
                 </Button>
                 <Button type="submit">
@@ -355,7 +376,7 @@ export function Products() {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {filteredProducts.map((product: any) => (
+                  {filteredProducts.map((product) => (
                     <TableRow key={product.id}>
                       <TableCell className="font-medium">{product.name}</TableCell>
                       <TableCell>
@@ -363,24 +384,28 @@ export function Products() {
                       </TableCell>
                       <TableCell>${product.price.toFixed(2)}</TableCell>
                       <TableCell>
-                        <Badge variant={product.stock > 10 ? 'default' : product.stock > 0 ? 'secondary' : 'destructive'}>
+                        <Badge
+                          variant={
+                            (product.stock ?? 0) > 10
+                              ? 'default'
+                              : (product.stock ?? 0) > 0
+                                ? 'secondary'
+                                : 'destructive'
+                          }
+                        >
                           {product.stock !== undefined ? product.stock : 'N/A'}
                         </Badge>
                       </TableCell>
                       <TableCell className="font-mono text-sm">{product.barcode || '-'}</TableCell>
                       <TableCell>
                         <div className="flex gap-2">
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            onClick={() => handleEdit(product)}
-                          >
+                          <Button variant="outline" size="sm" onClick={() => handleEdit(product)}>
                             <Pencil className="w-4 h-4" />
                           </Button>
                           <Button
                             variant="outline"
                             size="sm"
-                            onClick={() => handleDelete(product.id)}
+                            onClick={() => void handleDelete(product.id)}
                           >
                             <Trash2 className="w-4 h-4 text-red-600" />
                           </Button>

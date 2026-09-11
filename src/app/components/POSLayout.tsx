@@ -1,4 +1,4 @@
-import React, { useEffect } from 'react';
+import { useEffect } from 'react';
 import { Outlet, useNavigate } from 'react-router';
 import { useAuth } from '../contexts/AuthContext';
 import { Button } from './ui/button';
@@ -10,17 +10,17 @@ export function POSLayout() {
 
   useEffect(() => {
     if (!loading && !user) {
-      navigate('/');
+      void navigate('/');
     }
     // Redirect admins to dashboard
     if (!loading && user && user.role === 'admin') {
-      navigate('/dashboard');
+      void navigate('/dashboard');
     }
   }, [user, loading, navigate]);
 
   const handleLogout = async () => {
     await logout();
-    navigate('/');
+    void navigate('/');
   };
 
   if (loading) {
@@ -53,7 +53,7 @@ export function POSLayout() {
               <p className="text-xs text-gray-500">{user.role}</p>
             </div>
           </div>
-          <Button variant="outline" onClick={handleLogout}>
+          <Button variant="outline" onClick={() => void handleLogout()}>
             <LogOut className="mr-2 h-4 w-4" />
             Logout
           </Button>

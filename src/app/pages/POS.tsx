@@ -1,24 +1,23 @@
-import React, { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useAuth } from '../contexts/AuthContext';
-import { projectId, publicAnonKey } from '/utils/supabase/info';
+import { edgeFunctionUrl, env } from '../../lib/env';
 import { Button } from '../components/ui/button';
 import { Input } from '../components/ui/input';
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card';
 import { Badge } from '../components/ui/badge';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../components/ui/dialog';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '../components/ui/tabs';
 import { toast } from 'sonner';
-import {  
-  ShoppingCart, 
-  Search, 
-  Plus, 
-  Minus, 
-  Trash2, 
+import {
+  ShoppingCart,
+  Search,
+  Plus,
+  Minus,
+  Trash2,
   CreditCard,
   Utensils,
   Barcode as BarcodeIcon,
   Check,
-  AlertCircle
+  AlertCircle,
 } from 'lucide-react';
 
 interface Product {
@@ -29,6 +28,12 @@ interface Product {
   barcode: string;
   stock: number;
   available: boolean;
+  image?: string;
+}
+
+interface Category {
+  id: string;
+  name: string;
 }
 
 interface CartItem {
@@ -50,7 +55,7 @@ interface Order {
 export function POS() {
   const { accessToken } = useAuth();
   const [products, setProducts] = useState<Product[]>([]);
-  const [categories, setCategories] = useState<any[]>([]);
+  const [categories, setCategories] = useState<Category[]>([]);
   const [cart, setCart] = useState<CartItem[]>([]);
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedCategory, setSelectedCategory] = useState('all');
@@ -62,24 +67,14 @@ export function POS() {
   const [paymentMethod, setPaymentMethod] = useState('cash');
   const [barcodeInput, setBarcodeInput] = useState('');
 
-  useEffect(() => {
-    fetchProducts();
-    fetchCategories();
-    fetchSettings();
-    fetchOrders();
-  }, []);
-
   const fetchProducts = async () => {
     try {
-      const response = await fetch(
-        `https://${projectId}.supabase.co/functions/v1/make-server-81f0b18a/products`,
-        {
-          headers: {
-            'Authorization': `Bearer ${publicAnonKey}`,
-          },
-        }
-      );
-      const data = await response.json();
+      const response = await fetch(`${edgeFunctionUrl}/products`, {
+        headers: {
+          Authorization: `Bearer ${env.supabaseAnonKey}`,
+        },
+      });
+      const data = (await response.json()) as { products?: Product[] };
       if (response.ok) {
         setProducts(data.products || []);
       }
@@ -93,15 +88,12 @@ export function POS() {
 
   const fetchCategories = async () => {
     try {
-      const response = await fetch(
-        `https://${projectId}.supabase.co/functions/v1/make-server-81f0b18a/categories`,
-        {
-          headers: {
-            'Authorization': `Bearer ${publicAnonKey}`,
-          },
-        }
-      );
-      const data = await response.json();
+      const response = await fetch(`${edgeFunctionUrl}/categories`, {
+        headers: {
+          Authorization: `Bearer ${env.supabaseAnonKey}`,
+        },
+      });
+      const data = (await response.json()) as { categories?: Category[] };
       if (response.ok) {
         setCategories(data.categories || []);
       }
@@ -112,15 +104,12 @@ export function POS() {
 
   const fetchSettings = async () => {
     try {
-      const response = await fetch(
-        `https://${projectId}.supabase.co/functions/v1/make-server-81f0b18a/settings`,
-        {
-          headers: {
-            'Authorization': `Bearer ${publicAnonKey}`,
-          },
-        }
-      );
-      const data = await response.json();
+      const response = await fetch(`${edgeFunctionUrl}/settings`, {
+        headers: {
+          Authorization: `Bearer ${env.supabaseAnonKey}`,
+        },
+      });
+      const data = (await response.json()) as { settings?: { mode?: 'table' | 'barcode' } };
       if (response.ok && data.settings) {
         setPosMode(data.settings.mode || 'table');
       }
@@ -129,17 +118,14 @@ export function POS() {
     }
   };
 
-  const fetchOrders = async () => {
+  const fetchOrders = async (token: string | null) => {
     try {
-      const response = await fetch(
-        `https://${projectId}.supabase.co/functions/v1/make-server-81f0b18a/orders`,
-        {
-          headers: {
-            'Authorization': `Bearer ${accessToken}`,
-          },
-        }
-      );
-      const data = await response.json();
+      const response = await fetch(`${edgeFunctionUrl}/orders`, {
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      });
+      const data = (await response.json()) as { orders?: Order[] };
       if (response.ok) {
         setOrders(data.orders || []);
       }
@@ -148,6 +134,16 @@ export function POS() {
     }
   };
 
+  // The mount effect loads orders with the token from the first render, as it always has.
+  const mountAccessToken = useRef(accessToken);
+
+  useEffect(() => {
+    void fetchProducts();
+    void fetchCategories();
+    void fetchSettings();
+    void fetchOrders(mountAccessToken.current);
+  }, []);
+
   const addToCart = (product: Product) => {
     if (!product.available || product.stock <= 0) {
       toast.error('Product is out of stock');
@@ -155,7 +151,7 @@ export function POS() {
     }
 
     const existingItem = cart.find((item) => item.productId === product.id);
-    
+
     if (existingItem) {
       if (existingItem.quantity >= product.stock) {
         toast.error(`Only ${product.stock} items available`);
@@ -163,10 +159,8 @@ export function POS() {
       }
       setCart(
         cart.map((item) =>
-          item.productId === product.id
-            ? { ...item, quantity: item.quantity + 1 }
-            : item
-        )
+          item.productId === product.id ? { ...item, quantity: item.quantity + 1 } : item,
+        ),
       );
     } else {
       setCart([
@@ -185,7 +179,7 @@ export function POS() {
   const updateQuantity = (productId: string, change: number) => {
     const product = products.find((p) => p.id === productId);
     const cartItem = cart.find((item) => item.productId === productId);
-    
+
     if (!product || !cartItem) return;
 
     const newQuantity = cartItem.quantity + change;
@@ -200,10 +194,8 @@ export function POS() {
     } else {
       setCart(
         cart.map((item) =>
-          item.productId === productId
-            ? { ...item, quantity: newQuantity }
-            : item
-        )
+          item.productId === productId ? { ...item, quantity: newQuantity } : item,
+        ),
       );
     }
   };
@@ -228,30 +220,27 @@ export function POS() {
     }
 
     try {
-      const response = await fetch(
-        `https://${projectId}.supabase.co/functions/v1/make-server-81f0b18a/orders`,
-        {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${accessToken}`,
-          },
-          body: JSON.stringify({
-            items: cart,
-            tableNumber: posMode === 'table' ? parseInt(tableNumber) : null,
-            orderType: posMode,
-          }),
-        }
-      );
+      const response = await fetch(`${edgeFunctionUrl}/orders`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${accessToken}`,
+        },
+        body: JSON.stringify({
+          items: cart,
+          tableNumber: posMode === 'table' ? parseInt(tableNumber) : null,
+          orderType: posMode,
+        }),
+      });
 
-      const data = await response.json();
+      const data = (await response.json()) as { error?: string };
 
       if (response.ok) {
         toast.success('Order placed successfully!');
         setCart([]);
         setTableNumber('');
-        fetchOrders();
-        fetchProducts(); // Refresh to update stock
+        void fetchOrders(accessToken);
+        void fetchProducts(); // Refresh to update stock
       } else {
         toast.error(data.error || 'Failed to place order');
       }
@@ -270,46 +259,46 @@ export function POS() {
     if (posMode === 'barcode') {
       // For barcode mode, create order and complete immediately
       try {
-        const orderResponse = await fetch(
-          `https://${projectId}.supabase.co/functions/v1/make-server-81f0b18a/orders`,
-          {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              'Authorization': `Bearer ${accessToken}`,
-            },
-            body: JSON.stringify({
-              items: cart,
-              tableNumber: null,
-              orderType: 'instant',
-            }),
-          }
-        );
+        const orderResponse = await fetch(`${edgeFunctionUrl}/orders`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${accessToken}`,
+          },
+          body: JSON.stringify({
+            items: cart,
+            tableNumber: null,
+            orderType: 'instant',
+          }),
+        });
 
-        const orderData = await orderResponse.json();
+        const orderData = (await orderResponse.json()) as {
+          order: { id: string };
+          error?: string;
+        };
 
         if (orderResponse.ok) {
           // Complete payment immediately
           const paymentResponse = await fetch(
-            `https://${projectId}.supabase.co/functions/v1/make-server-81f0b18a/orders/${orderData.order.id}/complete`,
+            `${edgeFunctionUrl}/orders/${orderData.order.id}/complete`,
             {
               method: 'POST',
               headers: {
                 'Content-Type': 'application/json',
-                'Authorization': `Bearer ${accessToken}`,
+                Authorization: `Bearer ${accessToken}`,
               },
               body: JSON.stringify({ paymentMethod }),
-            }
+            },
           );
 
-          const paymentData = await paymentResponse.json();
+          const paymentData = (await paymentResponse.json()) as { error?: string };
 
           if (paymentResponse.ok) {
             toast.success('Payment completed successfully!');
             setCart([]);
             setIsPaymentDialogOpen(false);
-            fetchOrders();
-            fetchProducts();
+            void fetchOrders(accessToken);
+            void fetchProducts();
           } else {
             toast.error(paymentData.error || 'Payment failed');
           }
@@ -322,31 +311,28 @@ export function POS() {
       }
     } else {
       // For table mode, just place the order
-      handlePlaceOrder();
+      void handlePlaceOrder();
       setIsPaymentDialogOpen(false);
     }
   };
 
   const handleCompleteOrder = async (orderId: string) => {
     try {
-      const response = await fetch(
-        `https://${projectId}.supabase.co/functions/v1/make-server-81f0b18a/orders/${orderId}/complete`,
-        {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${accessToken}`,
-          },
-          body: JSON.stringify({ paymentMethod: 'cash' }),
-        }
-      );
+      const response = await fetch(`${edgeFunctionUrl}/orders/${orderId}/complete`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${accessToken}`,
+        },
+        body: JSON.stringify({ paymentMethod: 'cash' }),
+      });
 
-      const data = await response.json();
+      const data = (await response.json()) as { error?: string };
 
       if (response.ok) {
         toast.success('Order completed successfully!');
-        fetchOrders();
-        fetchProducts();
+        void fetchOrders(accessToken);
+        void fetchProducts();
       } else {
         toast.error(data.error || 'Failed to complete order');
       }
@@ -471,9 +457,7 @@ export function POS() {
               <Card
                 key={product.id}
                 className={`cursor-pointer transition-all hover:shadow-lg ${
-                  !product.available || product.stock <= 0
-                    ? 'opacity-50 cursor-not-allowed'
-                    : ''
+                  !product.available || product.stock <= 0 ? 'opacity-50 cursor-not-allowed' : ''
                 }`}
                 onClick={() => product.available && product.stock > 0 && addToCart(product)}
               >
@@ -498,7 +482,9 @@ export function POS() {
                         {product.stock} left
                       </Badge>
                     ) : product.stock <= 0 ? (
-                      <Badge variant="destructive" className="text-xs">Out of stock</Badge>
+                      <Badge variant="destructive" className="text-xs">
+                        Out of stock
+                      </Badge>
                     ) : null}
                   </div>
                 </CardContent>
@@ -534,7 +520,10 @@ export function POS() {
                   <p className="text-center text-gray-500 py-8">Cart is empty</p>
                 ) : (
                   cart.map((item) => (
-                    <div key={item.productId} className="flex items-center gap-2 p-2 bg-gray-50 rounded-lg">
+                    <div
+                      key={item.productId}
+                      className="flex items-center gap-2 p-2 bg-gray-50 rounded-lg"
+                    >
                       <div className="flex-1">
                         <p className="font-medium text-sm">{item.name}</p>
                         <p className="text-xs text-gray-600">${item.price.toFixed(2)} each</p>
@@ -603,10 +592,7 @@ export function POS() {
                             {order.items.length} items - ${order.total.toFixed(2)}
                           </p>
                         </div>
-                        <Button
-                          size="sm"
-                          onClick={() => handleCompleteOrder(order.id)}
-                        >
+                        <Button size="sm" onClick={() => void handleCompleteOrder(order.id)}>
                           <Check className="w-4 h-4 mr-1" />
                           Pay
                         </Button>
@@ -650,11 +636,7 @@ export function POS() {
                 </div>
               </div>
             )}
-            <Button
-              className="w-full"
-              size="lg"
-              onClick={handleCompletePayment}
-            >
+            <Button className="w-full" size="lg" onClick={() => void handleCompletePayment()}>
               <Check className="mr-2" />
               Confirm
             </Button>

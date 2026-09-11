@@ -1,6 +1,6 @@
-import React, { createContext, useContext, useState, useEffect } from 'react';
+import { createContext, useContext, useState, useEffect, type ReactNode } from 'react';
 import { createClient } from '@supabase/supabase-js';
-import { projectId, publicAnonKey } from '/utils/supabase/info';
+import { edgeFunctionUrl, env } from '../../lib/env';
 
 interface User {
   id: string;
@@ -14,46 +14,46 @@ interface AuthContextType {
   accessToken: string | null;
   loading: boolean;
   login: (email: string, password: string) => Promise<User>;
-  signup: (email: string, password: string, name: string, role: string) => Promise<void>;
+  signup: (email: string, password: string, name: string) => Promise<User>;
   logout: () => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
-const supabase = createClient(
-  `https://${projectId}.supabase.co`,
-  publicAnonKey
-);
+const supabase = createClient(env.supabaseUrl, env.supabaseAnonKey);
 
-export function AuthProvider({ children }: { children: React.ReactNode }) {
+export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [accessToken, setAccessToken] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    // Check for existing session
-    checkSession();
-  }, []);
-
-  const checkSession = async () => {
-    try {
-      const { data: { session }, error } = await supabase.auth.getSession();
-      if (session && !error) {
-        setAccessToken(session.access_token);
-        const userData = {
-          id: session.user.id,
-          email: session.user.email || '',
-          name: session.user.user_metadata?.name || '',
-          role: session.user.user_metadata?.role || 'worker',
-        };
-        setUser(userData);
+    const checkSession = async () => {
+      try {
+        const {
+          data: { session },
+          error,
+        } = await supabase.auth.getSession();
+        if (session && !error) {
+          setAccessToken(session.access_token);
+          const userData = {
+            id: session.user.id,
+            email: session.user.email || '',
+            name: (session.user.user_metadata?.name as string | undefined) || '',
+            role: (session.user.app_metadata?.role as string | undefined) || 'worker',
+          };
+          setUser(userData);
+        }
+      } catch (error) {
+        console.error('Error checking session:', error);
+      } finally {
+        setLoading(false);
       }
-    } catch (error) {
-      console.error('Error checking session:', error);
-    } finally {
-      setLoading(false);
-    }
-  };
+    };
+
+    // Check for existing session
+    void checkSession();
+  }, []);
 
   const login = async (email: string, password: string): Promise<User> => {
     try {
@@ -71,8 +71,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         const userData = {
           id: data.user.id,
           email: data.user.email || '',
-          name: data.user.user_metadata?.name || '',
-          role: data.user.user_metadata?.role || 'worker',
+          name: (data.user.user_metadata?.name as string | undefined) || '',
+          role: (data.user.app_metadata?.role as string | undefined) || 'worker',
         };
         setUser(userData);
         return userData;
@@ -84,28 +84,25 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   };
 
-  const signup = async (email: string, password: string, name: string, role: string) => {
+  const signup = async (email: string, password: string, name: string): Promise<User> => {
     try {
-      const response = await fetch(
-        `https://${projectId}.supabase.co/functions/v1/make-server-81f0b18a/signup`,
-        {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${publicAnonKey}`,
-          },
-          body: JSON.stringify({ email, password, name, role }),
-        }
-      );
+      const response = await fetch(`${edgeFunctionUrl}/signup`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${env.supabaseAnonKey}`,
+        },
+        body: JSON.stringify({ email, password, name }),
+      });
 
-      const data = await response.json();
+      const data = (await response.json()) as { error?: string };
 
       if (!response.ok) {
         throw new Error(data.error || 'Signup failed');
       }
 
       // After signup, log the user in
-      await login(email, password);
+      return await login(email, password);
     } catch (error) {
       console.error('Signup error:', error);
       throw error;

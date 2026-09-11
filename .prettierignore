@@ -1,0 +1,8 @@
+dist
+coverage
+package-lock.json
+
+# Deno edge function from the Figma Make export. It is deleted once the app talks to
+# tables and RPCs directly; until then it stays byte-for-byte apart from security patches,
+# so reformatting would only hide those patches in review.
+supabase/functions
