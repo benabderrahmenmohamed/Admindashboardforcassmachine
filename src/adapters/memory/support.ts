@@ -1,21 +1,35 @@
 import type { z } from 'zod';
 import { AppError, toAppError } from '@/lib/errors';
-import { roleSchema, type Role } from '@/ports';
+import { roleSchema, type AuthState, type Role } from '@/ports';
 import type { FaultInjector, MemoryOperation } from './faults';
+import type { MemoryProfile } from './seed';
 import type { MemoryStore } from './store';
 
-/** What every memory port shares: the fault injector, the clock and the id source. */
+/** An auth state of the memory backend, which has no network and so is never offline. */
+export type MemorySession = Exclude<AuthState, { readonly status: 'offline' }>;
+
+/** One client of a memory backend, like one browser: who is signed in on it. */
+export interface MemoryClient {
+  session: MemorySession;
+}
+
+/** What the ports of one client share. */
 export interface MemoryContext {
+  /** This client's faults. */
   readonly faults: FaultInjector;
   readonly now: () => Date;
   readonly newId: () => string;
+  /** The data, shared by every client of the backend. */
+  readonly store: MemoryStore;
+  readonly client: MemoryClient;
 }
 
 /**
  * Runs the body of the port method `operation`: pending faults first, then `body`. Every outcome,
  * including a synchronous throw, reaches the caller as a promise, like a real backend. Every
  * failure is an AppError: anything else (a throwing clock or id source, say) becomes UNKNOWN with
- * the original as its cause.
+ * the original as its cause. The body runs to completion before any other call, so each call sees
+ * the result of the previous one, like requests serialised by the database's terminal lock.
  */
 export function perform<T>(
   context: MemoryContext,
@@ -33,24 +47,32 @@ export function perform<T>(
 }
 
 /**
- * Refuses the call unless someone is signed in with a role in `allowed` (default: any role), the
- * check the legacy edge function makes before a write: nobody signed in is UNAUTHENTICATED (its
- * 401), another role FORBIDDEN (its 403). Writes call it first in their body: after the faults, as
- * a request that never arrives cannot be refused, and before the input is parsed.
+ * The caller's shop membership, as private.require_profile: nobody signed in is UNAUTHENTICATED;
+ * an account without a profile, or with a role outside `allowed` (default: any role), is
+ * FORBIDDEN. Every call on shop data makes this check first in its body: after the faults, as a
+ * request that never arrives cannot be refused, and before the input is parsed.
  */
-export function authorize(store: MemoryStore, allowed: readonly Role[] = roleSchema.options): void {
-  const session = store.session;
+export function requireProfile(
+  context: MemoryContext,
+  allowed: readonly Role[] = roleSchema.options,
+): MemoryProfile {
+  const { session } = context.client;
   if (session.status === 'anonymous') {
-    throw new AppError('UNAUTHENTICATED', 'Your session has ended. Sign in again.');
+    throw new AppError('UNAUTHENTICATED', 'Sign in to continue.');
   }
-  if (!allowed.includes(session.user.role)) {
-    throw new AppError('FORBIDDEN', 'You do not have permission to do this.', {
-      details: { role: session.user.role, allowed: [...allowed] },
+  const profile = context.store.profiles.get(session.user.id);
+  if (!profile) {
+    throw new AppError('FORBIDDEN', 'This account is not a member of any shop.');
+  }
+  if (!allowed.includes(profile.role)) {
+    throw new AppError('FORBIDDEN', 'Your role cannot do this.', {
+      details: { role: profile.role },
     });
   }
+  return profile;
 }
 
-/** Parses `value` with a port schema; failures become VALIDATION_ERROR with the Zod issues. */
+/** Parses `value` with a schema; failures become VALIDATION_ERROR with the Zod issues. */
 export function parseInput<Schema extends z.ZodType>(
   schema: Schema,
   value: unknown,
@@ -65,15 +87,47 @@ export function parseInput<Schema extends z.ZodType>(
   return result.data;
 }
 
-export function notFound(what: string, id: string): AppError {
-  return new AppError('NOT_FOUND', `${what} not found`, { details: { id } });
+/** VALIDATION_ERROR with `{ field }`, as the database's typed payload readers raise it. */
+export function invalidField(field: string, message: string): AppError {
+  return new AppError('VALIDATION_ERROR', message, { details: { field } });
 }
 
-/** A new id from `context.newId`, refusing one that would overwrite an existing record. */
+/** The text form of a uuid that the database returns: lowercase, 8-4-4-4-12 hex digits. */
+export const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+
+/** `value` as a uuid in its lowercase form, or VALIDATION_ERROR naming `field` (wire name). */
+export function parseUuid(value: string, field: string): string {
+  const id = value.toLowerCase();
+  if (!UUID_PATTERN.test(id)) {
+    throw invalidField(field, `${field} must be a UUID.`);
+  }
+  return id;
+}
+
+/**
+ * The row id a record that may be malformed names, as private.try_uuid: its lowercase form, or null
+ * when it is missing or not a UUID, which names no row. Only void_receipt reads a reference this
+ * leniently; every required field of a record goes through parseUuid, as private.json_uuid.
+ */
+export function parseRef(value: string | null): string | null {
+  const id = value === null ? null : value.toLowerCase();
+  return id !== null && UUID_PATTERN.test(id) ? id : null;
+}
+
+/** `value` as an ISO 8601 timestamp in UTC, or VALIDATION_ERROR naming `field` (wire name). */
+export function parseTimestamp(value: string, field: string): string {
+  const time = Date.parse(value);
+  if (Number.isNaN(time)) {
+    throw invalidField(field, `${field} must be an ISO 8601 timestamp.`);
+  }
+  return new Date(time).toISOString();
+}
+
+/** A new id from `context.newId`, refusing anything but an unused lowercase UUID. */
 export function freshId(context: MemoryContext, taken: ReadonlyMap<string, unknown>): string {
   const id = context.newId();
-  if (id.length === 0 || taken.has(id)) {
-    throw new AppError('CONFIG_ERROR', `newId returned an empty or already used id: "${id}"`);
+  if (!UUID_PATTERN.test(id) || taken.has(id)) {
+    throw new AppError('CONFIG_ERROR', `newId must return an unused lowercase UUID, got "${id}"`);
   }
   return id;
 }

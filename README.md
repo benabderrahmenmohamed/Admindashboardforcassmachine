@@ -1,8 +1,8 @@
 # POS Admin Dashboard
 
-Point-of-sale screen and back-office dashboard for a cash register in a Tunisian shop. Cashiers sell from the POS screen; admins manage products, categories and register settings.
+Point-of-sale screen and back-office dashboard for a cash register in a Tunisian shop. Cashiers sell from the POS screen; admins manage products, categories, register settings and the terminals.
 
-> **Status:** this codebase started as a Figma Make export and is being restructured into an offline-first register with integer money (millimes) and a swappable backend. The UI now talks to the backend only through ports, and money is exact to the millime. The Supabase backend is still the original edge function — see [Known issues](#known-issues).
+> **Status:** this codebase started as a Figma Make export and is being restructured into an offline-first register. Money is exact to the millime, the UI talks to the backend only through ports, and sales go into an append-only ledger with per-terminal receipt numbers, cash sessions and Z-reports. Recording still needs the network in this version; the offline outbox comes next — see [Known issues](#known-issues).
 
 ## Screenshots
 
@@ -12,11 +12,13 @@ Point-of-sale screen and back-office dashboard for a cash register in a Tunisian
 
 ## Features
 
-- Email and password login with two roles: **admin** (dashboard) and **cashier** (POS only).
-- Products: create, edit, delete and search by name, category or barcode, with price, stock, barcode and image URL. Prices are entered in dinars with up to three decimals and stored as integer millimes.
+- Email and password login with two roles per shop: **admin** (dashboard) and **cashier** (POS only). There is no self-service sign-up.
+- Products: create, edit, archive and search by name, category or barcode. Prices are entered in dinars with up to three decimals and stored as integer millimes. Stock only changes through recorded movements (opening stock, adjustments, sales, refunds).
 - Categories with colour labels.
-- POS: product grid with category filter and search, barcode entry, cart, cash or card checkout, stock decremented on payment.
-- Settings: the receipt footer.
+- Terminals: an admin registers each device as a terminal (`T1`, `T2`, …) in Settings.
+- Cash sessions: the cashier opens a session with an opening float, sells, and closes it with the counted cash. Closing shows the Z-report: sales, refunds, net, totals per payment method, expected cash and the variance.
+- Receipts numbered per terminal without gaps (`T1-1`, `T1-2`, …). A lost answer is retried with the same record, so it never costs a number and never records twice.
+- Refunds are new documents that point at the sale, per line and quantity, never above what is left. Sales and their lines can never be edited or deleted.
 - Every amount is shown in Tunisian dinars with three decimals, for example `12,500 DT`.
 - A credential-free demo backend that runs entirely in the browser.
 
@@ -25,7 +27,8 @@ Point-of-sale screen and back-office dashboard for a cash register in a Tunisian
 - React 18, TypeScript, Vite 6
 - Tailwind CSS 4 and [shadcn/ui](https://ui.shadcn.com/) components on Radix UI, lucide-react icons, sonner toasts
 - React Router 7, TanStack Query, react-hook-form with Zod
-- Ports and adapters: an in-memory backend for tests and the demo, and a Supabase backend (Supabase Auth plus the legacy edge function for data)
+- Ports and adapters: an in-memory backend for tests and the demo, and a Supabase backend over tables with row-level security and transactional RPCs
+- Supabase CLI for the local stack, pgTAP for database tests
 - ESLint (typescript-eslint, react-hooks), Prettier, Vitest
 
 ## Getting started
@@ -39,21 +42,41 @@ npm install
 npm run dev:demo
 ```
 
-Open http://localhost:5173 and use one of the demo accounts on the login page. Everything lives in the browser and resets when you reload.
+Open http://localhost:5173. The backend lives in the browser and starts empty again on every reload.
 
-### Against Supabase
+1. **Continue as Admin**, open **Settings** and register this device as terminal `T1`. Log out.
+2. **Continue as Cashier**, open a session with an opening float, sell, refund from **Sales**, and close the session to see the Z-report.
 
-Set up a project as described in [Backend setup](#backend-setup), then:
+A reload empties the backend but keeps this device's terminal registration, which lives in local storage. Repeat step 1 to register `T1` again before selling; otherwise the POS offers to open a session and the backend refuses it, because it no longer knows this terminal.
+
+### Local Supabase
+
+Needs Docker.
+
+```bash
+npm run db:start
+npm run db:reset
+```
+
+`db:reset` applies `supabase/migrations/` and loads `supabase/seed.sql`: a demo shop with a dozen products, and a second shop the isolation tests use. Copy the API URL and anon key printed by `npx supabase status` into `.env`:
 
 ```bash
 cp .env.example .env
-```
-
-Fill in `VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY` in `.env`, then start the dev server:
-
-```bash
 npm run dev
 ```
+
+| Account                    | Password             | Role                |
+| -------------------------- | -------------------- | ------------------- |
+| `admin@demo.local`         | `demo-admin-2026`    | admin, demo shop    |
+| `cashier@demo.local`       | `demo-cashier-2026`  | cashier, demo shop  |
+| `other-admin@demo.local`   | `other-admin-2026`   | admin, other shop   |
+| `other-cashier@demo.local` | `other-cashier-2026` | cashier, other shop |
+
+These accounts exist only in the local database.
+
+### A hosted Supabase project
+
+Never run migrations against a hosted project from a script in this repo. To move a project that still runs the original edge function, follow [docs/runbooks/kv-import.md](docs/runbooks/kv-import.md): apply the schema, create the shop and its members, dry-run the import and review the rejects, import, deploy, then delete the edge function.
 
 ## Environment variables
 
@@ -65,95 +88,61 @@ npm run dev
 
 Vite inlines these values at build time, so a change needs a rebuild. `.env.demo` sets `VITE_BACKEND=memory` for `npm run dev:demo`.
 
+The contract and security tests against the local stack read these from the environment, never from `.env`:
+
+| Variable                    | Description                                                                                        |
+| --------------------------- | -------------------------------------------------------------------------------------------------- |
+| `CONTRACT_BACKEND`          | Set to `supabase` to run the Supabase contract and security tests.                                 |
+| `SUPABASE_URL`              | Local API URL from `npx supabase status`.                                                          |
+| `SUPABASE_ANON_KEY`         | Local anon key.                                                                                    |
+| `SUPABASE_SERVICE_ROLE_KEY` | Local service role key: re-reads rows and tries the writes nobody may make, in the security tests. |
+
 ## Scripts
 
-| Command             | What it does                                          |
-| ------------------- | ----------------------------------------------------- |
-| `npm run dev`       | Start the dev server with the backend from `.env`.    |
-| `npm run dev:demo`  | Start the dev server with the in-memory demo backend. |
-| `npm run build`     | Build for production into `dist/`.                    |
-| `npm run preview`   | Serve the production build locally.                   |
-| `npm run lint`      | Run ESLint (no warnings allowed) and Prettier check.  |
-| `npm run format`    | Format the codebase with Prettier.                    |
-| `npm run typecheck` | Type-check with `tsc --noEmit`.                       |
-| `npm test`          | Run the Vitest suite.                                 |
+| Command             | What it does                                                                  |
+| ------------------- | ----------------------------------------------------------------------------- |
+| `npm run dev`       | Start the dev server with the backend from `.env`.                            |
+| `npm run dev:demo`  | Start the dev server with the in-memory demo backend.                         |
+| `npm run build`     | Build for production into `dist/`.                                            |
+| `npm run preview`   | Serve the production build locally.                                           |
+| `npm run lint`      | Run ESLint (no warnings allowed) and Prettier check.                          |
+| `npm run format`    | Format the codebase with Prettier.                                            |
+| `npm run typecheck` | Type-check with `tsc --noEmit`.                                               |
+| `npm test`          | Run the Vitest suite, including the contract suite on the memory backend.     |
+| `npm run db:start`  | Start the local Supabase stack (Docker).                                      |
+| `npm run db:stop`   | Stop it.                                                                      |
+| `npm run db:reset`  | Re-create the local database from the migrations and the seed.                |
+| `npm run db:test`   | Run the pgTAP tests in `supabase/tests/database`.                             |
+| `npm run db:types`  | Regenerate `src/adapters/supabase/database.types.ts` from the local database. |
 
-## Backend setup
+## Database
 
-The app needs two things in the Supabase project:
+The schema lives in `supabase/migrations/`:
 
-1. The key-value table the edge function stores data in. Only the function, which uses the service role, may touch it:
+- **Shops and profiles.** Every member belongs to one shop with the role `admin` or `cashier`. Row-level security keeps each shop's rows to its own members.
+- **Catalog.** Categories, products (archived rather than deleted) and append-only `stock_movements`; a product's stock is the sum of its movements.
+- **Terminals and cash sessions.** A terminal keeps `last_seq` and a registration `epoch`; a terminal has at most one open session, and a closed session cannot change.
+- **Sales ledger.** `sales` and `sale_lines` accept writes only through `record_sale`; nobody, including the service role, can update or delete them. Refunds are rows of kind `refund` with negative lines. `receipt_voids` lets an admin give up on a numbered record that can never be accepted, without leaving a gap.
+- **Legacy import.** `migration.kv_import` reads the original key-value store, with a dry run and a list of rejects.
 
-   ```sql
-   create table public.kv_store_81f0b18a (key text primary key, value jsonb not null);
-   alter table public.kv_store_81f0b18a enable row level security;
-   revoke all on table public.kv_store_81f0b18a from anon, authenticated;
-   ```
-
-2. The edge function from `supabase/functions/server/`, deployed under the name `make-server-81f0b18a`, because its routes are prefixed with that name. Either paste `index.tsx` and `kv_store.tsx` into that function in the Supabase dashboard, or add this to `supabase/config.toml` and run `supabase functions deploy make-server-81f0b18a`:
-
-   ```toml
-   [functions.make-server-81f0b18a]
-   entrypoint = "./functions/server/index.tsx"
-   ```
-
-   Do not run `supabase functions deploy server`: it creates a second function and leaves the old one live.
-
-The key-value store keeps prices in dinars. The Supabase adapter converts them to and from millimes exactly, as decimal text, and rejects a stored price it cannot read instead of guessing.
+Every RPC raises the typed errors of [contracts/errors.md](contracts/errors.md); the app decides what to do from the code alone. RPC parameters and results use snake_case keys, and the adapter converts them to the camelCase of the ports.
 
 ## Roles
 
-A user's role comes from `app_metadata.role`, which only the service role can write: `admin` is an admin and anything else is a cashier. The app ignores `user_metadata`, which users can edit themselves. There is no self-service sign-up in the app.
-
-Promote an admin by user id, after confirming who the account belongs to. Never decide from `raw_user_meta_data`: earlier versions of the app let anyone set a role there.
+A member's role and shop come from `public.profiles`, never from token metadata. Add a member once their account exists, after confirming who owns it:
 
 ```sql
--- Find the account
-select id, email, created_at, last_sign_in_at from auth.users order by created_at;
-
--- Promote; check that exactly one row comes back
-update auth.users
-set raw_app_meta_data = coalesce(raw_app_meta_data, '{}'::jsonb) || '{"role": "admin"}'::jsonb
-where id = '<user-id>'
-returning id, email, raw_app_meta_data;
-
--- Demote
-update auth.users set raw_app_meta_data = raw_app_meta_data - 'role' where id = '<user-id>';
+insert into public.profiles (user_id, shop_id, role, display_name)
+select u.id, '<shop-id>', 'cashier', '<name>' from auth.users u where u.id = '<user-id>'
+returning user_id;
 ```
 
-The server applies a role change on the next request; the web app shows it after the user logs out and back in.
-
-### Rolling out the role fix to an existing project
-
-Earlier versions of the edge function trusted `user_metadata.role` and let sign-ups pick their own role. Apply the fix in this order so that real admins keep access and the hole does not stay open:
-
-1. Check that row-level security is on for the key-value table (`select relrowsecurity from pg_class where oid = 'public.kv_store_81f0b18a'::regclass;`). If it is off, run the `alter table` and `revoke` statements from [Backend setup](#backend-setup).
-2. Promote the real admins by id. The old function ignores `app_metadata`, so nothing changes yet.
-3. Deploy the edge function to `make-server-81f0b18a`.
-4. Check that a worker who has set `user_metadata.role` to `admin` gets `403` from `PUT /make-server-81f0b18a/settings`.
-5. Find stored prices this version cannot read, and correct them to dinars with at most three decimals. The app reads prices exactly and never rounds, so while one product's price is unreadable the product list does not load, on the POS either. This query lists them:
-
-   ```sql
-   select key, value->>'name' as name, value->'price' as price
-   from public.kv_store_81f0b18a
-   where key like 'product:%'
-     and coalesce(value->>'price', '') !~ '^(\d{1,10}([.,]\d{1,3})?|[.,]\d{1,3})$';
-   ```
-
-6. Deploy the web app, then have admins log out and back in.
-7. Remove the untrusted copies: `update auth.users set raw_user_meta_data = raw_user_meta_data - 'role' where raw_user_meta_data ? 'role';`
-8. Delete the `admin@pos.com` and `worker@pos.com` test accounts that earlier versions advertised on the login page, or reset their passwords. Never promote them.
+A role change applies to the member's next request; the app shows it after they log out and back in.
 
 ## Known issues
 
-These go away as the app moves off the edge function onto tables with row-level security:
-
-- **The edge function bypasses row-level security.** It runs with the service role key, so any database access rule can be sidestepped through it until the function is deleted from the Supabase project.
-- **The function still accepts sign-ups.** Its `/signup` route creates cashier accounts for anyone who calls it directly, and cashiers can record sales.
-- **Order endpoints trust the caller.** Item prices and quantities come from the request, so any signed-in user can change order totals and stock.
-- **Read endpoints are public.** Products, categories, settings and orders can be fetched with the anon key alone.
-- **Recording a sale is two requests.** If the second fails, the order stays open in the key-value store.
-- **Legacy categories are matched by name.** Saving a product whose stored category name no longer exists clears its category.
+- **Recording needs the network.** A sale, refund or session change is sent immediately. If the answer is lost, the register keeps the record and retries it unchanged, but it cannot sell offline yet. The offline outbox is the next step.
+- **A hosted project may still run the original edge function.** Its code is gone from this repo, but a deployed copy keeps its service role access, which bypasses row-level security, until you delete it ([runbook](docs/runbooks/kv-import.md), step 7).
 
 ## Credits
 

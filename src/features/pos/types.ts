@@ -1,2 +1,3 @@
 export type { Cart, CartLine, CartProduct, CartTotals, LineTotals } from './cart';
-export type { Category, PaymentMethod, Product, RecordSaleInput } from '@/ports';
+export type { CheckoutPayment } from './selling';
+export type { Category, PaymentMethod, Product } from '@/ports';

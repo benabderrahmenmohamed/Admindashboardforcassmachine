@@ -1,10 +1,10 @@
 /**
  * Selling rules of the register screen, kept out of the components so they run without a DOM.
- * Messages returned here are the toasts the cashier sees.
+ * Messages returned here are the toasts and field messages the cashier sees.
  */
-import { AppError } from '@/lib/errors';
-import type { PaymentMethod, Product, RecordSaleInput } from '@/ports';
-import type { Cart } from './cart';
+import { tryParseTND, type Millimes } from '@/lib/money';
+import type { PaymentMethod, Product } from '@/ports';
+import { changeDue, type Cart } from './cart';
 
 /** A product can go in the cart when it is marked available and has stock left. */
 export function isSellable(product: Product): boolean {
@@ -49,25 +49,47 @@ export function quantityProblem(product: Product, qty: number): string | null {
   return qty > product.stock ? stockLimitMessage(product) : null;
 }
 
+/** How a sale is paid, as the checkout dialog confirms it. Card is always exactly the total. */
+export interface CheckoutPayment {
+  readonly method: PaymentMethod;
+  readonly tenderedMillimes: Millimes;
+}
+
+export type CashAmount =
+  | { readonly ok: true; readonly millimes: Millimes }
+  | { readonly ok: false; readonly problem: string };
+
 /**
- * The sale to record for `cart`: one line per cart line, at the unit price it was added with.
- * The sales port has no discounts yet, so a discounted cart is refused rather than recorded at a
- * total the cashier never saw.
+ * A cash amount the cashier typed (opening float, counted cash, amount tendered): dinars with up to
+ * three decimals after "." or ",", zero or more. Never rounded: anything else is a problem to show.
  */
-export function toRecordSaleInput(cart: Cart, paymentMethod: PaymentMethod): RecordSaleInput {
-  if (
-    cart.discountBasisPoints !== 0 ||
-    cart.lines.some((line) => line.lineDiscountMillimes !== 0)
-  ) {
-    throw new AppError('VALIDATION_ERROR', 'Discounts cannot be recorded yet');
+export function readCashAmount(text: string): CashAmount {
+  const millimes = tryParseTND(text);
+  if (millimes === null) {
+    return { ok: false, problem: 'Enter an amount in dinars, e.g. 50 or 12,500' };
+  }
+  if (millimes < 0) {
+    return { ok: false, problem: 'The amount cannot be negative' };
+  }
+  return { ok: true, millimes };
+}
+
+export type CashTender =
+  | { readonly ok: true; readonly tenderedMillimes: Millimes; readonly changeMillimes: Millimes }
+  | { readonly ok: false; readonly problem: string };
+
+/** The cash handed over for a total of `totalMillimes`, and the change to give back. */
+export function readCashTender(totalMillimes: Millimes, tenderedText: string): CashTender {
+  const amount = readCashAmount(tenderedText);
+  if (!amount.ok) {
+    return amount;
+  }
+  if (amount.millimes < totalMillimes) {
+    return { ok: false, problem: 'The amount tendered is less than the total' };
   }
   return {
-    lines: cart.lines.map((line) => ({
-      productId: line.productId,
-      name: line.name,
-      qty: line.qty,
-      unitPriceMillimes: line.unitPriceMillimes,
-    })),
-    paymentMethod,
+    ok: true,
+    tenderedMillimes: amount.millimes,
+    changeMillimes: changeDue(totalMillimes, amount.millimes),
   };
 }

@@ -21,8 +21,8 @@ export function parseInput<Schema extends z.ZodType>(
 }
 
 /**
- * Checks what the edge function sent back. Data the app cannot read will not become readable on a
- * retry, so this is VALIDATION_ERROR too, naming `what` could not be read.
+ * Checks what the database sent back. Data the app cannot read will not become readable on a retry,
+ * so this is VALIDATION_ERROR too, naming `what` could not be read.
  */
 export function parseOutput<Schema extends z.ZodType>(
   schema: Schema,
@@ -37,15 +37,4 @@ export function parseOutput<Schema extends z.ZodType>(
     });
   }
   return result.data;
-}
-
-/** Short text for a value of unknown type, for messages and logs. */
-export function describeValue(value: unknown): string {
-  if (typeof value === 'string') {
-    return JSON.stringify(value);
-  }
-  if (typeof value === 'number' || typeof value === 'boolean' || typeof value === 'bigint') {
-    return String(value);
-  }
-  return value === null ? 'null' : typeof value;
 }

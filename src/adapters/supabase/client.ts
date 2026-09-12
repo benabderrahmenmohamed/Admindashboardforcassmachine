@@ -1,8 +1,12 @@
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import { supabaseEnv } from '@/lib/env';
 import { AppError } from '@/lib/errors';
+import type { Database } from './database.types';
 
-let client: SupabaseClient | undefined;
+/** A Supabase client typed with the tables and RPCs of supabase/migrations. */
+export type SupabaseDatabaseClient = SupabaseClient<Database>;
+
+let client: SupabaseDatabaseClient | undefined;
 
 /**
  * The localStorage key of the Supabase session for the project at `url`. It is set on the client
@@ -24,12 +28,13 @@ export function supabaseAuthStorageKey(url: string): string {
 
 /**
  * The app's only Supabase client. It is created on first use, so a missing environment variable
- * fails when the Supabase backend is built, never when a module is imported.
+ * fails when the Supabase backend is built, never when a module is imported. Tests build their own
+ * client and hand it to createSupabaseBackend instead.
  */
-export function getSupabaseClient(): SupabaseClient {
+export function getSupabaseClient(): SupabaseDatabaseClient {
   if (client === undefined) {
     const { url, anonKey } = supabaseEnv();
-    client = createClient(url, anonKey, {
+    client = createClient<Database>(url, anonKey, {
       auth: {
         persistSession: true,
         autoRefreshToken: true,

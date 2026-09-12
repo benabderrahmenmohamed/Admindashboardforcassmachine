@@ -1,5 +1,5 @@
 import { zodResolver } from '@hookform/resolvers/zod';
-import type { ReactElement } from 'react';
+import { useId, useState, type ReactElement } from 'react';
 import { useForm } from 'react-hook-form';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
@@ -13,19 +13,23 @@ import {
 import {
   Form,
   FormControl,
+  FormDescription,
   FormField,
   FormItem,
   FormLabel,
   FormMessage,
 } from '@/components/ui/form';
 import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
 import { errorMessage } from '@/lib/errors';
 import type { Category, Product } from '@/ports';
 import { useCreateProduct, useUpdateProduct } from '../hooks/useProducts';
 import {
+  productEditFormSchema,
   productFormSchema,
+  toProductCreateInput,
   toProductFormValues,
-  toProductInput,
+  toProductUpdateInput,
   type ProductFormValues,
 } from '../schema';
 
@@ -34,7 +38,7 @@ interface ProductFormDialogProps {
   onOpenChange: (open: boolean) => void;
   /** The button that opens the dialog to add a product. */
   trigger: ReactElement;
-  /** The product being edited, or null to add one. */
+  /** The product being edited, as the list currently shows it, or null to add one. */
   product: Product | null;
   /** Changes on every opening of the dialog, so each opening starts from a fresh form. */
   formSession: number;
@@ -89,10 +93,17 @@ function ProductForm({
 }) {
   const createProduct = useCreateProduct();
   const updateProduct = useUpdateProduct();
+  // The stock when the form opened. An edit sends the change from it rather than a new total, so a
+  // sale recorded while the form is open still counts; `product.stock` keeps following the list.
+  const [loadedStock] = useState(() => product?.stock ?? 0);
+  const [schema] = useState(() =>
+    product ? productEditFormSchema(loadedStock) : productFormSchema,
+  );
   const form = useForm<ProductFormValues>({
-    resolver: zodResolver(productFormSchema),
+    resolver: zodResolver(schema),
     defaultValues: toProductFormValues(product ?? undefined),
   });
+  const currentStockId = useId();
   // isSubmitting turns on synchronously in the submit event, before the async validation and before
   // the mutation's pending state reaches the screen, so a fast double click cannot save twice.
   const isSaving =
@@ -100,12 +111,12 @@ function ProductForm({
 
   const save = async (values: ProductFormValues) => {
     try {
-      const input = toProductInput(values);
       if (product) {
+        const input = toProductUpdateInput(values, loadedStock);
         await updateProduct.mutateAsync({ id: product.id, input });
         toast.success('Product updated successfully');
       } else {
-        await createProduct.mutateAsync(input);
+        await createProduct.mutateAsync(toProductCreateInput(values));
         toast.success('Product created successfully');
       }
       onClose();
@@ -190,14 +201,30 @@ function ProductForm({
             name="stock"
             render={({ field }) => (
               <FormItem className={FIELD_ITEM_CLASS}>
-                <FormLabel>Stock Quantity</FormLabel>
+                <FormLabel>{product ? 'Stock Quantity' : 'Opening Stock'}</FormLabel>
                 <FormControl>
                   <Input {...field} type="number" min="0" />
                 </FormControl>
+                {product && (
+                  <FormDescription>
+                    Saved as the change from {loadedStock}, so sales made meanwhile still count.
+                  </FormDescription>
+                )}
                 <FormMessage />
               </FormItem>
             )}
           />
+          {product && (
+            <div className={FIELD_ITEM_CLASS}>
+              <Label htmlFor={currentStockId}>Current Stock</Label>
+              <Input
+                id={currentStockId}
+                value={product.stock}
+                readOnly
+                className="bg-gray-50 text-gray-600"
+              />
+            </div>
+          )}
         </div>
         <FormField
           control={form.control}

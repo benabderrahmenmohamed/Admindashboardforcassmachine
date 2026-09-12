@@ -4,9 +4,11 @@ import { mm } from '@/lib/money';
 import type { Product } from '@/ports';
 import {
   PRICE_FORMAT_MESSAGE,
+  productEditFormSchema,
   productFormSchema,
+  toProductCreateInput,
   toProductFormValues,
-  toProductInput,
+  toProductUpdateInput,
   type ProductFormValues,
 } from './schema';
 
@@ -25,12 +27,27 @@ function formValues(overrides: Partial<ProductFormValues> = {}): ProductFormValu
   };
 }
 
-/** The messages the form shows under one field. */
+/** The messages the add form shows under one field. */
 function errorsFor(
   field: keyof ProductFormValues,
   overrides: Partial<ProductFormValues>,
 ): string[] {
-  const result = productFormSchema.safeParse(formValues(overrides));
+  return messagesFor(productFormSchema.safeParse(formValues(overrides)), field);
+}
+
+/** The messages the edit form of a product loaded with `loadedStock` shows under one field. */
+function editErrorsFor(
+  loadedStock: number,
+  field: keyof ProductFormValues,
+  overrides: Partial<ProductFormValues>,
+): string[] {
+  return messagesFor(productEditFormSchema(loadedStock).safeParse(formValues(overrides)), field);
+}
+
+function messagesFor(
+  result: ReturnType<typeof productFormSchema.safeParse>,
+  field: keyof ProductFormValues,
+): string[] {
   if (result.success) {
     return [];
   }
@@ -74,7 +91,7 @@ describe('productFormSchema', () => {
       { price: ' 7 ', millimes: 7_000 },
     ])('accepts $price as $millimes millimes', ({ price, millimes }) => {
       expect(errorsFor('price', { price })).toEqual([]);
-      expect(toProductInput(formValues({ price })).priceMillimes).toBe(millimes);
+      expect(toProductCreateInput(formValues({ price })).priceMillimes).toBe(millimes);
     });
 
     it.each(['', '   '])('requires a price (%j)', (price) => {
@@ -97,9 +114,10 @@ describe('productFormSchema', () => {
     it.each([
       { stock: '10', units: 10 },
       { stock: '0', units: 0 },
-    ])('accepts $stock', ({ stock, units }) => {
+      { stock: '-0', units: 0 },
+    ])('accepts $stock as the opening stock', ({ stock, units }) => {
       expect(errorsFor('stock', { stock })).toEqual([]);
-      expect(toProductInput(formValues({ stock })).stock).toBe(units);
+      expect(toProductCreateInput(formValues({ stock })).openingStock).toBe(units);
     });
 
     it.each([
@@ -144,23 +162,53 @@ describe('productFormSchema', () => {
   });
 });
 
-describe('toProductInput', () => {
-  it('builds the port input with the price in millimes', () => {
-    expect(toProductInput(formValues({ name: '  Harissa  ', barcode: ' 6191234567890 ' }))).toEqual(
-      {
-        name: 'Harissa',
-        priceMillimes: 2_450,
-        categoryId: 'cat-epicerie',
-        barcode: '6191234567890',
-        description: 'Tube 70 g',
-        imageUrl: '',
-        stock: 24,
-      },
-    );
+describe('productEditFormSchema', () => {
+  it('keeps a stock that sales took below zero, so the product stays editable', () => {
+    const values = toProductFormValues({ ...product, stock: -2 });
+    expect(productEditFormSchema(-2).safeParse(values).success).toBe(true);
+    expect(productFormSchema.safeParse(values).success).toBe(false);
+  });
+
+  it.each([
+    { loaded: -2, stock: '-1' },
+    { loaded: -2, stock: '-3' },
+    { loaded: 5, stock: '-1' },
+  ])('rejects a typed stock of $stock below zero (loaded $loaded)', ({ loaded, stock }) => {
+    expect(editErrorsFor(loaded, 'stock', { stock })).toEqual(['Stock cannot be negative']);
+  });
+
+  it.each([
+    { stock: '', message: 'Stock is required' },
+    { stock: '2.5', message: 'Stock must be a whole number' },
+    { stock: 'abc', message: 'Stock must be a whole number' },
+  ])('still rejects $stock', ({ stock, message }) => {
+    expect(editErrorsFor(5, 'stock', { stock })).toEqual([message]);
+  });
+
+  it('applies the same rules as the add form to the other fields', () => {
+    expect(editErrorsFor(5, 'price', { price: '1.2345' })).toEqual([PRICE_FORMAT_MESSAGE]);
+    expect(editErrorsFor(5, 'name', { name: ' ' })).toEqual(['Product name is required']);
+    expect(editErrorsFor(5, 'imageUrl', { imageUrl: 'not a url' })).toEqual([URL_MESSAGE]);
+  });
+});
+
+describe('toProductCreateInput', () => {
+  it('builds the port input with the price in millimes and the stock as opening stock', () => {
+    expect(
+      toProductCreateInput(formValues({ name: '  Harissa  ', barcode: ' 6191234567890 ' })),
+    ).toEqual({
+      name: 'Harissa',
+      priceMillimes: 2_450,
+      categoryId: 'cat-epicerie',
+      barcode: '6191234567890',
+      description: 'Tube 70 g',
+      imageUrl: '',
+      openingStock: 24,
+    });
   });
 
   it('sends no category for the empty option', () => {
-    expect(toProductInput(formValues({ categoryId: '' })).categoryId).toBeNull();
+    expect(toProductCreateInput(formValues({ categoryId: '' })).categoryId).toBeNull();
   });
 
   it.each([
@@ -171,21 +219,72 @@ describe('toProductInput', () => {
     { price: '999999999.999', millimes: 999_999_999_999 },
     { price: '1000000000', millimes: 1_000_000_000_000 },
   ])('converts $price exactly', ({ price, millimes }) => {
-    expect(toProductInput(formValues({ price })).priceMillimes).toBe(millimes);
+    expect(toProductCreateInput(formValues({ price })).priceMillimes).toBe(millimes);
   });
 
   it('rejects a price above one billion dinars', () => {
     const message = 'Price cannot be above one billion dinars';
     expect(errorsFor('price', { price: '1000000000.001' })).toEqual([message]);
-    const error = thrownBy(() => toProductInput(formValues({ price: '9007199254740.991' })));
+    const error = thrownBy(() => toProductCreateInput(formValues({ price: '9007199254740.991' })));
     expect(error).toMatchObject({ code: 'VALIDATION_ERROR', message });
   });
 
   it('throws VALIDATION_ERROR with the issues for values the form rejects', () => {
-    const error = thrownBy(() => toProductInput(formValues({ price: '1.2345' })));
+    const error = thrownBy(() => toProductCreateInput(formValues({ price: '1.2345' })));
     expect(error).toBeInstanceOf(AppError);
     expect(error).toMatchObject({ code: 'VALIDATION_ERROR', message: PRICE_FORMAT_MESSAGE });
     expect((error as AppError).details?.issues).toHaveLength(1);
+  });
+
+  it('refuses a negative opening stock', () => {
+    const error = thrownBy(() => toProductCreateInput(formValues({ stock: '-1' })));
+    expect(error).toMatchObject({ code: 'VALIDATION_ERROR', message: 'Stock cannot be negative' });
+  });
+});
+
+describe('toProductUpdateInput', () => {
+  it('builds the port input with the stock as the change from the loaded stock', () => {
+    expect(
+      toProductUpdateInput(formValues({ name: '  Harissa  ', barcode: ' 6191234567890 ' }), 20),
+    ).toEqual({
+      name: 'Harissa',
+      priceMillimes: 2_450,
+      categoryId: 'cat-epicerie',
+      barcode: '6191234567890',
+      description: 'Tube 70 g',
+      imageUrl: '',
+      stockDelta: 4,
+    });
+  });
+
+  it.each([
+    { loaded: 24, stock: '30', delta: 6 },
+    { loaded: 24, stock: '20', delta: -4 },
+    { loaded: 24, stock: '24', delta: 0 },
+    { loaded: 24, stock: '0', delta: -24 },
+    { loaded: 0, stock: '-0', delta: 0 },
+    { loaded: -3, stock: '5', delta: 8 },
+    { loaded: -3, stock: '-3', delta: 0 },
+  ])('sends $delta for $stock typed over $loaded loaded', ({ loaded, stock, delta }) => {
+    expect(toProductUpdateInput(formValues({ stock }), loaded).stockDelta).toBe(delta);
+  });
+
+  it('sends no category for the empty option', () => {
+    expect(toProductUpdateInput(formValues({ categoryId: '' }), 24).categoryId).toBeNull();
+  });
+
+  it('throws VALIDATION_ERROR with the issues for values the edit form rejects', () => {
+    const error = thrownBy(() => toProductUpdateInput(formValues({ stock: '-1' }), -2));
+    expect(error).toBeInstanceOf(AppError);
+    expect(error).toMatchObject({ code: 'VALIDATION_ERROR', message: 'Stock cannot be negative' });
+    expect((error as AppError).details?.issues).toHaveLength(1);
+  });
+
+  it('refuses a change too large to count exactly', () => {
+    const error = thrownBy(() =>
+      toProductUpdateInput(formValues({ stock: String(Number.MAX_SAFE_INTEGER) }), -1),
+    );
+    expect(error).toMatchObject({ code: 'VALIDATION_ERROR' });
   });
 });
 
@@ -213,14 +312,21 @@ describe('toProductFormValues', () => {
       imageUrl: '',
     });
     expect(toProductFormValues(product)).toMatchObject({ categoryId: '', stock: '0' });
+    expect(toProductFormValues({ ...product, stock: -2 })).toMatchObject({ stock: '-2' });
   });
 
-  it('keeps the price of a product saved without changes', () => {
+  it('keeps the price and the stock of a product saved without changes', () => {
     for (const millimes of [0, 1, 999, 1_000, 1_350, 12_500, 999_999_999_999, 1_000_000_000_000]) {
-      const input = toProductInput(
+      const input = toProductUpdateInput(
         toProductFormValues({ ...product, priceMillimes: mm(millimes) }),
+        product.stock,
       );
       expect(input.priceMillimes).toBe(millimes);
+      expect(input.stockDelta).toBe(0);
+    }
+    for (const stock of [-5, 0, 7, 1_000_000]) {
+      const input = toProductUpdateInput(toProductFormValues({ ...product, stock }), stock);
+      expect(input.stockDelta).toBe(0);
     }
   });
 });

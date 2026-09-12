@@ -33,11 +33,11 @@ export const productSchema = z.object({
   name: z.string(),
   priceMillimes: priceMillimesSchema,
   categoryId: z.string().nullable(),
-  /** Display name of the category; can outlive a deleted category on legacy data. */
   categoryName: z.string().nullable(),
   barcode: z.string(),
   description: z.string(),
   imageUrl: z.string(),
+  /** Always the sum of the product's stock movements; may be negative. */
   stock: z.number().int(),
   available: z.boolean(),
   createdAt: z.string(),
@@ -45,7 +45,7 @@ export const productSchema = z.object({
 });
 export type Product = z.infer<typeof productSchema>;
 
-export const productInputSchema = z.object({
+const productFieldsSchema = z.object({
   name: z.string().trim().min(1, 'Product name is required'),
   priceMillimes: priceMillimesSchema,
   categoryId: z.string().min(1).nullable(),
@@ -58,14 +58,29 @@ export const productInputSchema = z.object({
       error: 'Enter a full http(s) URL, e.g. https://example.com/image.jpg',
     }),
   ]),
-  stock: z.number().int().min(0, 'Stock cannot be negative'),
 });
-export type ProductInput = z.infer<typeof productInputSchema>;
+
+/** A new product; its opening stock is written as an 'opening' stock movement. */
+export const productCreateInputSchema = productFieldsSchema.extend({
+  openingStock: z.number().int().min(0, 'Stock cannot be negative'),
+});
+export type ProductCreateInput = z.infer<typeof productCreateInputSchema>;
+
+/**
+ * Changes to a product. Stock is never overwritten: `stockDelta` (counted minus shown when the form
+ * opened) becomes an 'adjustment' movement, so a sale made meanwhile is not undone.
+ */
+export const productUpdateInputSchema = productFieldsSchema.extend({
+  stockDelta: z.number().int(),
+});
+export type ProductUpdateInput = z.infer<typeof productUpdateInputSchema>;
 
 export interface CatalogPort {
+  /** Products that are not archived, in creation order. */
   listProducts(): Promise<Product[]>;
-  createProduct(input: ProductInput): Promise<Product>;
-  updateProduct(id: string, input: ProductInput): Promise<Product>;
+  createProduct(input: ProductCreateInput): Promise<Product>;
+  updateProduct(id: string, input: ProductUpdateInput): Promise<Product>;
+  /** Archives the product: sales that mention it keep pointing at it. */
   deleteProduct(id: string): Promise<void>;
   listCategories(): Promise<Category[]>;
   createCategory(input: CategoryInput): Promise<Category>;

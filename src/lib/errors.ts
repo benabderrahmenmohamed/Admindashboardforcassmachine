@@ -1,6 +1,6 @@
 /**
- * Every failure that crosses a port is an AppError carrying one of these codes. Callers decide
- * what to do from the code alone, never from the message text: see `errorClass`.
+ * Every failure that crosses a port is an AppError carrying one of these codes (contracts/errors.md).
+ * Callers decide what to do from the code alone, never from the message text: see `errorClass`.
  */
 export const ERROR_CODES = [
   'NETWORK_ERROR',
@@ -10,6 +10,11 @@ export const ERROR_CODES = [
   'FORBIDDEN',
   'NOT_FOUND',
   'VALIDATION_ERROR',
+  'IDEMPOTENCY_CONFLICT',
+  'SEQUENCE_GAP',
+  'SESSION_CLOSED',
+  'SESSION_ALREADY_OPEN',
+  'TERMINAL_SUPERSEDED',
   'CONFIG_ERROR',
   'UNKNOWN',
 ] as const;
@@ -19,24 +24,33 @@ export type ErrorCode = (typeof ERROR_CODES)[number];
 /**
  * - `retriable`: the same request can succeed later (connectivity, overload).
  * - `auth`: wait until the user is signed in again, then retry.
- * - `permanent`: repeating the request gives the same answer, so a person has to act.
+ * - `conflict`: repeating the request gives the same answer, so a person has to act.
  */
-export type ErrorClass = 'retriable' | 'auth' | 'permanent';
+export type ErrorClass = 'retriable' | 'auth' | 'conflict';
 
 const ERROR_CLASS: Record<ErrorCode, ErrorClass> = {
   NETWORK_ERROR: 'retriable',
   SERVER_ERROR: 'retriable',
   RATE_LIMITED: 'retriable',
   UNAUTHENTICATED: 'auth',
-  FORBIDDEN: 'permanent',
-  NOT_FOUND: 'permanent',
-  VALIDATION_ERROR: 'permanent',
-  CONFIG_ERROR: 'permanent',
-  UNKNOWN: 'permanent',
+  FORBIDDEN: 'conflict',
+  NOT_FOUND: 'conflict',
+  VALIDATION_ERROR: 'conflict',
+  IDEMPOTENCY_CONFLICT: 'conflict',
+  SEQUENCE_GAP: 'conflict',
+  SESSION_CLOSED: 'conflict',
+  SESSION_ALREADY_OPEN: 'conflict',
+  TERMINAL_SUPERSEDED: 'conflict',
+  CONFIG_ERROR: 'conflict',
+  UNKNOWN: 'conflict',
 };
 
 export function errorClass(code: ErrorCode): ErrorClass {
   return ERROR_CLASS[code];
+}
+
+export function isErrorCode(value: unknown): value is ErrorCode {
+  return typeof value === 'string' && (ERROR_CODES as readonly string[]).includes(value);
 }
 
 export class AppError extends Error {

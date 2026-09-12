@@ -1,148 +1,96 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
-import { AppError } from '@/lib/errors';
+import { describe, expect, it } from 'vitest';
 import { mm } from '@/lib/money';
-import type { ProductInput } from '@/ports';
+import type { ProductCreateInput } from '@/ports';
 import { createSupabaseCatalog } from './catalog';
-import { createEdgeRequest, type FetchLike } from './http';
+import {
+  failureOf,
+  fakeSupabase,
+  json,
+  noContent,
+  profileJson,
+  raised,
+  routes,
+  type FakeHandler,
+} from './fakeSupabase';
 
-const PROJECT_URL = 'https://project-ref.supabase.co';
-/** Written out rather than built from http.ts, so a wrong function slug or prefix fails here. */
-const BASE = 'https://project-ref.supabase.co/functions/v1/make-server-81f0b18a';
-
-interface Call {
-  readonly method: string;
-  readonly path: string;
-  readonly authorization: string | null;
-  readonly rawBody: string | undefined;
-  readonly body: unknown;
+function setup(handler: FakeHandler) {
+  const { client, calls } = fakeSupabase(handler);
+  return { calls, catalog: createSupabaseCatalog(client) };
 }
 
-type Route = (body: unknown) => unknown;
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null;
-}
-
-/** A stand-in for the edge function: answers "METHOD /path" routes with JSON and records calls. */
-function fakeEdgeFunction(routes: Record<string, Route>) {
-  const calls: Call[] = [];
-  const fetch: FetchLike = (url, init) => {
-    const method = init.method ?? 'GET';
-    // A URL outside the function matches no route, and its `path` shows the whole URL.
-    const path = url.startsWith(BASE) ? url.slice(BASE.length) : url;
-    const rawBody = typeof init.body === 'string' ? init.body : undefined;
-    const body: unknown = rawBody === undefined ? undefined : JSON.parse(rawBody);
-    calls.push({
-      method,
-      path,
-      authorization: new Headers(init.headers).get('Authorization'),
-      rawBody,
-      body,
-    });
-    const route = routes[`${method} ${path}`];
-    return Promise.resolve(
-      route
-        ? new Response(JSON.stringify(route(body)), { status: 200 })
-        : new Response(JSON.stringify({ error: `No route for ${method} ${path}` }), {
-            status: 404,
-          }),
-    );
-  };
-  const catalog = createSupabaseCatalog(
-    createEdgeRequest({
-      url: PROJECT_URL,
-      anonKey: 'anon-key',
-      getAccessToken: () => Promise.resolve('user-token'),
-      fetch,
-    }),
-  );
-  return { calls, catalog };
-}
-
-const categoryRows = [
-  { id: 'c-drinks', name: 'Boissons', color: '#3b82f6', createdAt: '2026-01-05T09:00:00.000Z' },
-  // The legacy store allows duplicate names; products take the id of the first category named so.
-  { id: 'c-drinks-2', name: 'Boissons', color: '#6366f1', createdAt: '2026-01-05T09:00:30.000Z' },
-  { id: 'c-grocery', name: 'Épicerie', color: '#10b981', createdAt: '2026-01-05T09:01:00.000Z' },
-];
-
-/** What the key-value store holds after years of the old app. */
-const legacyProductRows = [
-  // Created through the old form: the create route stored price and stock as numbers.
+/** Rows as `select('*, categories(name)')` returns them. */
+const productRows = [
   {
     id: 'p-water',
+    shop_id: 'shop-1',
+    category_id: 'c-drinks',
     name: 'Eau minérale 1,5 L',
-    price: 0.85,
-    category: 'Boissons',
-    barcode: '6191234000011',
+    price_millimes: 850,
+    barcode: '6194000100015',
     description: '',
-    image: '',
-    stock: 48,
+    image_url: '',
+    stock: 120,
     available: true,
-    createdAt: '2026-01-06T10:00:00.000Z',
-    updatedAt: '2026-01-06T10:00:00.000Z',
+    archived_at: null,
+    legacy_kv_key: null,
+    created_at: '2026-09-01T08:00:00+00:00',
+    updated_at: '2026-09-01T08:00:00+00:00',
+    categories: { name: 'Boissons' },
   },
-  // Edited through the old form: the update route stored the form's text as it was.
   {
-    id: 'p-harissa',
-    name: 'Harissa',
-    price: '2.4',
-    category: 'Épicerie',
-    barcode: '6191234000028',
-    description: 'Pot 380 g',
-    image: 'https://example.com/harissa.jpg',
-    stock: '7',
+    id: 'p-bread',
+    shop_id: 'shop-1',
+    category_id: null,
+    name: 'Baguette',
+    price_millimes: 200,
+    barcode: null,
+    description: 'Cuite le matin',
+    image_url: 'https://example.com/baguette.jpg',
+    stock: -2,
     available: false,
-    createdAt: '2026-01-06T10:05:00.000Z',
-    updatedAt: '2026-02-01T08:30:00.000Z',
-  },
-  // An early row: server-defaulted category, and no stock, barcode, image or updatedAt.
-  { id: 'p-bread', name: 'Pain', price: 0.2, category: 'uncategorized', createdAt: '2026-01-02' },
-  // A category that was deleted since, and a stock that is not a whole number.
-  {
-    id: 'p-oil',
-    name: "Huile d'olive 1 L",
-    price: '18,750',
-    category: 'Huiles',
-    barcode: '',
-    description: '',
-    image: '',
-    stock: '2.5',
-    available: true,
-    createdAt: '2026-01-07T11:00:00.000Z',
-    updatedAt: '2026-01-07T11:00:00.000Z',
+    archived_at: null,
+    legacy_kv_key: 'product:17',
+    created_at: '2026-09-01T08:05:00+00:00',
+    updated_at: '2026-09-03T17:40:12.52+00:00',
+    categories: null,
   },
 ];
 
-/** Answers a product write the way the legacy routes do: the stored row, echoed back. */
-function echoProduct(id: string, extra: Record<string, unknown>): Route {
-  return (body) => ({ product: { ...(isRecord(body) ? body : {}), id, ...extra } });
-}
-
-const milk: ProductInput = {
+/** What save_product returns (private.product_json). */
+const savedMilk = {
+  id: 'p-milk',
   name: 'Lait demi-écrémé 1 L',
-  priceMillimes: mm(1350),
-  categoryId: 'c-drinks',
-  barcode: '6191234000035',
+  price_millimes: 1350,
+  category_id: 'c-dairy',
+  category_name: 'Produits laitiers',
+  barcode: '6194000200012',
   description: 'Bouteille',
-  imageUrl: '',
+  image_url: '',
   stock: 30,
+  available: true,
+  created_at: '2026-09-11T09:00:00+00:00',
+  updated_at: '2026-09-11T09:00:00+00:00',
 };
 
-afterEach(() => {
-  vi.restoreAllMocks();
-});
+const milk: ProductCreateInput = {
+  name: 'Lait demi-écrémé 1 L',
+  priceMillimes: mm(1350),
+  categoryId: 'c-dairy',
+  barcode: '6194000200012',
+  description: 'Bouteille',
+  imageUrl: '',
+  openingStock: 30,
+};
 
 describe('supabase catalog', () => {
-  it('reads mixed legacy product rows', async () => {
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
-    const { calls, catalog } = fakeEdgeFunction({
-      'GET /products': () => ({ products: legacyProductRows }),
-      'GET /categories': () => ({ categories: categoryRows }),
-    });
+  it('lists products that are not archived, oldest first, with the name of their category', async () => {
+    const { calls, catalog } = setup(routes({ 'GET /rest/v1/products': () => json(productRows) }));
 
     const products = await catalog.listProducts();
 
+    expect(calls[0].query.get('select')).toBe('*,categories(name)');
+    expect(calls[0].query.get('archived_at')).toBe('is.null');
+    expect(calls[0].query.get('order')).toBe('created_at.asc,id.asc');
     expect(products).toEqual([
       {
         id: 'p-water',
@@ -150,272 +98,232 @@ describe('supabase catalog', () => {
         priceMillimes: 850,
         categoryId: 'c-drinks',
         categoryName: 'Boissons',
-        barcode: '6191234000011',
+        barcode: '6194000100015',
         description: '',
         imageUrl: '',
-        stock: 48,
+        stock: 120,
         available: true,
-        createdAt: '2026-01-06T10:00:00.000Z',
-        updatedAt: '2026-01-06T10:00:00.000Z',
-      },
-      {
-        id: 'p-harissa',
-        name: 'Harissa',
-        priceMillimes: 2400,
-        categoryId: 'c-grocery',
-        categoryName: 'Épicerie',
-        barcode: '6191234000028',
-        description: 'Pot 380 g',
-        imageUrl: 'https://example.com/harissa.jpg',
-        stock: 7,
-        available: false,
-        createdAt: '2026-01-06T10:05:00.000Z',
-        updatedAt: '2026-02-01T08:30:00.000Z',
+        createdAt: '2026-09-01T08:00:00+00:00',
+        updatedAt: '2026-09-01T08:00:00+00:00',
       },
       {
         id: 'p-bread',
-        name: 'Pain',
+        name: 'Baguette',
         priceMillimes: 200,
         categoryId: null,
-        categoryName: 'uncategorized',
+        categoryName: null,
         barcode: '',
-        description: '',
-        imageUrl: '',
-        stock: 0,
-        available: true,
-        createdAt: '2026-01-02',
-        updatedAt: '2026-01-02',
-      },
-      {
-        id: 'p-oil',
-        name: "Huile d'olive 1 L",
-        priceMillimes: 18750,
-        categoryId: null,
-        categoryName: 'Huiles',
-        barcode: '',
-        description: '',
-        imageUrl: '',
-        stock: 0,
-        available: true,
-        createdAt: '2026-01-07T11:00:00.000Z',
-        updatedAt: '2026-01-07T11:00:00.000Z',
+        description: 'Cuite le matin',
+        imageUrl: 'https://example.com/baguette.jpg',
+        stock: -2,
+        available: false,
+        createdAt: '2026-09-01T08:05:00+00:00',
+        updatedAt: '2026-09-03T17:40:12.52+00:00',
       },
     ]);
-    expect(warn).toHaveBeenCalledWith(expect.stringContaining('p-bread'));
-    expect(warn).toHaveBeenCalledWith(expect.stringContaining('p-oil'));
-    expect(calls.map((call) => call.authorization)).toEqual(['Bearer anon-key', 'Bearer anon-key']);
   });
 
-  it('rejects a stored price it cannot read exactly, naming the product', async () => {
-    const { catalog } = fakeEdgeFunction({
-      'GET /products': () => ({
-        products: [{ ...legacyProductRows[0], id: 'p-odd', price: 0.30000000000000004 }],
-      }),
-      'GET /categories': () => ({ categories: categoryRows }),
-    });
-
-    const error: unknown = await catalog.listProducts().then(
-      () => null,
-      (failure: unknown) => failure,
+  it('refuses a stored price above the port limit as unreadable', async () => {
+    const { catalog } = setup(() =>
+      json([{ ...productRows[0], price_millimes: 1_000_000_000_001 }]),
     );
 
-    expect(error).toBeInstanceOf(AppError);
-    expect(error).toMatchObject({ code: 'VALIDATION_ERROR', details: { productId: 'p-odd' } });
+    const error = await failureOf(catalog.listProducts());
+
+    expect(error.code).toBe('VALIDATION_ERROR');
+    expect(error.message).toContain('p-water');
   });
 
-  it('names every product it cannot read in one error', async () => {
-    const { catalog } = fakeEdgeFunction({
-      'GET /products': () => ({
-        products: [
-          { ...legacyProductRows[0], id: 'p-odd', price: 0.30000000000000004 },
-          legacyProductRows[1],
-          { ...legacyProductRows[0], id: 'p-negative', price: -1 },
-        ],
-      }),
-      'GET /categories': () => ({ categories: categoryRows }),
-    });
-
-    const error: unknown = await catalog.listProducts().then(
-      () => null,
-      (failure: unknown) => failure,
+  it('creates a product through save_product, its opening stock as the stock delta', async () => {
+    const { calls, catalog } = setup(
+      routes({ 'POST /rest/v1/rpc/save_product': () => json(savedMilk) }),
     );
-
-    expect(error).toBeInstanceOf(AppError);
-    expect(error).toMatchObject({ code: 'VALIDATION_ERROR' });
-    const { message, details } = error as AppError;
-    expect(message).toContain('p-odd');
-    expect(message).toContain('p-negative');
-    expect(details?.failures).toHaveLength(2);
-  });
-
-  it('reads a whole stock the old form stored with a decimal point', async () => {
-    const { catalog } = fakeEdgeFunction({
-      'GET /products': () => ({
-        products: [{ ...legacyProductRows[0], id: 'p-count', stock: '12.0' }],
-      }),
-      'GET /categories': () => ({ categories: categoryRows }),
-    });
-
-    const [product] = await catalog.listProducts();
-
-    expect(product.stock).toBe(12);
-  });
-
-  it('creates a product with dinars as a JSON number and the category name', async () => {
-    const { calls, catalog } = fakeEdgeFunction({
-      'GET /categories': () => ({ categories: categoryRows }),
-      'POST /products': echoProduct('p-milk', {
-        available: true,
-        createdAt: '2026-03-01T09:00:00.000Z',
-        updatedAt: '2026-03-01T09:00:00.000Z',
-      }),
-    });
 
     const created = await catalog.createProduct(milk);
 
-    const post = calls.find((call) => call.method === 'POST');
-    expect(post?.path).toBe('/products');
-    expect(post?.authorization).toBe('Bearer user-token');
-    expect(post?.body).toEqual({
-      name: 'Lait demi-écrémé 1 L',
-      price: 1.35,
-      category: 'Boissons',
-      barcode: '6191234000035',
-      description: 'Bouteille',
-      image: '',
-      stock: 30,
+    expect(calls[0].body).toEqual({
+      p: {
+        name: 'Lait demi-écrémé 1 L',
+        price_millimes: 1350,
+        category_id: 'c-dairy',
+        barcode: '6194000200012',
+        description: 'Bouteille',
+        image_url: '',
+        stock_delta: 30,
+      },
     });
-    expect(post?.rawBody).toContain('"price":1.35,');
-    expect(post?.rawBody).toContain('"stock":30');
     expect(created).toEqual({
       id: 'p-milk',
       name: 'Lait demi-écrémé 1 L',
       priceMillimes: 1350,
-      categoryId: 'c-drinks',
-      categoryName: 'Boissons',
-      barcode: '6191234000035',
+      categoryId: 'c-dairy',
+      categoryName: 'Produits laitiers',
+      barcode: '6194000200012',
       description: 'Bouteille',
       imageUrl: '',
       stock: 30,
       available: true,
-      createdAt: '2026-03-01T09:00:00.000Z',
-      updatedAt: '2026-03-01T09:00:00.000Z',
+      createdAt: '2026-09-11T09:00:00+00:00',
+      updatedAt: '2026-09-11T09:00:00+00:00',
     });
   });
 
-  it('updates a product with a PUT carrying dinars as a JSON number and the category name', async () => {
-    const { calls, catalog } = fakeEdgeFunction({
-      'GET /categories': () => ({ categories: categoryRows }),
-      'PUT /products/p-harissa': echoProduct('p-harissa', {
-        available: false,
-        createdAt: '2026-01-06T10:05:00.000Z',
-        updatedAt: '2026-03-02T12:00:00.000Z',
-      }),
+  it('updates a product with its id and the stock delta', async () => {
+    const { calls, catalog } = setup(
+      routes({ 'POST /rest/v1/rpc/save_product': () => json({ ...savedMilk, stock: 27 }) }),
+    );
+
+    const updated = await catalog.updateProduct('p-milk', {
+      name: 'Lait demi-écrémé 1 L',
+      priceMillimes: mm(1400),
+      categoryId: null,
+      barcode: '',
+      description: 'Bouteille',
+      imageUrl: '',
+      stockDelta: -3,
     });
 
-    const updated = await catalog.updateProduct('p-harissa', {
-      name: 'Harissa',
-      priceMillimes: mm(12500),
-      categoryId: 'c-grocery',
-      barcode: '6191234000028',
-      description: 'Pot 380 g',
-      imageUrl: 'https://example.com/harissa.jpg',
-      stock: 12,
+    expect(calls[0].body).toEqual({
+      p: {
+        id: 'p-milk',
+        name: 'Lait demi-écrémé 1 L',
+        price_millimes: 1400,
+        category_id: null,
+        barcode: '',
+        description: 'Bouteille',
+        image_url: '',
+        stock_delta: -3,
+      },
     });
-
-    const put = calls.find((call) => call.method === 'PUT');
-    expect(put?.authorization).toBe('Bearer user-token');
-    expect(put?.body).toEqual({
-      name: 'Harissa',
-      price: 12.5,
-      category: 'Épicerie',
-      barcode: '6191234000028',
-      description: 'Pot 380 g',
-      image: 'https://example.com/harissa.jpg',
-      stock: 12,
-    });
-    expect(put?.rawBody).toContain('"price":12.5,');
-    expect(updated).toMatchObject({
-      id: 'p-harissa',
-      priceMillimes: 12500,
-      categoryId: 'c-grocery',
-      stock: 12,
-      available: false,
-    });
-  });
-
-  it.each<[number, number]>([
-    [0, 0],
-    [5, 0.005],
-    [990, 0.99],
-    [18750, 18.75],
-    [123456789, 123456.789],
-  ])('sends %i millimes as %d dinars', async (millimes, dinars) => {
-    const { calls, catalog } = fakeEdgeFunction({
-      'GET /categories': () => ({ categories: categoryRows }),
-      'POST /products': echoProduct('p-new', { createdAt: '2026-03-01' }),
-    });
-
-    const created = await catalog.createProduct({ ...milk, priceMillimes: mm(millimes) });
-
-    expect(calls.find((call) => call.method === 'POST')?.body).toMatchObject({ price: dinars });
-    expect(created.priceMillimes).toBe(millimes);
-  });
-
-  it('sends an empty category name for a product without a category', async () => {
-    const { calls, catalog } = fakeEdgeFunction({
-      'GET /categories': () => ({ categories: categoryRows }),
-      'POST /products': echoProduct('p-new', { createdAt: '2026-03-01' }),
-    });
-
-    const created = await catalog.createProduct({ ...milk, categoryId: null });
-
-    expect(calls.find((call) => call.method === 'POST')?.body).toMatchObject({ category: '' });
-    expect(created).toMatchObject({ categoryId: null, categoryName: null });
+    expect(updated.stock).toBe(27);
   });
 
   it('rejects invalid input without sending anything', async () => {
-    const { calls, catalog } = fakeEdgeFunction({});
+    const { calls, catalog } = setup(() => json({}));
 
-    const error: unknown = await catalog.createProduct({ ...milk, name: '  ' }).then(
-      () => null,
-      (failure: unknown) => failure,
-    );
+    const error = await failureOf(catalog.createProduct({ ...milk, name: '  ' }));
 
     expect(error).toMatchObject({ code: 'VALIDATION_ERROR', message: 'Product name is required' });
     expect(calls).toEqual([]);
   });
 
-  it('deletes products and categories as the user', async () => {
-    const { calls, catalog } = fakeEdgeFunction({
-      'DELETE /products/p-water': () => ({ message: 'Product deleted successfully' }),
-      'DELETE /categories/c-drinks': () => ({ message: 'Category deleted successfully' }),
-    });
+  it('archives a product on delete, and passes NOT_FOUND on with the product id', async () => {
+    const replies = [
+      noContent(),
+      raised('NOT_FOUND', 404, { product_id: 'p-gone' }, 'The product does not exist.'),
+    ];
+    const { calls, catalog } = setup(() => replies[calls.length - 1]);
 
     await catalog.deleteProduct('p-water');
-    await catalog.deleteCategory('c-drinks');
+    const error = await failureOf(catalog.deleteProduct('p-gone'));
 
-    expect(calls.map((call) => [call.method, call.path, call.authorization])).toEqual([
-      ['DELETE', '/products/p-water', 'Bearer user-token'],
-      ['DELETE', '/categories/c-drinks', 'Bearer user-token'],
+    expect(calls.map((call) => [call.method, call.path, call.body])).toEqual([
+      ['POST', '/rest/v1/rpc/archive_product', { p_product_id: 'p-water' }],
+      ['POST', '/rest/v1/rpc/archive_product', { p_product_id: 'p-gone' }],
+    ]);
+    expect(error).toMatchObject({
+      code: 'NOT_FOUND',
+      message: 'The product does not exist.',
+      details: { productId: 'p-gone' },
+    });
+  });
+
+  it('lists categories oldest first', async () => {
+    const { calls, catalog } = setup(
+      routes({
+        'GET /rest/v1/categories': () =>
+          json([
+            { id: 'c-drinks', name: 'Boissons', color: '#3b82f6', created_at: '2026-09-01' },
+            {
+              id: 'c-dairy',
+              name: 'Produits laitiers',
+              color: '#10b981',
+              created_at: '2026-09-02',
+            },
+          ]),
+      }),
+    );
+
+    const categories = await catalog.listCategories();
+
+    expect(calls[0].query.get('select')).toBe('id,name,color,created_at');
+    expect(calls[0].query.get('order')).toBe('created_at.asc,id.asc');
+    expect(categories).toEqual([
+      { id: 'c-drinks', name: 'Boissons', color: '#3b82f6', createdAt: '2026-09-01' },
+      { id: 'c-dairy', name: 'Produits laitiers', color: '#10b981', createdAt: '2026-09-02' },
     ]);
   });
 
-  it('creates a category with a trimmed name', async () => {
-    const { calls, catalog } = fakeEdgeFunction({
-      'POST /categories': (body) => ({
-        category: { ...(isRecord(body) ? body : {}), id: 'c-new', createdAt: '2026-03-03' },
+  it('creates a category from its trimmed name and colour only', async () => {
+    const { calls, catalog } = setup(
+      routes({
+        'POST /rest/v1/categories': () =>
+          json({ id: 'c-new', name: 'Conserves', color: '#f59e0b', created_at: '2026-09-11' }, 201),
       }),
-    });
+    );
 
     const created = await catalog.createCategory({ name: '  Conserves ', color: '#f59e0b' });
 
     expect(calls[0].body).toEqual({ name: 'Conserves', color: '#f59e0b' });
+    expect(calls[0].query.get('select')).toBe('id,name,color,created_at');
     expect(created).toEqual({
       id: 'c-new',
       name: 'Conserves',
       color: '#f59e0b',
-      createdAt: '2026-03-03',
+      createdAt: '2026-09-11',
     });
+  });
+
+  it('passes on the FORBIDDEN of row-level security refusing a cashier’s new category', async () => {
+    const { catalog } = setup(() =>
+      json(
+        {
+          code: '42501',
+          message: 'new row violates row-level security policy for table "categories"',
+          details: null,
+          hint: null,
+        },
+        403,
+      ),
+    );
+
+    const error = await failureOf(catalog.createCategory({ name: 'Conserves', color: '#f59e0b' }));
+
+    expect(error.code).toBe('FORBIDDEN');
+  });
+
+  it('deletes a category as an admin, and reports a delete that removed nothing as NOT_FOUND', async () => {
+    let deleted = false;
+    const { calls, catalog } = setup(
+      routes({
+        'POST /rest/v1/rpc/my_profile': () => json(profileJson('admin')),
+        'DELETE /rest/v1/categories': () => {
+          const rows = deleted ? [] : [{ id: 'c-drinks' }];
+          deleted = true;
+          return json(rows);
+        },
+      }),
+    );
+
+    await catalog.deleteCategory('c-drinks');
+    const error = await failureOf(catalog.deleteCategory('c-drinks'));
+
+    const deletes = calls.filter((call) => call.method === 'DELETE');
+    expect(deletes.map((call) => [call.query.get('id'), call.query.get('select')])).toEqual([
+      ['eq.c-drinks', 'id'],
+      ['eq.c-drinks', 'id'],
+    ]);
+    expect(error).toMatchObject({ code: 'NOT_FOUND', details: { categoryId: 'c-drinks' } });
+  });
+
+  it('refuses a cashier’s category delete before sending it', async () => {
+    const { calls, catalog } = setup(
+      routes({ 'POST /rest/v1/rpc/my_profile': () => json(profileJson('cashier')) }),
+    );
+
+    const error = await failureOf(catalog.deleteCategory('c-drinks'));
+
+    expect(error.code).toBe('FORBIDDEN');
+    expect(calls.map((call) => call.method)).toEqual(['POST']);
   });
 });

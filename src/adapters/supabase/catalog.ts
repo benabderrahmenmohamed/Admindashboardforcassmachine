@@ -1,254 +1,120 @@
-import { z } from 'zod';
-import { AppError, toAppError } from '@/lib/errors';
-import type { Millimes } from '@/lib/money';
+import { AppError } from '@/lib/errors';
 import {
   categoryInputSchema,
   categorySchema,
-  productInputSchema,
+  productCreateInputSchema,
   productSchema,
+  productUpdateInputSchema,
   type CatalogPort,
   type Category,
   type Product,
-  type ProductInput,
 } from '@/ports';
-import type { EdgeRequest } from './http';
-import { dinarsToMillimes, millimesToDinars } from './legacyMoney';
-import { describeValue, parseInput, parseOutput } from './validate';
+import type { SupabaseDatabaseClient } from './client';
+import type { Tables } from './database.types';
+import { unwrap } from './errors';
+import { requireAdmin } from './profile';
+import { parseInput, parseOutput } from './validate';
+import { fromWire, toWire } from './wire';
 
-/** A value from the key-value store, as loosely typed as the edge function leaves it. */
-type LegacyRow = Record<string, unknown>;
+const PRODUCT_COLUMNS = '*, categories(name)';
+const CATEGORY_COLUMNS = 'id, name, color, created_at';
 
-const rowSchema = z.record(z.string(), z.unknown());
-const productListSchema = z.object({ products: z.array(rowSchema) });
-const productBodySchema = z.object({ product: rowSchema });
-const categoryListSchema = z.object({ categories: z.array(rowSchema) });
-const categoryBodySchema = z.object({ category: rowSchema });
+type ProductRow = Tables<'products'> & {
+  readonly categories: { readonly name: string } | null;
+};
 
-/** What the product routes store. Price (dinars) and stock go out as JSON numbers. */
-export interface LegacyProductBody {
-  readonly name: string;
-  readonly price: number;
-  /** The category's name: legacy products refer to categories by name, not id. */
-  readonly category: string;
-  readonly barcode: string;
-  readonly description: string;
-  readonly image: string;
-  readonly stock: number;
-}
+type CategoryRow = Pick<Tables<'categories'>, 'id' | 'name' | 'color' | 'created_at'>;
 
-/** The colour the legacy create route gives a category sent without one. */
-const LEGACY_DEFAULT_COLOR = '#3b82f6';
-
-function text(value: unknown, fallback = ''): string {
-  return typeof value === 'string' ? value : fallback;
-}
-
-function rowId(row: LegacyRow, what: string): string {
-  const id = row.id;
-  if (typeof id !== 'string' || id === '') {
-    throw new AppError('VALIDATION_ERROR', `The server sent ${what} without an id`, {
-      details: { row },
-    });
-  }
-  return id;
-}
-
-function toPrice(value: unknown, productId: string, name: string): Millimes {
-  try {
-    return dinarsToMillimes(value);
-  } catch (error) {
-    const failure = toAppError(error);
-    const product = name === '' ? productId : `"${name}" (${productId})`;
-    throw new AppError(
-      failure.code,
-      `Product ${product} has a price the app cannot read: ${describeValue(value)}. ` +
-        'Store it as dinars with at most 3 decimals.',
-      { details: { productId, price: value }, cause: failure },
-    );
-  }
-}
-
-/**
- * Whole numbers, or their text after an edit through the old form ("12", or "12.0" from a number
- * input); anything else shows as 0.
- */
-function toStock(value: unknown, productId: string): number {
-  const candidate =
-    typeof value === 'string' && /^-?\d+(?:\.0+)?$/.test(value.trim())
-      ? Number(value.trim())
-      : value;
-  if (typeof candidate === 'number' && Number.isSafeInteger(candidate)) {
-    return candidate === 0 ? 0 : candidate;
-  }
-  console.warn(
-    `Product ${productId} has a stock of ${describeValue(value)}, which is not a whole number; showing 0`,
-  );
-  return 0;
-}
-
-export function toProduct(row: LegacyRow, categories: readonly Category[]): Product {
-  const id = rowId(row, 'a product');
-  const name = text(row.name);
-  const category = row.category;
-  const categoryName = typeof category === 'string' && category !== '' ? category : null;
+function toProduct(row: ProductRow): Product {
   return parseOutput(
     productSchema,
     {
-      id,
-      name,
-      priceMillimes: toPrice(row.price, id, name),
-      categoryId:
-        categoryName === null
-          ? null
-          : (categories.find((candidate) => candidate.name === categoryName)?.id ?? null),
-      categoryName,
-      barcode: text(row.barcode),
-      description: text(row.description),
-      imageUrl: text(row.image),
-      stock: toStock(row.stock, id),
-      available: row.available !== false,
-      createdAt: text(row.createdAt),
-      updatedAt: text(row.updatedAt, text(row.createdAt)),
+      id: row.id,
+      name: row.name,
+      priceMillimes: row.price_millimes,
+      categoryId: row.category_id,
+      categoryName: row.categories?.name ?? null,
+      barcode: row.barcode ?? '',
+      description: row.description,
+      imageUrl: row.image_url,
+      stock: row.stock,
+      available: row.available,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
     },
-    `product ${id}`,
+    `product ${row.id}`,
   );
 }
 
-export function toCategory(row: LegacyRow): Category {
-  const id = rowId(row, 'a category');
+function toCategory(row: CategoryRow): Category {
   return parseOutput(
     categorySchema,
-    {
-      id,
-      name: text(row.name),
-      color: text(row.color, LEGACY_DEFAULT_COLOR),
-      createdAt: text(row.createdAt),
-    },
-    `category ${id}`,
+    { id: row.id, name: row.name, color: row.color, createdAt: row.created_at },
+    `category ${row.id}`,
   );
-}
-
-export function toLegacyProductBody(
-  input: ProductInput,
-  categories: readonly Category[],
-): LegacyProductBody {
-  let category = '';
-  if (input.categoryId !== null) {
-    const match = categories.find((candidate) => candidate.id === input.categoryId);
-    if (match) {
-      category = match.name;
-    } else {
-      console.warn(
-        `Category ${input.categoryId} does not exist; saving the product without a category`,
-      );
-    }
-  }
-  return {
-    name: input.name,
-    price: millimesToDinars(input.priceMillimes),
-    category,
-    barcode: input.barcode,
-    description: input.description,
-    image: input.imageUrl,
-    stock: input.stock,
-  };
 }
 
 /**
- * Every product of the list, or one error naming every product that cannot be read, so they can all
- * be corrected at once.
+ * CatalogPort over the products and categories tables. Products are written only by save_product
+ * and archive_product, which keep stock in the movement log; categories are plain rows.
  */
-function toProducts(rows: readonly LegacyRow[], categories: readonly Category[]): Product[] {
-  const products: Product[] = [];
-  const failures: AppError[] = [];
-  for (const row of rows) {
-    try {
-      products.push(toProduct(row, categories));
-    } catch (error) {
-      // Collected and thrown together below.
-      failures.push(toAppError(error));
-    }
-  }
-  if (failures.length === 1) {
-    throw failures[0];
-  }
-  if (failures.length > 1) {
-    throw new AppError(
-      'VALIDATION_ERROR',
-      `${failures.length} products cannot be read. ${failures.map((failure) => failure.message).join(' ')}`,
-      {
-        details: {
-          failures: failures.map(({ code, message, details }) => ({ code, message, details })),
-        },
-      },
-    );
-  }
-  return products;
-}
-
-/** CatalogPort over the legacy edge function: public reads with the anon key, writes as the user. */
-export function createSupabaseCatalog(request: EdgeRequest): CatalogPort {
-  async function listCategories(): Promise<Category[]> {
-    const body = await request('/categories', { method: 'GET', auth: 'anon' });
-    return parseOutput(categoryListSchema, body, 'the category list').categories.map((row) =>
-      toCategory(row),
-    );
-  }
-
-  async function saveProduct(
-    path: string,
-    method: 'POST' | 'PUT',
-    input: ProductInput,
-  ): Promise<Product> {
-    const product = parseInput(productInputSchema, input);
-    // Needed twice: the name to send for the category id, and the id for the name that comes back.
-    const categories = await listCategories();
-    const body = await request(path, {
-      method,
-      auth: 'user',
-      body: toLegacyProductBody(product, categories),
-    });
-    return toProduct(parseOutput(productBodySchema, body, 'the saved product').product, categories);
+export function createSupabaseCatalog(client: SupabaseDatabaseClient): CatalogPort {
+  /** Creates the product when `fields` has no id; `stockDelta` becomes its stock movement. */
+  async function saveProduct(fields: object): Promise<Product> {
+    const data = await unwrap(client.rpc('save_product', { p: toWire(fields) }));
+    return fromWire(productSchema, data, 'the saved product');
   }
 
   return {
     async listProducts() {
-      const [body, categories] = await Promise.all([
-        request('/products', { method: 'GET', auth: 'anon' }),
-        listCategories(),
-      ]);
-      return toProducts(
-        parseOutput(productListSchema, body, 'the product list').products,
-        categories,
+      const rows = await unwrap(
+        client
+          .from('products')
+          .select(PRODUCT_COLUMNS)
+          .is('archived_at', null)
+          .order('created_at')
+          .order('id'),
       );
+      return rows.map((row) => toProduct(row));
     },
 
-    createProduct(input) {
-      return saveProduct('/products', 'POST', input);
+    async createProduct(input) {
+      const { openingStock, ...fields } = parseInput(productCreateInputSchema, input);
+      return saveProduct({ ...fields, stockDelta: openingStock });
     },
 
-    updateProduct(id, input) {
-      return saveProduct(`/products/${encodeURIComponent(id)}`, 'PUT', input);
+    async updateProduct(id, input) {
+      const fields = parseInput(productUpdateInputSchema, input);
+      return saveProduct({ id, ...fields });
     },
 
     async deleteProduct(id) {
-      await request(`/products/${encodeURIComponent(id)}`, { method: 'DELETE', auth: 'user' });
+      await unwrap(client.rpc('archive_product', { p_product_id: id }));
     },
 
-    listCategories,
+    async listCategories() {
+      const rows = await unwrap(
+        client.from('categories').select(CATEGORY_COLUMNS).order('created_at').order('id'),
+      );
+      return rows.map((row) => toCategory(row));
+    },
 
     async createCategory(input) {
-      const category = parseInput(categoryInputSchema, input);
-      const body = await request('/categories', {
-        method: 'POST',
-        auth: 'user',
-        body: { name: category.name, color: category.color },
-      });
-      return toCategory(parseOutput(categoryBodySchema, body, 'the saved category').category);
+      const { name, color } = parseInput(categoryInputSchema, input);
+      const row = await unwrap(
+        client.from('categories').insert({ name, color }).select(CATEGORY_COLUMNS).single(),
+      );
+      return toCategory(row);
     },
 
     async deleteCategory(id) {
-      await request(`/categories/${encodeURIComponent(id)}`, { method: 'DELETE', auth: 'user' });
+      await requireAdmin(client);
+      const deleted = await unwrap(client.from('categories').delete().eq('id', id).select('id'));
+      if (deleted.length === 0) {
+        throw new AppError('NOT_FOUND', 'The category does not exist.', {
+          details: { categoryId: id },
+        });
+      }
     },
   };
 }

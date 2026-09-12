@@ -1,177 +1,157 @@
-import { useEffect, useState } from 'react';
+import { MonitorX } from 'lucide-react';
+import { useState, type ReactNode } from 'react';
 import { toast } from 'sonner';
 import { ErrorState, LoadingState } from '@/components/feedback';
-import { useCategories } from '@/features/categories/hooks/useCategories';
-import { useProducts } from '@/features/products/hooks/useProducts';
-import { useRecordSale } from '@/features/sales/hooks/useRecordSale';
-import { errorMessage } from '@/lib/errors';
-import { addItem, emptyCart, removeLine, setQty, totals } from '../cart';
-import { addToCartProblem, filterProducts, quantityProblem, toRecordSaleInput } from '../selling';
-import type { Cart, PaymentMethod, Product } from '../types';
-import { BarcodeScanner } from './BarcodeScanner';
-import { CartPanel } from './CartPanel';
-import { CheckoutDialog } from './CheckoutDialog';
-import { ProductFilters } from './ProductFilters';
-import { ProductGrid } from './ProductGrid';
+import { useCurrentUser } from '@/features/auth/hooks/useAuth';
+import { OpenSessionCard } from '@/features/sessions/components/OpenSessionCard';
+import {
+  ZReportDialog,
+  type ClosedSessionReport,
+} from '@/features/sessions/components/ZReportDialog';
+import { useCurrentSession } from '@/features/sessions/hooks/useSessions';
+import { buildOpenSessionRecord } from '@/features/sessions/records';
+import { useDeviceTerminal } from '@/features/terminal/hooks/useTerminal';
+import type { PendingRecord, StoredTerminal } from '@/features/terminal/terminalStore';
+import type { Millimes } from '@/lib/money';
+import { emptyCart } from '../cart';
+import { posGate } from '../gate';
+import { useRecorder } from '../hooks/useRecorder';
+import {
+  discardQuestion,
+  newRecordId,
+  recordedMessage,
+  terminalContext,
+  type RecordOutcome,
+} from '../recording';
+import type { Cart } from '../types';
+import { PendingRecordCard } from './PendingRecordCard';
+import { RegisterScreen } from './RegisterScreen';
 
+/**
+ * The register. Nothing is recorded until this device is a registered terminal with an open
+ * session and no unsent record (see posGate).
+ */
 export function PosPage() {
-  const productsQuery = useProducts();
-  const categoriesQuery = useCategories();
-  const recordSale = useRecordSale();
+  const user = useCurrentUser();
+  const { terminal, pending } = useDeviceTerminal();
+  // Kept here rather than in the selling screen, so a sale whose send was refused and then
+  // discarded is still in the cart to try again.
   const [cart, setCart] = useState<Cart>(emptyCart);
-  const [searchTerm, setSearchTerm] = useState('');
-  const [selectedCategoryId, setSelectedCategoryId] = useState<string | null>(null);
-  const [isPaymentDialogOpen, setIsPaymentDialogOpen] = useState(false);
-  const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>('cash');
-  const [barcodeInput, setBarcodeInput] = useState('');
+  const [report, setReport] = useState<ClosedSessionReport | null>(null);
+  const [isReportOpen, setIsReportOpen] = useState(false);
 
-  // A failed refresh (after a sale, say) keeps the last list on screen, so it has to be reported
-  // here: products with a toast as before, categories in the console as before.
-  useEffect(() => {
-    if (productsQuery.isRefetchError) {
-      toast.error(errorMessage(productsQuery.error, 'Failed to fetch products'));
-    }
-  }, [productsQuery.isRefetchError, productsQuery.error]);
-
-  useEffect(() => {
-    if (categoriesQuery.isRefetchError) {
-      console.error('Error fetching categories:', categoriesQuery.error);
-    }
-  }, [categoriesQuery.isRefetchError, categoriesQuery.error]);
-
-  const products = productsQuery.data;
-  const categories = categoriesQuery.data;
-
-  if (products === undefined || categories === undefined) {
-    const loadError =
-      (products === undefined ? productsQuery.error : null) ??
-      (categories === undefined ? categoriesQuery.error : null);
-    if (loadError && !productsQuery.isFetching && !categoriesQuery.isFetching) {
-      return (
-        <ErrorState
-          error={loadError}
-          onRetry={() => {
-            if (productsQuery.isError) {
-              void productsQuery.refetch();
-            }
-            if (categoriesQuery.isError) {
-              void categoriesQuery.refetch();
-            }
-          }}
-        />
-      );
-    }
-    return <LoadingState />;
-  }
-
-  const cartTotals = totals(cart);
-  const filteredProducts = filterProducts(products, searchTerm, selectedCategoryId);
-
-  const addToCart = (product: Product) => {
-    const problem = addToCartProblem(cart, product);
-    if (problem) {
-      toast.error(problem);
+  const recorder = useRecorder((outcome: RecordOutcome) => {
+    const message = recordedMessage(outcome);
+    if (outcome.type === 'sale' && outcome.result.status === 'voided') {
+      toast.warning(message);
       return;
     }
-    setCart(addItem(cart, product));
-    toast.success(`${product.name} added to cart`);
-  };
-
-  const updateQuantity = (productId: string, change: number) => {
-    const product = products.find((candidate) => candidate.id === productId);
-    const line = cart.lines.find((candidate) => candidate.productId === productId);
-
-    if (!product || !line) return;
-
-    const newQuantity = line.qty + change;
-    const problem = quantityProblem(product, newQuantity);
-    if (problem) {
-      toast.error(problem);
-      return;
+    toast.success(message);
+    if (outcome.type === 'sale' && outcome.record.kind === 'sale') {
+      setCart(emptyCart);
     }
-    // Zero removes the line.
-    setCart(setQty(cart, productId, newQuantity));
-  };
-
-  const removeFromCart = (productId: string) => {
-    setCart(removeLine(cart, productId));
-  };
-
-  const handleCompletePayment = async () => {
-    if (cart.lines.length === 0) {
-      toast.error('Cart is empty');
-      return;
+    if (outcome.type === 'session_close') {
+      setReport({ server: outcome.result.zReport, local: outcome.record.clientZReport });
+      setIsReportOpen(true);
     }
+  });
+  const sessionQuery = useCurrentSession(terminal?.terminalId ?? null);
 
-    try {
-      await recordSale.mutateAsync(toRecordSaleInput(cart, paymentMethod));
-    } catch (error) {
-      console.error('Error processing payment:', error);
-      toast.error(errorMessage(error, 'Payment processing failed'));
-      return;
-    }
-    toast.success('Payment completed successfully!');
-    setCart(emptyCart);
-    setIsPaymentDialogOpen(false);
+  const gate = posGate({
+    terminal,
+    pending,
+    firstSendId:
+      recorder.state.status === 'sending' && recorder.state.first ? recorder.state.id : null,
+    session: sessionQuery.data,
+    sessionError: sessionQuery.isFetching ? null : sessionQuery.error,
+  });
+
+  const openSession = (registered: StoredTerminal, openingFloatMillimes: Millimes) => {
+    void recorder.record(async () => ({
+      type: 'session_open',
+      record: await buildOpenSessionRecord({
+        id: newRecordId(),
+        terminal: terminalContext(registered),
+        actorUserId: user.id,
+        openedAt: new Date().toISOString(),
+        openingFloatMillimes,
+      }),
+    }));
   };
 
-  const handleBarcodeSearch = () => {
-    const barcode = barcodeInput.trim();
-    if (!barcode) return;
+  const discard = (refused: PendingRecord) => {
+    if (!confirm(discardQuestion(refused))) return;
+    recorder.discard();
+    // A refusal can mean the session changed on the server (closed, or opened elsewhere).
+    if (terminal) {
+      void sessionQuery.refetch();
+    }
+  };
 
-    const product = products.find((candidate) => candidate.barcode === barcode);
-
-    if (product) {
-      addToCart(product);
-      setBarcodeInput('');
-    } else {
-      toast.error('Product not found');
+  const content = (): ReactNode => {
+    switch (gate.kind) {
+      case 'pending':
+        return (
+          <PendingRecordCard
+            pending={gate.pending}
+            state={recorder.state}
+            onRetry={() => void recorder.retry()}
+            onDiscard={() => discard(gate.pending)}
+          />
+        );
+      case 'unregistered':
+        return <TerminalNotRegistered />;
+      case 'loading':
+        return <LoadingState />;
+      case 'error':
+        return (
+          <ErrorState
+            title="Failed to load the session"
+            error={gate.error}
+            onRetry={() => void sessionQuery.refetch()}
+          />
+        );
+      case 'closed':
+        return (
+          <OpenSessionCard
+            terminalCode={gate.terminal.code}
+            isOpening={recorder.state.status === 'sending'}
+            onOpen={(amount) => openSession(gate.terminal, amount)}
+          />
+        );
+      case 'open':
+        return (
+          <RegisterScreen
+            terminal={gate.terminal}
+            session={gate.session}
+            actorUserId={user.id}
+            recorder={recorder}
+            cart={cart}
+            onCartChange={setCart}
+          />
+        );
     }
   };
 
   return (
     <div className="max-w-[1600px] mx-auto">
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-        {/* Products Section */}
-        <div className="lg:col-span-2 space-y-4">
-          <BarcodeScanner
-            value={barcodeInput}
-            onChange={setBarcodeInput}
-            onSubmit={handleBarcodeSearch}
-          />
+      {content()}
+      <ZReportDialog report={report} open={isReportOpen} onOpenChange={setIsReportOpen} />
+    </div>
+  );
+}
 
-          <ProductFilters
-            searchTerm={searchTerm}
-            onSearchTermChange={setSearchTerm}
-            categories={categories}
-            selectedCategoryId={selectedCategoryId}
-            onSelectCategory={setSelectedCategoryId}
-          />
-
-          <ProductGrid products={filteredProducts} onAddProduct={addToCart} />
-        </div>
-
-        {/* Cart Section */}
-        <div className="space-y-4">
-          <CartPanel
-            lines={cart.lines}
-            totalMillimes={cartTotals.totalMillimes}
-            onUpdateQuantity={updateQuantity}
-            onRemove={removeFromCart}
-            onCheckout={() => setIsPaymentDialogOpen(true)}
-          />
-        </div>
-      </div>
-
-      <CheckoutDialog
-        open={isPaymentDialogOpen}
-        onOpenChange={setIsPaymentDialogOpen}
-        totalMillimes={cartTotals.totalMillimes}
-        paymentMethod={paymentMethod}
-        onPaymentMethodChange={setPaymentMethod}
-        onConfirm={() => void handleCompletePayment()}
-        isConfirming={recordSale.isPending}
-      />
+function TerminalNotRegistered() {
+  return (
+    <div className="flex flex-col items-center justify-center h-64 text-center px-4" role="alert">
+      <MonitorX className="w-12 h-12 text-gray-400 mb-4" />
+      <p className="font-semibold text-gray-900 mb-1">
+        This device is not registered as a terminal
+      </p>
+      <p className="text-sm text-gray-600 max-w-md">
+        Sales can only be recorded on a registered terminal. Ask an admin to register this device in
+        Settings, then open a session here.
+      </p>
     </div>
   );
 }

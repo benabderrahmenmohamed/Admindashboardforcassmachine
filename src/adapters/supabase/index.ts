@@ -1,30 +1,55 @@
-import { supabaseEnv } from '@/lib/env';
 import type { Backend } from '@/ports';
-import { createSupabaseAuth, readAccessToken } from './auth';
+import { createSupabaseAuth, type StorageLike } from './auth';
 import { createSupabaseCatalog } from './catalog';
-import { getSupabaseClient } from './client';
-import { createEdgeRequest } from './http';
+import { getSupabaseClient, type SupabaseDatabaseClient } from './client';
+import { readMyProfile } from './profile';
 import { createSupabaseSales } from './sales';
+import { createSupabaseSessions } from './sessions';
 import { createSupabaseSettings } from './settings';
+import { createSupabaseTerminals } from './terminals';
+
+export { supabaseAuthStorageKey } from './client';
+export type { SupabaseDatabaseClient } from './client';
+export type { StorageLike } from './auth';
+
+export interface SupabaseBackendOptions {
+  /**
+   * The client every port uses. Default: the app's client, from VITE_SUPABASE_URL and
+   * VITE_SUPABASE_ANON_KEY. Tests pass their own, one per signed-in user.
+   */
+  readonly client?: SupabaseDatabaseClient;
+  /**
+   * Where `client` keeps its session, and where the last signed-in member is kept for offline
+   * starts. Default: localStorage, as for the app's client.
+   */
+  readonly storage?: () => StorageLike;
+  /**
+   * The storage key `client` keeps its session under (its `auth.storageKey`). Default: the app's
+   * client's key. Pass it with an injected client that signs out or starts offline.
+   */
+  readonly sessionStorageKey?: string;
+}
 
 /**
- * The Supabase backend of today: Supabase Auth plus the legacy key-value edge function. Phase 3
- * replaces the edge function with tables and RPCs behind the same ports.
+ * The Supabase backend: Supabase Auth, and the tables and RPCs of supabase/migrations behind every
+ * port. Row-level security and the RPCs' own checks decide what the signed-in member may do; a
+ * request without a session goes out with the anon key, which may do nothing (UNAUTHENTICATED).
  */
-export function createSupabaseBackend(): Backend {
-  const { url, anonKey } = supabaseEnv();
-  const client = getSupabaseClient();
-  const request = createEdgeRequest({
-    url,
-    anonKey,
-    getAccessToken: () => readAccessToken(client.auth),
-  });
+export function createSupabaseBackend(options: SupabaseBackendOptions = {}): Backend {
+  const client = options.client ?? getSupabaseClient();
 
   return {
     kind: 'supabase',
-    auth: createSupabaseAuth({ auth: client.auth }),
-    catalog: createSupabaseCatalog(request),
-    sales: createSupabaseSales(request),
-    settings: createSupabaseSettings(request),
+    auth: createSupabaseAuth({
+      auth: client.auth,
+      readProfile: () => readMyProfile(client),
+      storage: options.storage,
+      sessionStorageKey: options.sessionStorageKey,
+    }),
+    catalog: createSupabaseCatalog(client),
+    sales: createSupabaseSales(client),
+    sessions: createSupabaseSessions(client),
+    settings: createSupabaseSettings(client),
+    terminals: createSupabaseTerminals(client),
   };
 }

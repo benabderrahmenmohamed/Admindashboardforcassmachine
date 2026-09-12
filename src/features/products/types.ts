@@ -1,2 +1,2 @@
-export type { Product, ProductInput } from '@/ports';
+export type { Product, ProductCreateInput, ProductUpdateInput } from '@/ports';
 export type { ProductFormValues } from './schema';

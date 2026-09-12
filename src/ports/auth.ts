@@ -3,11 +3,13 @@ import { z } from 'zod';
 export const roleSchema = z.enum(['admin', 'cashier']);
 export type Role = z.infer<typeof roleSchema>;
 
+/** A signed-in member of a shop. Role and shop come from the shop's membership, never from token metadata. */
 export const authUserSchema = z.object({
   id: z.string().min(1),
   email: z.string(),
   name: z.string(),
   role: roleSchema,
+  shopId: z.string().min(1),
 });
 export type AuthUser = z.infer<typeof authUserSchema>;
 
@@ -31,6 +33,7 @@ export type AuthState =
 export interface AuthPort {
   /** The state at startup, from whatever session this device has stored. */
   getState(): Promise<AuthState>;
+  /** Signs in and reads the user's shop membership; a user without one is FORBIDDEN. */
   signIn(credentials: Credentials): Promise<AuthUser>;
   /** Ends the session on this device only; other devices stay signed in. */
   signOut(): Promise<void>;

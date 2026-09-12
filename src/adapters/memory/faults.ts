@@ -14,7 +14,15 @@ export const MEMORY_OPERATIONS = [
   'catalog.deleteCategory',
   'settings.getSettings',
   'settings.updateSettings',
+  'terminals.register',
+  'sessions.open',
+  'sessions.close',
+  'sessions.current',
+  'sessions.zReport',
   'sales.recordSale',
+  'sales.listSales',
+  'sales.getSale',
+  'sales.voidReceipt',
 ] as const;
 
 export type MemoryOperation = (typeof MEMORY_OPERATIONS)[number];

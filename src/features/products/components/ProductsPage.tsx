@@ -56,15 +56,20 @@ export function ProductsPage() {
   };
 
   const handleDelete = async (id: string) => {
-    if (!confirm('Are you sure you want to delete this product?')) return;
+    if (
+      !confirm(
+        'Are you sure you want to archive this product? It leaves the catalog; past sales keep it.',
+      )
+    )
+      return;
 
     setDeletingIds((ids) => new Set(ids).add(id));
     try {
       await deleteProduct.mutateAsync(id);
-      toast.success('Product deleted successfully');
+      toast.success('Product archived successfully');
     } catch (error) {
-      console.error('Error deleting product:', error);
-      toast.error(errorMessage(error, 'Failed to delete product'));
+      console.error('Error archiving product:', error);
+      toast.error(errorMessage(error, 'Failed to archive product'));
     } finally {
       setDeletingIds((ids) => {
         const next = new Set(ids);
@@ -106,6 +111,11 @@ export function ProductsPage() {
     );
   }
 
+  // The dialog follows the listed product, so the current stock it shows is the latest one loaded.
+  const listedEditingProduct =
+    editingProduct &&
+    (productsQuery.data.find((product) => product.id === editingProduct.id) ?? editingProduct);
+
   const term = searchTerm.toLowerCase();
   const filteredProducts = productsQuery.data.filter(
     (product) =>
@@ -124,7 +134,7 @@ export function ProductsPage() {
         <ProductFormDialog
           open={isDialogOpen}
           onOpenChange={handleDialogOpenChange}
-          product={editingProduct}
+          product={listedEditingProduct}
           formSession={formSession}
           categories={categoriesQuery.data}
           trigger={

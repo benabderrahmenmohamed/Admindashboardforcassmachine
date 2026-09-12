@@ -1,13 +1,14 @@
 import { describe, expect, it } from 'vitest';
-import { add, mm, mulQty } from '@/lib/money';
-import { recordSaleInputSchema, type Product } from '@/ports';
-import { addItem, emptyCart, setCartDiscount, setLineDiscount, setQty, totals } from './cart';
+import { mm, toDinarsString } from '@/lib/money';
+import type { Product } from '@/ports';
+import { addItem, emptyCart } from './cart';
 import {
   addToCartProblem,
   filterProducts,
   isSellable,
   quantityProblem,
-  toRecordSaleInput,
+  readCashAmount,
+  readCashTender,
 } from './selling';
 
 function product(overrides: Partial<Product> = {}): Product {
@@ -109,47 +110,52 @@ describe('quantityProblem', () => {
   });
 });
 
-describe('toRecordSaleInput', () => {
-  const harissa = product();
-  const water = product({ id: 'p-eau', name: 'Eau Safia 1,5 L', priceMillimes: mm(650) });
+describe('readCashAmount', () => {
+  it('reads dinars with "." or "," and up to three decimals, exactly', () => {
+    expect(readCashAmount('50')).toEqual({ ok: true, millimes: 50_000 });
+    expect(readCashAmount('12,5')).toEqual({ ok: true, millimes: 12_500 });
+    expect(readCashAmount(' 0.050 ')).toEqual({ ok: true, millimes: 50 });
+    expect(readCashAmount('0')).toEqual({ ok: true, millimes: 0 });
+  });
 
-  it('sends each line with its quantity and unit price in millimes', () => {
-    const cart = setQty(addItem(addItem(emptyCart, harissa), water), harissa.id, 3);
-    const input = toRecordSaleInput(cart, 'card');
+  it('refuses anything it would have to guess or round', () => {
+    for (const text of ['', '   ', 'abc', '1.2345', '1 000', '1,000.5', '5e3']) {
+      expect(readCashAmount(text)).toEqual({
+        ok: false,
+        problem: 'Enter an amount in dinars, e.g. 50 or 12,500',
+      });
+    }
+  });
 
-    expect(input).toEqual({
-      lines: [
-        { productId: 'p-harissa', name: 'Harissa Cap Bon 380 g', qty: 3, unitPriceMillimes: 1350 },
-        { productId: 'p-eau', name: 'Eau Safia 1,5 L', qty: 1, unitPriceMillimes: 650 },
-      ],
-      paymentMethod: 'card',
+  it('refuses a negative amount', () => {
+    expect(readCashAmount('-1')).toEqual({ ok: false, problem: 'The amount cannot be negative' });
+  });
+});
+
+describe('readCashTender', () => {
+  const total = mm(5900);
+
+  it('starts from the total, which needs no change', () => {
+    expect(readCashTender(total, toDinarsString(total))).toEqual({
+      ok: true,
+      tenderedMillimes: 5900,
+      changeMillimes: 0,
     });
-    expect(recordSaleInputSchema.parse(input)).toEqual(input);
   });
 
-  it('records exactly the total the cashier saw', () => {
-    const cart = setQty(addItem(addItem(emptyCart, harissa), water), water.id, 7);
-    const input = toRecordSaleInput(cart, 'cash');
-    const recorded = add(...input.lines.map((line) => mulQty(line.unitPriceMillimes, line.qty)));
-
-    expect(recorded).toBe(totals(cart).totalMillimes);
-    expect(recorded).toBe(5900);
+  it('gives back the difference for cash above the total', () => {
+    expect(readCashTender(total, '10')).toEqual({
+      ok: true,
+      tenderedMillimes: 10_000,
+      changeMillimes: 4100,
+    });
   });
 
-  it('does not change the cart', () => {
-    const cart = addItem(emptyCart, harissa);
-    const snapshot = structuredClone(cart);
-    toRecordSaleInput(cart, 'cash');
-    expect(cart).toEqual(snapshot);
-  });
-
-  it('refuses a discounted cart, which the sales port cannot record yet', () => {
-    const cart = addItem(emptyCart, harissa);
-    const refused = expect.objectContaining({ code: 'VALIDATION_ERROR' }) as unknown;
-
-    expect(() => toRecordSaleInput(setCartDiscount(cart, 500), 'cash')).toThrow(refused);
-    expect(() => toRecordSaleInput(setLineDiscount(cart, harissa.id, mm(100)), 'cash')).toThrow(
-      refused,
-    );
+  it('refuses less than the total, or an amount it cannot read', () => {
+    expect(readCashTender(total, '5.899')).toEqual({
+      ok: false,
+      problem: 'The amount tendered is less than the total',
+    });
+    expect(readCashTender(total, 'ten')).toMatchObject({ ok: false });
   });
 });

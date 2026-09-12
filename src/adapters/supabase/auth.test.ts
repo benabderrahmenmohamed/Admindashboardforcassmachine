@@ -9,13 +9,8 @@ import {
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { AppError } from '@/lib/errors';
 import type { AuthPort, AuthState, AuthUser } from '@/ports';
-import {
-  createSupabaseAuth,
-  LAST_USER_STORAGE_KEY,
-  readAccessToken,
-  type StorageLike,
-  type SupabaseAuthApi,
-} from './auth';
+import { createSupabaseAuth, LAST_USER_STORAGE_KEY, type SupabaseAuthApi } from './auth';
+import { failureOf, memoryStorage } from './fakeSupabase';
 
 /** Where the fake client keeps its session, as supabase-js does under sb-<project-ref>-auth-token. */
 const SESSION_KEY = 'sb-test-auth-token';
@@ -26,8 +21,8 @@ function makeUser(overrides: Partial<User> = {}): User {
     aud: 'authenticated',
     created_at: '2026-01-01T00:00:00.000Z',
     email: 'amel@example.tn',
-    app_metadata: { provider: 'email', role: 'admin' },
-    user_metadata: { name: 'Amel' },
+    app_metadata: { provider: 'email' },
+    user_metadata: {},
     ...overrides,
   };
 }
@@ -47,27 +42,20 @@ function storedSession(user: User = makeUser()): string {
   return JSON.stringify(makeSession(user));
 }
 
-const amel: AuthUser = { id: 'user-1', email: 'amel@example.tn', name: 'Amel', role: 'admin' };
+/** Amel's membership, as my_profile() reports it. */
+const amel: AuthUser = {
+  id: 'user-1',
+  email: 'amel@example.tn',
+  name: 'Amel',
+  role: 'admin',
+  shopId: 'shop-1',
+};
 
-/** A device Amel signed in on: her session, and her identity kept for offline starts. */
+/** A device Amel signed in on: her session, and her membership kept for offline starts. */
 const signedInAsAmel = {
   [SESSION_KEY]: storedSession(),
   [LAST_USER_STORAGE_KEY]: JSON.stringify(amel),
 };
-
-function memoryStorage(initial: Record<string, string> = {}) {
-  const entries = new Map(Object.entries(initial));
-  const storage: StorageLike = {
-    getItem: (key) => entries.get(key) ?? null,
-    setItem: (key, value) => {
-      entries.set(key, value);
-    },
-    removeItem: (key) => {
-      entries.delete(key);
-    },
-  };
-  return { entries, storage };
-}
 
 function fakeAuth(initial: Record<string, string> = {}) {
   const listeners: ((event: AuthChangeEvent, session: Session | null) => void)[] = [];
@@ -98,8 +86,10 @@ function fakeAuth(initial: Record<string, string> = {}) {
     listeners.push(callback);
     return { data: { subscription: { unsubscribe } } };
   });
+  const readProfile = vi.fn<() => Promise<AuthUser>>(() => Promise.resolve(amel));
   const auth = createSupabaseAuth({
     auth: { getSession, signInWithPassword, signOut, onAuthStateChange },
+    readProfile,
     storage: () => storage,
     sessionStorageKey: SESSION_KEY,
   });
@@ -110,6 +100,7 @@ function fakeAuth(initial: Record<string, string> = {}) {
     getSession,
     signInWithPassword,
     signOut,
+    readProfile,
     unsubscribe,
     emit,
     removeSession,
@@ -124,15 +115,10 @@ function recordStates(auth: AuthPort): AuthState[] {
   return states;
 }
 
-async function failureOf(promise: Promise<unknown>): Promise<AppError> {
-  const outcome: unknown = await promise.then(
-    () => null,
-    (error: unknown) => error,
-  );
-  if (!(outcome instanceof AppError)) {
-    return expect.unreachable('expected a failure with an AppError');
-  }
-  return outcome;
+/** Lets timers scheduled now, and the promises they start, run. */
+async function settle(): Promise<void> {
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  await new Promise((resolve) => setTimeout(resolve, 0));
 }
 
 afterEach(() => {
@@ -140,26 +126,24 @@ afterEach(() => {
 });
 
 describe('supabase auth', () => {
-  it.each<[unknown, AuthUser['role']]>([
-    ['admin', 'admin'],
-    ['worker', 'cashier'],
-    ['cashier', 'cashier'],
-    ['ADMIN', 'cashier'],
-    [undefined, 'cashier'],
-  ])('maps app_metadata.role %j to %s', async (role, expected) => {
+  it('takes role, shop and name from the membership, never from token metadata', async () => {
     const fake = fakeAuth();
-    const user = makeUser({ app_metadata: { provider: 'email', role }, user_metadata: {} });
+    const user = makeUser({
+      app_metadata: { provider: 'email', role: 'cashier' },
+      user_metadata: { name: 'Mallory', role: 'cashier' },
+    });
     fake.signInWithPassword.mockResolvedValue({
       data: { user, session: makeSession(user) },
       error: null,
     });
 
-    const signedIn = await fake.auth.signIn({ email: 'amel@example.tn', password: 'secret' });
-
-    expect(signedIn).toEqual({ id: 'user-1', email: 'amel@example.tn', name: '', role: expected });
+    await expect(
+      fake.auth.signIn({ email: 'amel@example.tn', password: 'secret' }),
+    ).resolves.toEqual(amel);
+    expect(fake.readProfile).toHaveBeenCalledTimes(1);
   });
 
-  it('signs in with the trimmed email and remembers the user for offline starts', async () => {
+  it('signs in with the trimmed email and remembers the member for offline starts', async () => {
     const fake = fakeAuth();
 
     const user = await fake.auth.signIn({ email: '  amel@example.tn ', password: 'secret' });
@@ -170,6 +154,28 @@ describe('supabase auth', () => {
       password: 'secret',
     });
     expect(JSON.parse(fake.entries.get(LAST_USER_STORAGE_KEY) ?? 'null')).toEqual(amel);
+  });
+
+  it.each<[string, AppError | AuthUser]>([
+    ['has no shop membership', new AppError('FORBIDDEN', 'Not a member of any shop.')],
+    ['has a membership that cannot be read', new AppError('NETWORK_ERROR', 'Offline')],
+    ['gets the membership of someone else', { ...amel, id: 'user-2' }],
+  ])('ends the new session on this device when the user %s', async (_case, outcome) => {
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const fake = fakeAuth();
+    fake.signInWithPassword.mockImplementation(() => {
+      fake.entries.set(SESSION_KEY, storedSession());
+      return Promise.resolve({ data: { user: makeUser(), session: makeSession() }, error: null });
+    });
+    fake.readProfile.mockImplementation(() =>
+      outcome instanceof AppError ? Promise.reject(outcome) : Promise.resolve(outcome),
+    );
+
+    const error = await failureOf(fake.auth.signIn({ email: 'amel@example.tn', password: 'x' }));
+
+    expect(error.code).toBe(outcome instanceof AppError ? outcome.code : 'UNAUTHENTICATED');
+    expect(fake.signOut).toHaveBeenCalledWith({ scope: 'local' });
+    expect([...fake.entries.keys()]).toEqual([]);
   });
 
   it('turns refused credentials into UNAUTHENTICATED with the Supabase message', async () => {
@@ -183,6 +189,7 @@ describe('supabase auth', () => {
 
     expect(error.code).toBe('UNAUTHENTICATED');
     expect(error.message).toBe('Invalid login credentials');
+    expect(fake.readProfile).not.toHaveBeenCalled();
   });
 
   it('turns an unreachable auth server into NETWORK_ERROR', async () => {
@@ -197,12 +204,38 @@ describe('supabase auth', () => {
     expect(error.code).toBe('NETWORK_ERROR');
   });
 
-  it('is authenticated with a stored session, and remembers that user', async () => {
+  it('is authenticated with a stored session and its membership, and remembers the member', async () => {
     const fake = fakeAuth();
     fake.getSession.mockResolvedValue({ data: { session: makeSession() }, error: null });
 
     await expect(fake.auth.getState()).resolves.toEqual({ status: 'authenticated', user: amel });
     expect(fake.entries.has(LAST_USER_STORAGE_KEY)).toBe(true);
+  });
+
+  it('starts offline as the last member when her session is valid but the database cannot be reached', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const fake = fakeAuth(signedInAsAmel);
+    fake.getSession.mockResolvedValue({ data: { session: makeSession() }, error: null });
+    fake.readProfile.mockRejectedValue(new AppError('NETWORK_ERROR', 'Offline'));
+
+    await expect(fake.auth.getState()).resolves.toEqual({ status: 'offline', user: amel });
+  });
+
+  it.each<[string, Record<string, string>, AppError]>([
+    ['the user has no membership', signedInAsAmel, new AppError('FORBIDDEN', 'Not a member')],
+    [
+      'the database cannot be reached and another user was cached',
+      { [LAST_USER_STORAGE_KEY]: JSON.stringify({ ...amel, id: 'user-2' }) },
+      new AppError('NETWORK_ERROR', 'Offline'),
+    ],
+  ])('is anonymous with a valid session when %s', async (_case, stored, failure) => {
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const fake = fakeAuth(stored);
+    fake.getSession.mockResolvedValue({ data: { session: makeSession() }, error: null });
+    fake.readProfile.mockRejectedValue(failure);
+
+    await expect(fake.auth.getState()).resolves.toEqual({ status: 'anonymous' });
+    expect(fake.entries.has(LAST_USER_STORAGE_KEY)).toBe(false);
   });
 
   it('starts offline as the last user when auth cannot be reached and her session is stored', async () => {
@@ -216,6 +249,7 @@ describe('supabase auth', () => {
 
     await expect(fake.auth.getState()).resolves.toEqual({ status: 'offline', user: amel });
     expect(fake.entries.has(LAST_USER_STORAGE_KEY)).toBe(true);
+    expect(fake.readProfile).not.toHaveBeenCalled();
   });
 
   it.each<[string, Record<string, string>, AuthError | null]>([
@@ -228,6 +262,14 @@ describe('supabase auth', () => {
     [
       'the cached user is not readable',
       { [SESSION_KEY]: storedSession(), [LAST_USER_STORAGE_KEY]: '{not json' },
+      new AuthRetryableFetchError('Failed to fetch', 0),
+    ],
+    [
+      'the cached user has no shop',
+      {
+        [SESSION_KEY]: storedSession(),
+        [LAST_USER_STORAGE_KEY]: JSON.stringify({ ...amel, shopId: undefined }),
+      },
       new AuthRetryableFetchError('Failed to fetch', 0),
     ],
     [
@@ -346,8 +388,8 @@ describe('supabase auth', () => {
     expect(fake.entries.has(LAST_USER_STORAGE_KEY)).toBe(true);
   });
 
-  it('reports session events as authenticated and SIGNED_OUT as anonymous', () => {
-    const fake = fakeAuth();
+  it('reports session events of the remembered member as authenticated and SIGNED_OUT as anonymous', () => {
+    const fake = fakeAuth({ [LAST_USER_STORAGE_KEY]: JSON.stringify(amel) });
     const states: AuthState[] = [];
     const stop = fake.auth.onStateChange((state) => {
       states.push(state);
@@ -357,7 +399,6 @@ describe('supabase auth', () => {
     fake.emit('SIGNED_IN', makeSession());
     fake.emit('PASSWORD_RECOVERY', makeSession());
     fake.emit('TOKEN_REFRESHED', makeSession());
-    expect(fake.entries.has(LAST_USER_STORAGE_KEY)).toBe(true);
     fake.emit('SIGNED_OUT', null);
     stop();
 
@@ -366,38 +407,47 @@ describe('supabase auth', () => {
       { status: 'authenticated', user: amel },
       { status: 'anonymous' },
     ]);
+    expect(fake.readProfile).not.toHaveBeenCalled();
     expect(fake.entries.has(LAST_USER_STORAGE_KEY)).toBe(false);
     expect(fake.unsubscribe).toHaveBeenCalledTimes(1);
   });
-});
 
-describe('readAccessToken', () => {
-  it('reads the token of the current session', async () => {
-    const getSession = vi.fn<SupabaseAuthApi['getSession']>(() =>
-      Promise.resolve({ data: { session: makeSession() }, error: null }),
-    );
+  it('reads the membership of a session it has not seen, after the auth-js callback returns', async () => {
+    const fake = fakeAuth();
+    const states = recordStates(fake.auth);
 
-    await expect(readAccessToken({ getSession })).resolves.toBe('access-token');
+    fake.emit('SIGNED_IN', makeSession());
+
+    expect(fake.readProfile).not.toHaveBeenCalled();
+    await vi.waitFor(() => {
+      expect(states).toEqual([{ status: 'authenticated', user: amel }]);
+    });
+    expect(JSON.parse(fake.entries.get(LAST_USER_STORAGE_KEY) ?? 'null')).toEqual(amel);
   });
 
-  it('is null without a session', async () => {
-    const getSession = vi.fn<SupabaseAuthApi['getSession']>(() =>
-      Promise.resolve({ data: { session: null }, error: null }),
-    );
+  it('drops a membership read overtaken by a sign-out', async () => {
+    const fake = fakeAuth();
+    const states = recordStates(fake.auth);
 
-    await expect(readAccessToken({ getSession })).resolves.toBeNull();
+    fake.emit('SIGNED_IN', makeSession());
+    fake.emit('SIGNED_OUT', null);
+    await settle();
+
+    expect(fake.readProfile).toHaveBeenCalledTimes(1);
+    expect(states).toEqual([{ status: 'anonymous' }]);
+    expect(fake.entries.has(LAST_USER_STORAGE_KEY)).toBe(false);
   });
 
-  it('throws NETWORK_ERROR when the session cannot be refreshed offline', async () => {
-    const getSession = vi.fn<SupabaseAuthApi['getSession']>(() =>
-      Promise.resolve({
-        data: { session: null },
-        error: new AuthRetryableFetchError('Failed to fetch', 0),
-      }),
-    );
+  it('reports nothing, and warns, when the membership of a new session cannot be read', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const fake = fakeAuth();
+    fake.readProfile.mockRejectedValue(new AppError('FORBIDDEN', 'Not a member'));
+    const states = recordStates(fake.auth);
 
-    const error = await failureOf(readAccessToken({ getSession }));
+    fake.emit('SIGNED_IN', makeSession());
+    await settle();
 
-    expect(error.code).toBe('NETWORK_ERROR');
+    expect(states).toEqual([]);
+    expect(warn).toHaveBeenCalledTimes(1);
   });
 });

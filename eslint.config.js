@@ -56,9 +56,7 @@ const DETERMINISTIC_MESSAGE =
   'Domain modules stay deterministic: take the time or a random value as an argument.';
 
 export default defineConfig([
-  // supabase/functions is Deno code from the Figma Make export; it is deleted once the app
-  // talks to tables and RPCs directly.
-  globalIgnores(['dist', 'coverage', 'supabase/functions']),
+  globalIgnores(['dist', 'coverage']),
   {
     files: ['**/*.{ts,tsx}'],
     extends: [
