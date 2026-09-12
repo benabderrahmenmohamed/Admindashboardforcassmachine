@@ -7,6 +7,7 @@ import { CaissePage } from '@/features/caisse/components/CaissePage';
 import { CategoriesPage } from '@/features/categories/components/CategoriesPage';
 import { KitchenPage } from '@/features/kitchen/components/KitchenPage';
 import { ProductsPage } from '@/features/products/components/ProductsPage';
+import { MenuOfTheDayPage } from '@/features/serveur/components/MenuOfTheDayPage';
 import { ServeurPage } from '@/features/serveur/components/ServeurPage';
 import { TablePage } from '@/features/serveur/components/TablePage';
 import { SettingsPage } from '@/features/settings/components/SettingsPage';
@@ -81,6 +82,7 @@ export const appRoutes: RouteObject[] = [
     children: [
       { index: true, element: <ServeurPage /> },
       { path: 'table/:tableId', element: <TablePage /> },
+      { path: 'menu', element: <MenuOfTheDayPage /> },
       {
         // The room's layout runs edge to edge and each of its pages pads itself; so does this one.
         path: CONFLICTS_SEGMENT,

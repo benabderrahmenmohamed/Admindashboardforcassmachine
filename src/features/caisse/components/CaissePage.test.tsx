@@ -205,6 +205,56 @@ describe('paying a table', () => {
     expect(summary?.textContent).toContain(formatTND(second.priceMillimes));
   });
 
+  it('cancels the order of a table nobody paid for, with the reason given', async () => {
+    const { harness, table } = await tableToPay();
+
+    await openCounter(harness);
+    fireEvent.click(await screen.findByRole('button', { name: new RegExp(table.name) }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Cancel order' }));
+
+    const dialog = await screen.findByRole('dialog', {
+      name: `Cancel the order of ${table.name}?`,
+    });
+    const confirm = within(dialog).getByRole('button', { name: 'Cancel the order' });
+    // No reason, no cancel.
+    expect(confirm).toHaveProperty('disabled', true);
+    fireEvent.change(within(dialog).getByLabelText('Why is the order being cancelled?'), {
+      target: { value: 'The guests left' },
+    });
+    fireEvent.click(confirm);
+
+    expect(
+      await screen.findByText('Nothing is owed on this table. Pick another one from the room.'),
+    ).toBeDefined();
+    await waitFor(async () => {
+      await expect(harness.backend.orders.openOrder(table.id)).resolves.toBeNull();
+    });
+    const records = await harness.outbox.list();
+    expect(records.at(-1)).toMatchObject({
+      kind: 'order_cancel',
+      status: 'acked',
+      payload: { tableId: table.id, reason: 'The guests left' },
+    });
+  });
+
+  it('does not offer to cancel a table once part of it is paid', async () => {
+    const { harness, table, first } = await tableToPay();
+
+    await openCounter(harness);
+    fireEvent.click(await screen.findByRole('button', { name: new RegExp(table.name) }));
+    expect(await screen.findByRole('button', { name: 'Cancel order' })).toBeDefined();
+    fireEvent.click(await screen.findByRole('checkbox', { name: new RegExp(first.name) }));
+    fireEvent.click(screen.getByRole('button', { name: /^Pay / }));
+    const checkout = await screen.findByRole('dialog');
+    fireEvent.click(within(checkout).getByRole('button', { name: /Confirm/ }));
+    expect(await screen.findByText(/T1-1/)).toBeDefined();
+
+    // Hidden elements count: the receipt on screen hides the page from the accessibility tree.
+    await waitFor(() => {
+      expect(screen.queryByRole('button', { name: 'Cancel order', hidden: true })).toBeNull();
+    });
+  });
+
   it('records the payment and shows the receipt this terminal numbered', async () => {
     const { harness, table, first } = await tableToPay();
 

@@ -1,4 +1,4 @@
-import { useQueries, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useCallback, useMemo, useState } from 'react';
 import { toast } from 'sonner';
 import { useProducts } from '@/features/products/hooks/useProducts';
@@ -7,7 +7,7 @@ import { useBackend } from '@/lib/backend-context';
 import { deviceId } from '@/lib/deviceId';
 import { AppError } from '@/lib/errors';
 import { queryKeys } from '@/lib/query';
-import type { OpenOrder, OrdersPort, RemovedAfterSentQuery } from '@/ports';
+import type { DiningTableInput, OpenOrder, OrdersPort, RemovedAfterSentQuery } from '@/ports';
 import { overlayBoard, type RoomBoardEntry } from '../board';
 import { orderErrorMessage, type OrderAction } from '../messages';
 import {
@@ -36,6 +36,39 @@ export function useTables() {
   return useQuery({
     queryKey: queryKeys.tableList,
     queryFn: () => orders.listTables(),
+  });
+}
+
+/**
+ * After the admin changes the room, everything drawn from it is read again: the list, the grid, each
+ * table's order, and the kitchen's tickets, which carry a table's name.
+ */
+function useRoomChanged(): () => void {
+  const queryClient = useQueryClient();
+  return () => {
+    void queryClient.invalidateQueries({ queryKey: queryKeys.tables });
+    void queryClient.invalidateQueries({ queryKey: queryKeys.kitchen });
+  };
+}
+
+/** Admin: adds a table to the room. */
+export function useCreateTable() {
+  const { orders } = useBackend();
+  const roomChanged = useRoomChanged();
+  return useMutation({
+    mutationFn: (input: DiningTableInput) => orders.createTable(input),
+    onSuccess: roomChanged,
+  });
+}
+
+/** Admin: renames a table, moves it in the room, or takes it out of service. */
+export function useUpdateTable() {
+  const { orders } = useBackend();
+  const roomChanged = useRoomChanged();
+  return useMutation({
+    mutationFn: ({ id, input }: { readonly id: string; readonly input: DiningTableInput }) =>
+      orders.updateTable(id, input),
+    onSuccess: roomChanged,
   });
 }
 

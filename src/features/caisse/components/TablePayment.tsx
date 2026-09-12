@@ -29,6 +29,7 @@ import {
   type ItemSelection,
   type LineDiscount,
 } from '../payment';
+import { CancelOrderButton } from './CancelOrderButton';
 import { CheckoutDialog } from './CheckoutDialog';
 import { LineDiscountDialog } from './LineDiscountDialog';
 
@@ -127,20 +128,23 @@ export function TablePayment({
 
   return (
     <Card>
-      <CardHeader className="flex flex-row items-center justify-between">
+      <CardHeader className="flex flex-row flex-wrap items-center justify-between gap-2">
         <CardTitle>{table.name}</CardTitle>
-        {items.length > 0 && (
-          <Button
-            type="button"
-            variant="outline"
-            className="min-h-11"
-            onClick={() =>
-              setSelection(selection.size === items.length ? noSelection : selectAll(items))
-            }
-          >
-            {selection.size === items.length ? 'Clear' : 'Everything'}
-          </Button>
-        )}
+        <div className="flex flex-wrap gap-2">
+          <CancelOrderButton table={table} order={room.order} />
+          {items.length > 0 && (
+            <Button
+              type="button"
+              variant="outline"
+              className="min-h-11"
+              onClick={() =>
+                setSelection(selection.size === items.length ? noSelection : selectAll(items))
+              }
+            >
+              {selection.size === items.length ? 'Clear' : 'Everything'}
+            </Button>
+          )}
+        </div>
       </CardHeader>
       <CardContent className="space-y-4">
         {items.length > 0 && (

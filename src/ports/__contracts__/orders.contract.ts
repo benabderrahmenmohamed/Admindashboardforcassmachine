@@ -78,6 +78,58 @@ export function describeOrdersPortContract(makeFixture: MakeFixture): void {
       await expect(fixture.waiter.orders.openOrder(table.id)).resolves.toBeNull();
     });
 
+    it('lets the admin rename, move and retire a table, but never give it the name of another', async () => {
+      const table = await fixture.newTable();
+      const other = await fixture.newTable();
+
+      const retired = await fixture.admin.orders.updateTable(table.id, {
+        name: `  ${table.name} bis  `,
+        sortOrder: table.sortOrder + 1,
+        isActive: false,
+      });
+      expect(retired).toEqual({
+        id: table.id,
+        name: `${table.name} bis`,
+        sortOrder: table.sortOrder + 1,
+        isActive: false,
+      });
+      expect(await fixture.waiter.orders.listTables()).toContainEqual(retired);
+      const board = await fixture.cashier.orders.board();
+      expect(board.map((entry) => entry.table.id)).not.toContain(table.id);
+
+      const added = await failure(
+        fixture.admin.orders.createTable({ name: other.name, sortOrder: 0, isActive: true }),
+        'VALIDATION_ERROR',
+      );
+      expect(added.details).toMatchObject({ field: 'name' });
+      const renamed = await failure(
+        fixture.admin.orders.updateTable(retired.id, {
+          name: other.name,
+          sortOrder: retired.sortOrder,
+          isActive: false,
+        }),
+        'VALIDATION_ERROR',
+      );
+      expect(renamed.details).toMatchObject({ field: 'name' });
+      // A table saved under the name it already has is not in its own way.
+      await expect(
+        fixture.admin.orders.updateTable(other.id, {
+          name: other.name,
+          sortOrder: other.sortOrder + 1,
+          isActive: true,
+        }),
+      ).resolves.toMatchObject({ id: other.id, name: other.name });
+
+      await failure(
+        fixture.waiter.orders.createTable({
+          name: `${other.name} ter`,
+          sortOrder: 0,
+          isActive: true,
+        }),
+        'FORBIDDEN',
+      );
+    });
+
     it('opens the order of a free table once, whichever device gets there first', async () => {
       const table = await fixture.newTable();
       const coffee = await createProduct(fixture, 'Express', 1_900);

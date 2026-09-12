@@ -143,6 +143,18 @@ export function createMemoryOrders(context: MemoryContext): OrdersPort {
     return store.diningTables.get(tableId)?.name ?? '';
   }
 
+  /**
+   * Two tables of one café cannot share a name, as dining_tables' unique (shop_id, name): a save that
+   * would give `tableId` (null for a new table) the name of another is VALIDATION_ERROR on the name,
+   * as migration 20260913000014 answers it.
+   */
+  function requireFreeName(shopId: string, name: string, tableId: string | null): void {
+    const taken = tablesOf(shopId).some((table) => table.name === name && table.id !== tableId);
+    if (taken) {
+      throw invalidField('name', 'Another table already has this name.');
+    }
+  }
+
   /** The table's order while it is open, which is what makes the table busy. */
   function openOrderOf(shopId: string, tableId: string): OpenOrderRow | undefined {
     for (const order of store.openOrders.values()) {
@@ -292,6 +304,7 @@ export function createMemoryOrders(context: MemoryContext): OrdersPort {
       perform(context, 'orders.createTable', () => {
         const profile = requireProfile(context, ['admin']);
         const fields = parseInput(diningTableInputSchema, input);
+        requireFreeName(profile.shopId, fields.name, null);
         const row: DiningTableRow = {
           id: freshId(context, store.diningTables),
           shopId: profile.shopId,
@@ -313,6 +326,7 @@ export function createMemoryOrders(context: MemoryContext): OrdersPort {
         if (!existing || existing.shopId !== profile.shopId) {
           throw new AppError('NOT_FOUND', 'The table does not exist.', { details: { tableId } });
         }
+        requireFreeName(profile.shopId, fields.name, tableId);
         // Retired, never deleted: a sale paid at this table keeps its name, and an order already
         // open on it stays open — the guests are still sitting there.
         const row: DiningTableRow = {

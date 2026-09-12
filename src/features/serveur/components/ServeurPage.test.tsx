@@ -8,6 +8,7 @@ import { ServeurPage } from './ServeurPage';
 
 const elsewhere: RouteObject[] = [
   { path: '/serveur/table/:tableId', element: <p>The table is open</p> },
+  { path: '/serveur/menu', element: <p>The menu of the day</p> },
 ];
 
 function showRoom(harness: Harness): void {
@@ -55,6 +56,15 @@ describe('the waiter’s room', () => {
     fireEvent.click(await screen.findByRole('button', { name: /Salle 1/ }));
 
     expect(await screen.findByText('The table is open')).toBeDefined();
+  });
+
+  it('leads to the menu of the day, where a dish the kitchen ran out of is marked sold out', async () => {
+    const harness = await createHarness({ signedInAs: 'Waiter' });
+
+    showRoom(harness);
+    fireEvent.click(await screen.findByRole('link', { name: 'Menu of the day' }));
+
+    expect(await screen.findByText('The menu of the day')).toBeDefined();
   });
 
   it('leaves a free table saying so', async () => {
