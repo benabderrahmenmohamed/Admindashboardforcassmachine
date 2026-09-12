@@ -16,9 +16,9 @@ import { ProductGrid } from './ProductGrid';
 interface SellingScreenProps {
   readonly cart: Cart;
   readonly onCartChange: (cart: Cart) => void;
-  /** Records the cart as a sale; resolves true once the server has answered it. */
+  /** Records the cart as a sale; resolves true once it is written to this device. */
   readonly onCheckout: (payment: CheckoutPayment) => Promise<boolean>;
-  /** True while a record is being sent. */
+  /** True while a record is being written to this device. */
   readonly isRecording: boolean;
 }
 
@@ -109,7 +109,7 @@ export function SellingScreen({ cart, onCartChange, onCheckout, isRecording }: S
       toast.error('Cart is empty');
       return;
     }
-    // The page announces the receipt number and empties the cart once the sale is recorded.
+    // The register shows the receipt and empties the cart as soon as the sale is on the device.
     if (await onCheckout(payment)) {
       setIsPaymentDialogOpen(false);
     }

@@ -8,8 +8,10 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
+import type { SyncStatus } from '@/features/pos/queue';
 import { formatTND } from '@/lib/money';
 import type { PaymentMethod, RecordKind, Sale } from '../types';
+import { SyncBadge } from './SyncBadge';
 
 export const PAYMENT_METHOD_LABELS: Record<PaymentMethod, string> = {
   cash: 'Cash',
@@ -26,21 +28,27 @@ export function KindBadge({ kind }: { readonly kind: RecordKind }) {
 
 interface SaleDetailProps {
   readonly sale: Sale;
+  /** How far the document got: `synced` for one the server holds. */
+  readonly syncStatus: SyncStatus;
   /** Opens another document: the sale a refund pays back. */
   readonly onOpenSale: (saleId: string) => void;
 }
 
-/** A sale or refund as the ledger holds it, with how much of each sale line was refunded since. */
-export function SaleDetail({ sale, onOpenSale }: SaleDetailProps) {
+/**
+ * A sale or refund as the ledger holds it, or as this device wrote it while it is on its way, with
+ * how much of each sale line has been refunded since.
+ */
+export function SaleDetail({ sale, syncStatus, onOpenSale }: SaleDetailProps) {
   const isRefund = sale.kind === 'refund';
   const refundsSaleId = sale.refundsSaleId;
 
   return (
     <div className="space-y-4">
       <div>
-        <p className="flex items-center gap-2 text-xl font-bold text-gray-900">
+        <p className="flex flex-wrap items-center gap-2 text-xl font-bold text-gray-900">
           {sale.receiptNumber}
           <KindBadge kind={sale.kind} />
+          {syncStatus !== 'synced' && <SyncBadge status={syncStatus} />}
         </p>
         <p className="text-sm text-gray-500">{new Date(sale.createdAt).toLocaleString()}</p>
         {refundsSaleId !== null && (

@@ -2,37 +2,30 @@
  * What the Z-report screen shows, kept out of the components so it runs without a DOM: this
  * device's own calculation of the report, and every figure of the server's report next to it.
  */
+import { openedHere, sessionDocuments } from '@/features/pos/queue';
 import { computeZReport } from '@/features/sessions/zReport';
+import type { OutboxRecord } from '@/features/sync/types';
 import { formatTND, type Millimes } from '@/lib/money';
-import type { CashSession, Sale, ZReport } from '@/ports';
-
-/** The most documents one listing can return (ListSalesQuery.limit). */
-export const LOCAL_REPORT_LIMIT = 200;
+import type { CashSession, ZReport } from '@/ports';
 
 /**
- * This device's Z-report of `session`, from the session's documents as listed, with the server's
- * formulas (computeZReport). Null when there is no complete list to count: it could not be read, or
- * it is as long as a listing gets and may be cut off. Voids are an admin's decision this device
- * does not see, so a void shows up as a discrepancy.
+ * This device's Z-report of `session`, counted from the records it wrote in it with the server's
+ * formulas (computeZReport), so it needs no network. Null for a session this device did not open —
+ * one it adopted when it was registered — because the documents written before it are not here.
+ * Voids are an admin's decision this device does not see, so a void shows up as a discrepancy.
  */
 export function localZReport(
   session: CashSession,
-  sales: readonly Sale[] | undefined,
+  records: readonly OutboxRecord[],
   countedCashMillimes: Millimes,
 ): ZReport | null {
-  if (!sales || sales.length >= LOCAL_REPORT_LIMIT) {
+  if (!openedHere(records, session.id)) {
     return null;
   }
   return computeZReport({
     sessionId: session.id,
     openingFloatMillimes: session.openingFloatMillimes,
-    documents: sales
-      .filter((sale) => sale.sessionId === session.id)
-      .map((sale) => ({
-        kind: sale.kind,
-        paymentMethod: sale.paymentMethod,
-        totalMillimes: sale.totalMillimes,
-      })),
+    documents: sessionDocuments(records, session.id),
     voidsCount: 0,
     countedCashMillimes,
   });

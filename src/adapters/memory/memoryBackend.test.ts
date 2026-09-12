@@ -29,7 +29,7 @@ import {
   type MemorySeed,
   type MemorySeedProduct,
 } from './index';
-import { randomId } from './support';
+import { defaultConnectivity, randomId } from './support';
 
 const START = Date.UTC(2026, 8, 11, 9, 0, 0);
 const UUID_V4 = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
@@ -101,9 +101,12 @@ function setup(seed?: MemorySeed) {
   let ticks = 0;
   let ids = 0;
   const faults = createFaultInjector();
+  /** The device's network, which a test takes down between calls. */
+  const network = { online: true };
   const backend = createMemoryBackend({
     seed,
     faults,
+    connectivity: () => network.online,
     now: () => {
       ticks += 1;
       return new Date(START + ticks * 1000);
@@ -113,7 +116,7 @@ function setup(seed?: MemorySeed) {
       return idNo(ids);
     },
   });
-  return { backend, faults };
+  return { backend, faults, network };
 }
 
 /** Who makes a call: nobody signed in, or the demo shop's account with that role. */
@@ -1033,6 +1036,63 @@ describe('access', () => {
   });
 });
 
+describe('connectivity', () => {
+  it('reads navigator.onLine in a browser and stays online where there is none', async () => {
+    expect(defaultConnectivity({ onLine: true })).toBe(true);
+    expect(defaultConnectivity({ onLine: false })).toBe(false);
+    // Node, and any runtime whose navigator has no onLine: there is no network to lose.
+    expect(defaultConnectivity({})).toBe(true);
+    expect(defaultConnectivity(undefined)).toBe(true);
+
+    vi.stubGlobal('navigator', { onLine: false });
+    try {
+      expect(defaultConnectivity()).toBe(false);
+      // A backend built without the option follows the browser, which is what the demo runs on.
+      await failure(createMemoryBackend().auth.getState(), 'NETWORK_ERROR');
+    } finally {
+      vi.unstubAllGlobals();
+    }
+    await expect(createMemoryBackend().auth.getState()).resolves.toEqual({ status: 'anonymous' });
+  });
+
+  it.each(MEMORY_OPERATIONS)(
+    '%s throws NETWORK_ERROR while the device is offline, changing nothing',
+    async (operation) => {
+      const { backend, network, prepared } = await preparedAs('admin');
+      // The same backend where the call was never made: a request that never leaves changes nothing.
+      const control = await preparedAs('admin');
+
+      network.online = false;
+      const error = await failure(callFor[operation](backend, prepared), 'NETWORK_ERROR');
+      expect(error.message).toBe('Could not reach the server. Check the connection and try again.');
+      network.online = true;
+
+      expect(await observable(backend, prepared)).toEqual(
+        await observable(control.backend, control.prepared),
+      );
+      await expect(backend.auth.getState()).resolves.toEqual(await control.backend.auth.getState());
+    },
+  );
+
+  it('answers offline before the faults and before the caller check, spending neither', async () => {
+    const { backend, faults, network } = setup();
+    const busy = new AppError('SERVER_ERROR', 'Busy');
+    faults.failNext('catalog.listProducts', busy);
+    network.online = false;
+
+    // Nobody is signed in and a fault is queued: being offline comes before both.
+    await failure(backend.catalog.listProducts(), 'NETWORK_ERROR');
+    await failure(backend.auth.signIn(CREDENTIALS.admin), 'NETWORK_ERROR');
+
+    network.online = true;
+    // The queued fault was never spent, and the caller is checked only once a request arrives.
+    await expect(backend.catalog.listProducts()).rejects.toBe(busy);
+    await failure(backend.catalog.listProducts(), 'UNAUTHENTICATED');
+    await signInAs(backend, 'admin');
+    await expect(backend.catalog.listProducts()).resolves.toHaveLength(12);
+  });
+});
+
 describe('fault injection', () => {
   it('makes the next calls throw the given AppError exactly `times` times', async () => {
     const { backend, faults } = await setupAs('cashier');
@@ -1068,6 +1128,50 @@ describe('fault injection', () => {
     },
   );
 
+  it.each(MEMORY_OPERATIONS)(
+    '%s commits under a dropped response and then throws NETWORK_ERROR',
+    async (operation) => {
+      const { backend, faults, prepared } = await preparedAs('admin');
+      // The same backend where the call answered: the write lands either way.
+      const control = await preparedAs('admin');
+      faults.dropNext(operation);
+
+      await failure(callFor[operation](backend, prepared), 'NETWORK_ERROR');
+      await callFor[operation](control.backend, control.prepared);
+
+      expect(await observable(backend, prepared)).toEqual(
+        await observable(control.backend, control.prepared),
+      );
+      await expect(backend.auth.getState()).resolves.toEqual(await control.backend.auth.getState());
+    },
+  );
+
+  it('queues dropped responses and failures together, in the order they were added', async () => {
+    const { backend, faults } = await setupAs('admin');
+    const busy = new AppError('SERVER_ERROR', 'Busy');
+    faults.dropNext('catalog.createCategory');
+    faults.failNext('catalog.createCategory', busy);
+
+    const dropped = await failure(
+      backend.catalog.createCategory({ name: 'Surgelés', color: '#6366f1' }),
+      'NETWORK_ERROR',
+    );
+    expect(dropped.message).toBe(
+      'The request was sent but no answer arrived. It may already be recorded.',
+    );
+    const epices = { name: 'Épices', color: '#8b5cf6' };
+    await expect(backend.catalog.createCategory(epices)).rejects.toBe(busy);
+    await backend.catalog.createCategory(epices);
+
+    // The dropped call kept the category it wrote; the failed one wrote nothing.
+    const categories = await backend.catalog.listCategories();
+    expect(categories.map((category) => category.name)).toEqual([
+      ...DEMO_CATEGORIES.map((category) => category.name),
+      'Surgelés',
+      'Épices',
+    ]);
+  });
+
   it('matches any operation with * and applies faults in the order they were added', async () => {
     const { backend, faults } = setup();
     const specific = new AppError('FORBIDDEN', 'No');
@@ -1098,7 +1202,9 @@ describe('fault injection', () => {
     const error = new AppError('NETWORK_ERROR', 'Offline');
     expect(() => faults.failNext('*', error, 0)).toThrow(AppError);
     expect(() => faults.failNext('*', error, 1.5)).toThrow(AppError);
-    expect(() => faults.check('auth.getState')).not.toThrow();
+    expect(() => faults.dropNext('*', 0)).toThrow(AppError);
+    expect(() => faults.dropNext('*', 1.5)).toThrow(AppError);
+    expect(faults.check('auth.getState')).toBe('run');
   });
 });
 

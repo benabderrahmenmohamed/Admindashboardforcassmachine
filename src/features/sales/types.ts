@@ -1,3 +1,5 @@
+export type { SyncStatus } from '@/features/pos/queue';
+export type { SaleRow } from './components/salesList';
 export type { RefundSelection } from './records';
 export type {
   ListSalesQuery,

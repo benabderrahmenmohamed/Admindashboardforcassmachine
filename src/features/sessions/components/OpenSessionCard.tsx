@@ -9,7 +9,7 @@ import type { Millimes } from '@/lib/money';
 
 interface OpenSessionCardProps {
   readonly terminalCode: string;
-  /** True while a record is being sent. */
+  /** True while the opening is being written to this device. */
   readonly isOpening: boolean;
   readonly onOpen: (openingFloatMillimes: Millimes) => void;
 }

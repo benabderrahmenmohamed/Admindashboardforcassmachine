@@ -1,18 +1,23 @@
 import { describe, expect, it } from 'vitest';
-import { computeZReport, sameZReport } from '@/features/sessions/zReport';
-import { formatTND, mm, ZERO } from '@/lib/money';
-import type { CashSession, PaymentMethod, RecordKind, Sale, ZReport } from '@/ports';
-import { LOCAL_REPORT_LIMIT, localZReport, varianceTone, zReportRows } from './zReportView';
-
-const SESSION_ID = 'session-1';
-const AT = '2026-09-11T09:00:00.000Z';
+import {
+  openRecord,
+  saleLine,
+  saleRecord,
+  SESSION_ID,
+  uuid,
+} from '@/features/pos/__fixtures__/records';
+import { computeZReport, sameZReport, type ZReportDocument } from '@/features/sessions/zReport';
+import type { OutboxRecord } from '@/features/sync/types';
+import { formatTND, mm } from '@/lib/money';
+import type { CashSession, ZReport } from '@/ports';
+import { localZReport, varianceTone, zReportRows } from './zReportView';
 
 const session: CashSession = {
   id: SESSION_ID,
   terminalId: 'terminal-1',
   terminalCode: 'T1',
   openedBy: 'cashier-1',
-  openedAt: AT,
+  openedAt: '2026-09-11T09:00:00.000Z',
   openingFloatMillimes: mm(50_000),
   closedAt: null,
   closedBy: null,
@@ -21,54 +26,30 @@ const session: CashSession = {
   zReport: null,
 };
 
-function doc(
-  seq: number,
-  kind: RecordKind,
-  paymentMethod: PaymentMethod,
-  total: number,
-  sessionId = SESSION_ID,
-): Sale {
-  const totalMillimes = mm(total);
-  return {
-    id: `sale-${seq}`,
-    kind,
-    receiptNumber: `T1-${seq}`,
-    seq,
-    terminalId: 'terminal-1',
-    terminalCode: 'T1',
-    sessionId,
-    refundsSaleId: kind === 'refund' ? 'sale-1' : null,
-    paymentMethod,
-    subtotalMillimes: totalMillimes,
-    discountMillimes: ZERO,
-    totalMillimes,
-    tenderedMillimes: totalMillimes,
-    changeMillimes: ZERO,
-    createdAt: AT,
-    receivedAt: AT,
-    lines: [
-      {
-        lineNo: 1,
-        productId: 'p-1',
-        productName: 'Product',
-        qty: kind === 'sale' ? 1 : -1,
-        unitPriceMillimes: mm(Math.abs(total)),
-        lineDiscountMillimes: ZERO,
-        cartDiscountShareMillimes: ZERO,
-        lineTotalMillimes: totalMillimes,
-        refundsLineNo: kind === 'refund' ? 1 : null,
-        refundedQty: 0,
-        refundedMillimes: ZERO,
-      },
-    ],
-  };
+/** One line worth `total` millimes: negative on a refund, which also has a negative quantity. */
+function line(total: number) {
+  return saleLine({
+    qty: total < 0 ? -1 : 1,
+    unitPriceMillimes: mm(Math.abs(total)),
+    lineTotalMillimes: mm(total),
+    refundsLineNo: total < 0 ? 1 : null,
+  });
 }
 
-const documents = [
-  doc(4, 'refund', 'card', -1000),
-  doc(3, 'refund', 'cash', -2000),
-  doc(2, 'sale', 'card', 8000),
-  doc(1, 'sale', 'cash', 12_500),
+const documents: ZReportDocument[] = [
+  { kind: 'sale', paymentMethod: 'cash', totalMillimes: mm(12_500) },
+  { kind: 'sale', paymentMethod: 'card', totalMillimes: mm(8000) },
+  { kind: 'refund', paymentMethod: 'cash', totalMillimes: mm(-2000) },
+  { kind: 'refund', paymentMethod: 'card', totalMillimes: mm(-1000) },
+];
+
+/** The same four documents as this device's queue holds them, behind the record that opened them. */
+const records: OutboxRecord[] = [
+  openRecord({ ordinal: 1, status: 'acked' }),
+  saleRecord({ seq: 1, ordinal: 2, status: 'acked', method: 'cash', lines: [line(12_500)] }),
+  saleRecord({ seq: 2, ordinal: 3, status: 'acked', method: 'card', lines: [line(8000)] }),
+  saleRecord({ seq: 3, ordinal: 4, kind: 'refund', method: 'cash', lines: [line(-2000)] }),
+  saleRecord({ seq: 4, ordinal: 5, kind: 'refund', method: 'card', lines: [line(-1000)] }),
 ];
 
 const LABELS = [
@@ -104,8 +85,8 @@ function report(overrides: Partial<ZReport> = {}): ZReport {
 }
 
 describe('localZReport', () => {
-  it("counts the session's documents with the server's formulas", () => {
-    const local = localZReport(session, documents, mm(60_000));
+  it("counts the records this device wrote with the server's formulas", () => {
+    const local = localZReport(session, records, mm(60_000));
 
     expect(local).toEqual(report());
     expect(local).toMatchObject({
@@ -122,17 +103,19 @@ describe('localZReport', () => {
   });
 
   it('ignores documents of other sessions', () => {
-    const listed = [...documents, doc(9, 'sale', 'cash', 99_000, 'session-0')];
-    expect(localZReport(session, listed, mm(60_000))).toEqual(report());
+    const other = saleRecord({ seq: 9, ordinal: 6, sessionId: uuid(9), lines: [line(99_000)] });
+    expect(localZReport(session, [...records, other], mm(60_000))).toEqual(report());
   });
 
-  it('makes no report without a complete list', () => {
-    expect(localZReport(session, undefined, mm(60_000))).toBeNull();
-    const full = Array.from({ length: LOCAL_REPORT_LIMIT }, (_, index) =>
-      doc(index + 1, 'sale', 'cash', 1000),
-    );
-    expect(localZReport(session, full, mm(60_000))).toBeNull();
-    expect(localZReport(session, full.slice(1), mm(60_000))).not.toBeNull();
+  it('needs no network: a queue full of unsent records counts the same', () => {
+    const unsent = records.map((record) => ({ ...record, status: 'pending' as const }));
+    expect(localZReport(session, unsent, mm(60_000))).toEqual(report());
+  });
+
+  it('makes no report for a session this device did not open', () => {
+    // A device registered mid-session adopts the open session but never saw what came before.
+    expect(localZReport(session, records.slice(1), mm(60_000))).toBeNull();
+    expect(localZReport(session, [], mm(60_000))).toBeNull();
   });
 });
 
@@ -175,8 +158,8 @@ describe('zReportRows', () => {
       report(),
       report({ sessionId: 'another-id' }),
       report({ voidsCount: 2 }),
-      localZReport(session, documents.slice(1), mm(60_000)) ?? report(),
-      localZReport(session, documents, mm(61_000)) ?? report(),
+      localZReport(session, records.slice(0, 4), mm(60_000)) ?? report(),
+      localZReport(session, records, mm(61_000)) ?? report(),
     ];
     for (const server of variants) {
       const differs = zReportRows(server, local).some((row) => row.localValue !== null);

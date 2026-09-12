@@ -15,7 +15,7 @@ import { PAYMENT_METHOD_LABELS } from './SaleDetail';
 
 interface RefundFormProps {
   readonly sale: Sale;
-  /** True while a record is being sent. */
+  /** True while the refund is being written to this device. */
   readonly isRecording: boolean;
   readonly onConfirm: (selections: readonly RefundSelection[], method: PaymentMethod) => void;
   readonly onCancel: () => void;

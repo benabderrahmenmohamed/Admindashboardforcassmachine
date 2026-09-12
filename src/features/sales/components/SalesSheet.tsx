@@ -10,14 +10,17 @@ import {
   SheetTitle,
 } from '@/components/ui/sheet';
 import { useSale, useSales } from '@/features/sales/hooks/useSales';
-import { errorMessage } from '@/lib/errors';
+import type { OutboxMeta, OutboxRecord } from '@/features/sync/types';
+import { AppError, errorMessage } from '@/lib/errors';
 import { formatTND } from '@/lib/money';
 import type { PaymentMethod, RefundSelection, Sale } from '../types';
 import { RefundForm } from './RefundForm';
 import { canRefund } from './refundSelection';
 import { KindBadge, PAYMENT_METHOD_LABELS, SaleDetail } from './SaleDetail';
+import { findRow, mergeSales, type SaleRow } from './salesList';
+import { SyncBadge } from './SyncBadge';
 
-/** How many of the terminal's latest documents the sheet lists. */
+/** How many of the terminal's latest documents the sheet asks the server for. */
 const RECENT_SALES_LIMIT = 50;
 
 type View =
@@ -28,10 +31,12 @@ type View =
 interface SalesSheetProps {
   readonly open: boolean;
   readonly onOpenChange: (open: boolean) => void;
-  readonly terminalId: string;
-  /** True while a record is being sent. */
+  readonly terminal: OutboxMeta;
+  /** This device's queue: what it wrote, sent or not. */
+  readonly records: readonly OutboxRecord[];
+  /** True while a record is being written to this device. */
   readonly isRecording: boolean;
-  /** Records a refund of `sale`; resolves true once the server has answered it. */
+  /** Records a refund of `sale`; resolves true once it is on this device. */
   readonly onRefund: (
     sale: Sale,
     selections: readonly RefundSelection[],
@@ -49,7 +54,8 @@ export function SalesSheet({ open, onOpenChange, ...body }: SalesSheetProps) {
             Sales
           </SheetTitle>
           <SheetDescription>
-            Recent sales and refunds of this terminal, newest first.
+            Recent sales and refunds of this terminal, newest first, including the ones still on
+            their way to the server.
           </SheetDescription>
         </SheetHeader>
         {/* Mounted again on every opening, so the sheet starts at the list. */}
@@ -60,23 +66,42 @@ export function SalesSheet({ open, onOpenChange, ...body }: SalesSheetProps) {
 }
 
 function SalesSheetBody({
-  terminalId,
+  terminal,
+  records,
   isRecording,
   onRefund,
 }: Omit<SalesSheetProps, 'open' | 'onOpenChange'>) {
   const [view, setView] = useState<View>({ name: 'list' });
+  const salesQuery = useSales({ terminalId: terminal.terminalId, limit: RECENT_SALES_LIMIT });
+  // Whatever the server answered, plus everything this device wrote that it has not taken yet: the
+  // list is complete offline, because a document is on this device from the moment it is written.
+  const rows = mergeSales(terminal, salesQuery.data ?? [], records);
+  const offline = salesQuery.data === undefined;
+  // Offline, TanStack pauses this query instead of failing it: it stays pending with no error, so
+  // without this the list would spin for ever rather than say what is missing.
+  const paused = salesQuery.fetchStatus === 'paused';
+  const pausedError = paused
+    ? new AppError(
+        'NETWORK_ERROR',
+        'The server cannot be reached, so sales recorded elsewhere are not shown. Everything this device wrote is here.',
+      )
+    : null;
 
   switch (view.name) {
     case 'list':
       return (
         <SalesList
-          terminalId={terminalId}
+          rows={rows}
+          isPending={salesQuery.isPending && !paused}
+          error={offline ? (salesQuery.error ?? pausedError) : null}
+          onRetry={() => void salesQuery.refetch()}
           onSelect={(saleId) => setView({ name: 'detail', saleId })}
         />
       );
     case 'detail':
       return (
         <SaleView
+          rows={rows}
           saleId={view.saleId}
           isRecording={isRecording}
           onBack={() => setView({ name: 'list' })}
@@ -87,6 +112,7 @@ function SalesSheetBody({
     case 'refund':
       return (
         <RefundView
+          rows={rows}
           saleId={view.saleId}
           isRecording={isRecording}
           onRefund={onRefund}
@@ -97,56 +123,57 @@ function SalesSheetBody({
 }
 
 function SalesList({
-  terminalId,
+  rows,
+  isPending,
+  error,
+  onRetry,
   onSelect,
 }: {
-  readonly terminalId: string;
+  readonly rows: readonly SaleRow[];
+  readonly isPending: boolean;
+  /** Why the server's list is missing, or null when it was read. */
+  readonly error: unknown;
+  readonly onRetry: () => void;
   readonly onSelect: (saleId: string) => void;
 }) {
-  const salesQuery = useSales({ terminalId, limit: RECENT_SALES_LIMIT });
-
-  if (salesQuery.isPending) {
+  if (isPending && rows.length === 0) {
     return <LoadingState />;
   }
-  if (salesQuery.isLoadingError) {
-    return (
-      <ErrorState
-        title="Failed to load sales"
-        error={salesQuery.error}
-        onRetry={() => void salesQuery.refetch()}
-      />
-    );
+  if (error !== null && rows.length === 0) {
+    return <ErrorState title="Failed to load sales" error={error} onRetry={onRetry} />;
   }
 
   return (
     <div className="px-4 pb-4">
-      {salesQuery.isRefetchError && (
-        <p role="alert" className="mb-2 text-sm text-red-600">
-          {errorMessage(salesQuery.error, 'Failed to refresh sales')}
+      {error !== null && (
+        <p role="alert" className="mb-2 text-sm text-amber-700">
+          Only the documents written on this device are listed:{' '}
+          {errorMessage(error, 'the server could not be reached')}
         </p>
       )}
-      {salesQuery.data.length === 0 ? (
+      {rows.length === 0 ? (
         <p className="text-center text-gray-500 py-8">No sales on this terminal yet</p>
       ) : (
         <ul className="divide-y rounded-lg border">
-          {salesQuery.data.map((sale) => (
-            <li key={sale.id}>
+          {rows.map((row) => (
+            <li key={row.sale.id}>
               <button
                 type="button"
                 className="w-full flex items-center justify-between gap-3 px-3 py-3 text-left hover:bg-gray-50"
-                onClick={() => onSelect(sale.id)}
+                onClick={() => onSelect(row.sale.id)}
               >
                 <div>
-                  <p className="flex items-center gap-2 font-semibold text-gray-900">
-                    {sale.receiptNumber}
-                    <KindBadge kind={sale.kind} />
+                  <p className="flex flex-wrap items-center gap-2 font-semibold text-gray-900">
+                    {row.sale.receiptNumber}
+                    <KindBadge kind={row.sale.kind} />
+                    {row.syncStatus !== 'synced' && <SyncBadge status={row.syncStatus} />}
                   </p>
                   <p className="text-xs text-gray-500">
-                    {new Date(sale.createdAt).toLocaleString()} &middot;{' '}
-                    {PAYMENT_METHOD_LABELS[sale.paymentMethod]}
+                    {new Date(row.sale.createdAt).toLocaleString()} &middot;{' '}
+                    {PAYMENT_METHOD_LABELS[row.sale.paymentMethod]}
                   </p>
                 </div>
-                <span className="font-bold">{formatTND(sale.totalMillimes)}</span>
+                <span className="font-bold">{formatTND(row.sale.totalMillimes)}</span>
               </button>
             </li>
           ))}
@@ -156,20 +183,48 @@ function SalesList({
   );
 }
 
+/**
+ * One document. It comes from the list when the list has it, which covers everything this device
+ * wrote; a sale named by a refund but older than the list is read from the server.
+ */
+function useSaleRow(
+  rows: readonly SaleRow[],
+  saleId: string,
+): {
+  readonly row: SaleRow | null;
+  readonly isPending: boolean;
+  readonly error: unknown;
+  readonly refetch: () => void;
+} {
+  const known = findRow(rows, saleId);
+  const saleQuery = useSale(known === null ? saleId : null);
+  const fetched: SaleRow | null = saleQuery.data
+    ? { sale: saleQuery.data, syncStatus: 'synced', record: null }
+    : null;
+  return {
+    row: known ?? fetched,
+    isPending: known === null && saleQuery.isPending,
+    error: known === null ? saleQuery.error : null,
+    refetch: () => void saleQuery.refetch(),
+  };
+}
+
 function SaleView({
+  rows,
   saleId,
   isRecording,
   onBack,
   onOpenSale,
   onRefund,
 }: {
+  readonly rows: readonly SaleRow[];
   readonly saleId: string;
   readonly isRecording: boolean;
   readonly onBack: () => void;
   readonly onOpenSale: (saleId: string) => void;
   readonly onRefund: () => void;
 }) {
-  const saleQuery = useSale(saleId);
+  const { row, isPending, error, refetch } = useSaleRow(rows, saleId);
 
   return (
     <div className="px-4 pb-4 space-y-4">
@@ -177,31 +232,22 @@ function SaleView({
         <ArrowLeft className="mr-2 h-4 w-4" />
         All sales
       </Button>
-      {saleQuery.isPending ? (
+      {isPending ? (
         <LoadingState />
-      ) : saleQuery.isLoadingError ? (
-        <ErrorState
-          title="Failed to load the sale"
-          error={saleQuery.error}
-          onRetry={() => void saleQuery.refetch()}
-        />
+      ) : row === null ? (
+        <ErrorState title="Failed to load the sale" error={error} onRetry={refetch} />
       ) : (
         <>
-          {saleQuery.isRefetchError && (
-            <p role="alert" className="text-sm text-red-600">
-              {errorMessage(saleQuery.error, 'Failed to refresh the sale')}
-            </p>
-          )}
-          <SaleDetail sale={saleQuery.data} onOpenSale={onOpenSale} />
-          {saleQuery.data.kind === 'sale' && (
+          <SaleDetail sale={row.sale} syncStatus={row.syncStatus} onOpenSale={onOpenSale} />
+          {row.sale.kind === 'sale' && (
             <Button
               className="w-full"
               size="lg"
-              disabled={isRecording || !canRefund(saleQuery.data)}
+              disabled={isRecording || !canRefund(row.sale)}
               onClick={onRefund}
             >
               <Undo2 className="mr-2 h-4 w-4" />
-              {canRefund(saleQuery.data) ? 'Refund' : 'Fully refunded'}
+              {canRefund(row.sale) ? 'Refund' : 'Fully refunded'}
             </Button>
           )}
         </>
@@ -211,34 +257,30 @@ function SaleView({
 }
 
 function RefundView({
+  rows,
   saleId,
   isRecording,
   onRefund,
   onDone,
 }: {
+  readonly rows: readonly SaleRow[];
   readonly saleId: string;
   readonly isRecording: boolean;
   readonly onRefund: SalesSheetProps['onRefund'];
   readonly onDone: () => void;
 }) {
-  const saleQuery = useSale(saleId);
+  const { row, isPending, error, refetch } = useSaleRow(rows, saleId);
 
-  if (saleQuery.isPending) {
+  if (isPending) {
     return <LoadingState />;
   }
-  if (saleQuery.isLoadingError) {
-    return (
-      <ErrorState
-        title="Failed to load the sale"
-        error={saleQuery.error}
-        onRetry={() => void saleQuery.refetch()}
-      />
-    );
+  if (row === null) {
+    return <ErrorState title="Failed to load the sale" error={error} onRetry={refetch} />;
   }
 
-  const sale = saleQuery.data;
+  const { sale } = row;
   const confirm = async (selections: readonly RefundSelection[], method: PaymentMethod) => {
-    // Back to the sale, which reloads with the refunded units.
+    // Back to the sale, which now shows the units this refund took back.
     if (await onRefund(sale, selections, method)) {
       onDone();
     }
@@ -246,10 +288,11 @@ function RefundView({
 
   return (
     <div className="px-4 pb-4 space-y-4">
-      {/* The form offers what the cached sale says is left, so say when that reading is stale. */}
-      {saleQuery.isRefetchError && (
-        <p role="alert" className="text-sm text-red-600">
-          {errorMessage(saleQuery.error, 'Failed to refresh the sale')}
+      {/* The sale may not have reached the server, so say what the refund is being built against. */}
+      {row.syncStatus !== 'synced' && (
+        <p className="text-sm text-amber-700">
+          This sale is still on its way to the server. The refund is written behind it and reaches
+          the server after it.
         </p>
       )}
       <RefundForm

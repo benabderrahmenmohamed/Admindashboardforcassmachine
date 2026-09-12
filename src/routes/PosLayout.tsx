@@ -3,6 +3,8 @@ import { Outlet, useNavigate } from 'react-router';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { useAuth, useCurrentUser } from '@/features/auth/hooks/useAuth';
+import { OfflineBanner } from '@/features/sync/components/OfflineBanner';
+import { SyncChip } from '@/features/sync/components/SyncChip';
 import { errorMessage } from '@/lib/errors';
 
 export function PosLayout() {
@@ -28,6 +30,7 @@ export function PosLayout() {
           <h1 className="text-xl font-bold text-gray-900">POS Terminal</h1>
         </div>
         <div className="flex items-center gap-4">
+          <SyncChip conflictsPath="/pos/conflicts" />
           <div className="flex items-center gap-2 px-3 py-2 bg-gray-100 rounded-lg">
             <User className="w-4 h-4 text-gray-600" />
             <div className="text-left">
@@ -44,6 +47,7 @@ export function PosLayout() {
 
       {/* Main Content */}
       <main className="p-4">
+        <OfflineBanner />
         <Outlet />
       </main>
     </div>

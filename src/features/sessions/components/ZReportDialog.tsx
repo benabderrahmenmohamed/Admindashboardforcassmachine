@@ -7,15 +7,12 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
+import { syncStatus, type SessionCloseRecord } from '@/features/pos/queue';
+import { syncStatusMessage } from '@/features/pos/recording';
+import { SyncBadge } from '@/features/sales/components/SyncBadge';
 import { sameZReport } from '@/features/sessions/zReport';
 import type { ZReport } from '@/ports';
 import { varianceTone, zReportRows, type VarianceTone } from './zReportView';
-
-/** A closed session's report as the server stored it, and this device's own calculation. */
-export interface ClosedSessionReport {
-  readonly server: ZReport;
-  readonly local: ZReport | null;
-}
 
 const VARIANCE_STYLES: Record<VarianceTone, { readonly row: string; readonly note: string }> = {
   short: { row: 'bg-red-50 text-red-700', note: 'short' },
@@ -25,23 +22,33 @@ const VARIANCE_STYLES: Record<VarianceTone, { readonly row: string; readonly not
 };
 
 interface ZReportDialogProps {
-  /** Kept after the dialog closes, so it does not empty while it fades out. */
-  readonly report: ClosedSessionReport | null;
+  /** The close as the queue holds it. Kept after the dialog closes, so it does not empty as it fades. */
+  readonly record: SessionCloseRecord | null;
   readonly open: boolean;
   readonly onOpenChange: (open: boolean) => void;
 }
 
-export function ZReportDialog({ report, open, onOpenChange }: ZReportDialogProps) {
+/**
+ * The Z-report of a session that was just closed. This device's own calculation is on screen at
+ * once, from the records it wrote; the server's report replaces it, with every figure that differs
+ * underneath, as soon as the close reaches the server.
+ */
+export function ZReportDialog({ record, open, onOpenChange }: ZReportDialogProps) {
   return (
-    <Dialog open={open && report !== null} onOpenChange={onOpenChange}>
+    <Dialog open={open && record !== null} onOpenChange={onOpenChange}>
       <DialogContent className="max-h-[90vh] overflow-y-auto">
         <DialogHeader>
-          <DialogTitle>Z-report</DialogTitle>
+          <DialogTitle className="flex items-center gap-2">
+            Z-report
+            {record && <SyncBadge status={syncStatus(record)} />}
+          </DialogTitle>
           <DialogDescription>
-            The session is closed. These are its totals as the server recorded them.
+            {record
+              ? `The session is closed. ${syncStatusMessage(record)}`
+              : 'No session was closed here yet.'}
           </DialogDescription>
         </DialogHeader>
-        {report && <ZReportBody report={report} />}
+        {record && <ZReportBody record={record} />}
         <Button className="w-full" onClick={() => onOpenChange(false)}>
           Done
         </Button>
@@ -50,34 +57,81 @@ export function ZReportDialog({ report, open, onOpenChange }: ZReportDialogProps
   );
 }
 
-function ZReportBody({ report: { server, local } }: { readonly report: ClosedSessionReport }) {
-  const rows = zReportRows(server, local);
-  const variance = VARIANCE_STYLES[varianceTone(server.varianceMillimes)];
+function ZReportBody({ record }: { readonly record: SessionCloseRecord }) {
+  const local = record.payload.clientZReport;
+  const server = record.result?.zReport ?? null;
+  // The server's report is the one kept; this device's stands in until it arrives.
+  const shown = server ?? local;
+
+  if (!shown) {
+    return (
+      <p className="text-sm text-gray-500">
+        This device did not open this session, so it could not count it. The report appears here
+        once the close reaches the server.
+      </p>
+    );
+  }
+  return (
+    <div className="space-y-4">
+      <ReportNote server={server} local={local} />
+      <ZReportFigures report={shown} local={server ? local : null} />
+    </div>
+  );
+}
+
+function ReportNote({
+  server,
+  local,
+}: {
+  readonly server: ZReport | null;
+  readonly local: ZReport | null;
+}) {
+  if (!server) {
+    return (
+      <p className="text-sm text-gray-500">
+        Counted on this device from the records of the session. The server&apos;s own report
+        replaces it once the close reaches it.
+      </p>
+    );
+  }
+  if (local === null) {
+    return (
+      <p className="text-sm text-gray-500">
+        This device could not count the session itself, so the report was not checked against its
+        own calculation.
+      </p>
+    );
+  }
+  if (sameZReport(server, local)) {
+    return null;
+  }
+  return (
+    <div
+      role="alert"
+      className="flex gap-2 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800"
+    >
+      <TriangleAlert className="h-4 w-4 shrink-0 mt-0.5" />
+      <p>
+        <span className="font-semibold">Discrepancy:</span> this device calculated different
+        figures, shown under the recorded ones. The report recorded by the server is the one kept.
+      </p>
+    </div>
+  );
+}
+
+function ZReportFigures({
+  report,
+  local,
+}: {
+  readonly report: ZReport;
+  readonly local: ZReport | null;
+}) {
+  const rows = zReportRows(report, local);
+  const variance = VARIANCE_STYLES[varianceTone(report.varianceMillimes)];
   const sections = [...new Set(rows.map((row) => row.section))];
 
   return (
-    <div className="space-y-4">
-      {local === null ? (
-        <p className="text-sm text-gray-500">
-          This device could not list every document of the session, so the report was not checked
-          against its own calculation.
-        </p>
-      ) : (
-        !sameZReport(server, local) && (
-          <div
-            role="alert"
-            className="flex gap-2 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800"
-          >
-            <TriangleAlert className="h-4 w-4 shrink-0 mt-0.5" />
-            <p>
-              <span className="font-semibold">Discrepancy:</span> this device calculated different
-              figures, shown under the recorded ones. The report recorded by the server is the one
-              kept.
-            </p>
-          </div>
-        )
-      )}
-
+    <>
       {sections.map((section) => (
         <div key={section}>
           <p className="text-xs font-semibold uppercase text-gray-500 mb-1">{section}</p>
@@ -110,6 +164,6 @@ function ZReportBody({ report: { server, local } }: { readonly report: ClosedSes
           </dl>
         </div>
       ))}
-    </div>
+    </>
   );
 }

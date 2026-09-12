@@ -12,6 +12,7 @@ import {
   FormMessage,
 } from '@/components/ui/form';
 import { Input } from '@/components/ui/input';
+import { useOutboxRecords } from '@/features/sync/hooks/useOutbox';
 import { errorMessage } from '@/lib/errors';
 import { useDeviceTerminal, useRegisterTerminal } from '../hooks/useTerminal';
 import {
@@ -24,16 +25,18 @@ import {
 
 /** Admin only: this device's terminal registration, and the form that registers it under a code. */
 export function TerminalCard() {
-  const { terminal, pending } = useDeviceTerminal();
+  const terminalQuery = useDeviceTerminal();
+  const records = useOutboxRecords();
+  const terminal = terminalQuery.data ?? null;
   const registerTerminal = useRegisterTerminal();
   const form = useForm<RegisterTerminalFormValues>({
     resolver: zodResolver(registerTerminalFormSchema),
     // Registering the same code again is how a superseded device recovers, so it starts filled in.
-    defaultValues: { code: terminal?.code ?? '' },
+    values: { code: terminal?.code ?? '' },
   });
   const summary = registrationSummary(terminal);
-  // The hook refuses too, in case another tab left a record since this render.
-  const blockedReason = registerBlockedReason(pending);
+  // The store refuses too, in case the queue took a record since this render.
+  const blockedReason = registerBlockedReason(records);
   const isRegistering = registerTerminal.isPending || form.formState.isSubmitting;
 
   const register = async ({ code }: RegisterTerminalFormValues) => {
@@ -76,7 +79,11 @@ export function TerminalCard() {
             </div>
           </dl>
         ) : (
-          <p className="text-sm text-gray-600">This device is not registered as a terminal.</p>
+          <p className="text-sm text-gray-600">
+            {terminalQuery.isPending
+              ? 'Reading this device...'
+              : 'This device is not registered as a terminal.'}
+          </p>
         )}
 
         {blockedReason && (

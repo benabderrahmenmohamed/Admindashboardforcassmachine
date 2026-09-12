@@ -22,7 +22,7 @@ interface CheckoutDialogProps {
   readonly onPaymentMethodChange: (paymentMethod: PaymentMethod) => void;
   /** Cash carries the amount tendered; card is always exactly the total. */
   readonly onConfirm: (payment: CheckoutPayment) => void;
-  /** True while the sale is being recorded: Confirm is disabled so it cannot be sent twice. */
+  /** True while the sale is being written: Confirm is disabled so it cannot be recorded twice. */
   readonly isConfirming: boolean;
 }
 

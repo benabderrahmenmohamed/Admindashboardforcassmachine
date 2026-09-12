@@ -117,8 +117,12 @@ export async function unwrap<T>(request: PromiseLike<PostgrestSingleResponse<T>>
   try {
     response = await request;
   } catch (error) {
-    // postgrest-js reports failures, network ones included, in the response; a throw is a bug.
-    throw toAppError(error);
+    if (error instanceof AppError) {
+      throw error;
+    }
+    // postgrest-js reports failures in the response, so a throw means the request never came back
+    // at all: nothing was decided, and the queue must retry it rather than stop at a conflict.
+    throw new AppError('NETWORK_ERROR', defaultErrorMessage('NETWORK_ERROR'), { cause: error });
   }
   if (response.error !== null) {
     throw toPostgrestAppError(response.error, response.status);

@@ -15,7 +15,6 @@ import {
 } from '@/features/sales/records';
 import { buildCloseSessionRecord, buildOpenSessionRecord } from '@/features/sessions/records';
 import { computeZReport, sameZReport } from '@/features/sessions/zReport';
-import { createTerminalStore, type KeyValueStorage } from '@/features/terminal/terminalStore';
 import type { TerminalContext } from '@/features/terminal/types';
 import { AppError, isAppError, type ErrorCode } from '@/lib/errors';
 import { mm, ZERO, type Millimes } from '@/lib/money';
@@ -31,6 +30,7 @@ import {
   type SaleRecord,
 } from '@/ports';
 import {
+  createFaultInjector,
   createMemoryBackend,
   DEMO_SHOP_ID,
   defaultSeed,
@@ -94,20 +94,24 @@ async function failure(promise: Promise<unknown>, code: ErrorCode): Promise<AppE
 }
 
 /**
- * A backend with a clock that ticks one second per read, and a client signed in for each seeded
- * member: the demo shop's admin and cashier, and the other shop's.
+ * A backend with a clock that ticks one second per read, one network the whole device shares, and a
+ * client signed in for each seeded member, with its own faults: the demo shop's admin and cashier,
+ * and the other shop's.
  */
 async function setup() {
   let ticks = 0;
+  const network = { online: true };
   const backend = createMemoryBackend({
+    connectivity: () => network.online,
     now: () => {
       ticks += 1;
       return new Date(START + ticks * 1000);
     },
   });
   const signedIn = async (credentials: Credentials) => {
-    const client = backend.connect();
-    return { client, user: await client.auth.signIn(credentials) };
+    const faults = createFaultInjector();
+    const client = backend.connect({ faults });
+    return { client, faults, user: await client.auth.signIn(credentials) };
   };
   const admin = await signedIn(CREDENTIALS.admin);
   const cashier = await signedIn(CREDENTIALS.cashier);
@@ -115,9 +119,12 @@ async function setup() {
   const otherCashier = await signedIn(CREDENTIALS.otherCashier);
   return {
     backend,
+    network,
     admin: admin.client,
+    adminFaults: admin.faults,
     adminUser: admin.user,
     cashier: cashier.client,
+    cashierFaults: cashier.faults,
     cashierUser: cashier.user,
     otherAdmin: otherAdmin.client,
     otherCashier: otherCashier.client,
@@ -226,19 +233,6 @@ function refundOf(
 /** `record` with `changes`, hashed again as a device would hash what it wrote. */
 function rewrite<T extends object>(record: T, changes: Partial<T>): Promise<T> {
   return withPayloadHash({ ...record, ...changes });
-}
-
-function memoryStorage(): KeyValueStorage {
-  const values = new Map<string, string>();
-  return {
-    getItem: (key) => values.get(key) ?? null,
-    setItem: (key, value) => {
-      values.set(key, value);
-    },
-    removeItem: (key) => {
-      values.delete(key);
-    },
-  };
 }
 
 describe('terminals', () => {
@@ -840,13 +834,127 @@ describe('sales', () => {
   });
 });
 
+describe('an unreliable network', () => {
+  it('records nothing while the device is offline, and the same receipt once it is back', async () => {
+    const { backend, admin, cashier, cashierUser, network } = await setup();
+    const till = await openTill(admin, cashier, cashierUser);
+    const sold = await saleOf(till, 1, cartOf([WATER, 2]), {
+      method: 'cash',
+      tenderedMillimes: mm(2_000),
+    });
+    const movements = backend.inspect.stockMovements().length;
+
+    network.online = false;
+    // Nothing reaches the backend: the register holds the record and sells on without it.
+    await failure(cashier.sales.recordSale(sold), 'NETWORK_ERROR');
+    await failure(cashier.sales.listSales({}), 'NETWORK_ERROR');
+    await failure(cashier.sessions.current(till.terminalId), 'NETWORK_ERROR');
+    expect(backend.inspect.stockMovements()).toHaveLength(movements);
+    expect(backend.inspect.terminals()[0].lastSeq).toBe(0);
+
+    network.online = true;
+    await expect(cashier.sales.recordSale(sold)).resolves.toEqual({
+      saleId: sold.id,
+      receiptNumber: 'T1-1',
+      status: 'created',
+    });
+    await expect(cashier.sales.listSales({})).resolves.toHaveLength(1);
+  });
+
+  it('keeps the sale whose response was dropped, so the replay answers with its receipt', async () => {
+    const { backend, admin, cashier, cashierFaults, cashierUser } = await setup();
+    const till = await openTill(admin, cashier, cashierUser);
+    const sold = await saleOf(till, 1, cartOf([WATER, 2]));
+    const movements = backend.inspect.stockMovements().length;
+
+    cashierFaults.dropNext('sales.recordSale');
+    await failure(cashier.sales.recordSale(sold), 'NETWORK_ERROR');
+
+    // The device cannot tell that from a record that never arrived, so it sends the record again.
+    await expect(cashier.sales.recordSale(sold)).resolves.toEqual({
+      saleId: sold.id,
+      receiptNumber: 'T1-1',
+      status: 'replayed',
+    });
+    // Recorded once: one document, one movement per line, one receipt number spent.
+    await expect(cashier.sales.listSales({})).resolves.toHaveLength(1);
+    expect(backend.inspect.stockMovements()).toHaveLength(movements + 1);
+    expect(backend.inspect.terminals()[0].lastSeq).toBe(1);
+
+    // A dropped answer leaves no gap: the next record is the next number.
+    await expect(
+      cashier.sales.recordSale(await saleOf(till, 2, cartOf([HARISSA, 1]))),
+    ).resolves.toMatchObject({ receiptNumber: 'T1-2', status: 'created' });
+  });
+
+  it('keeps the session opened and closed under a dropped response', async () => {
+    const { admin, cashier, cashierFaults, cashierUser } = await setup();
+    const registration = await admin.terminals.register('T1');
+    const terminal = contextOf(registration);
+    const open = await openRecord(terminal, cashierUser.id, mm(50_000));
+
+    cashierFaults.dropNext('sessions.open');
+    await failure(cashier.sessions.open(open), 'NETWORK_ERROR');
+
+    await expect(cashier.sessions.current(registration.terminalId)).resolves.toMatchObject({
+      id: open.id,
+      openingFloatMillimes: 50_000,
+      closedAt: null,
+    });
+    await expect(cashier.sessions.open(open)).resolves.toMatchObject({
+      sessionId: open.id,
+      status: 'replayed',
+    });
+
+    const till = { terminalId: registration.terminalId, terminal, sessionId: open.id };
+    const close = await closeRecord(till, cashierUser.id, mm(50_000));
+    cashierFaults.dropNext('sessions.close');
+    await failure(cashier.sessions.close(close), 'NETWORK_ERROR');
+
+    const replayed = await cashier.sessions.close(close);
+    expect(replayed.status).toBe('replayed');
+    // A replayed close returns the report stored when the session closed (contracts/errors.md).
+    expect(replayed.zReport).toEqual(await cashier.sessions.zReport(open.id));
+    await expect(cashier.sessions.current(registration.terminalId)).resolves.toBeNull();
+  });
+
+  it('voids a receipt once when the void is what the network dropped', async () => {
+    const { backend, admin, adminFaults, cashier, cashierUser } = await setup();
+    const till = await openTill(admin, cashier, cashierUser);
+    const other = await openTill(admin, cashier, cashierUser, 'T2');
+    // A record T1 can never accept: it names the session of another terminal.
+    const stuck = await saleOf(
+      till,
+      1,
+      cartOf([WATER, 1]),
+      { method: 'card' },
+      { sessionId: other.sessionId },
+    );
+    await failure(cashier.sales.recordSale(stuck), 'FORBIDDEN');
+    const input = { record: stuck, errorCode: 'FORBIDDEN', reason: 'Wrong session' };
+
+    adminFaults.dropNext('sales.voidReceipt');
+    await failure(admin.sales.voidReceipt(input), 'NETWORK_ERROR');
+
+    await expect(admin.sales.voidReceipt(input)).resolves.toEqual({
+      saleId: stuck.id,
+      receiptNumber: 'T1-1',
+      status: 'replayed',
+    });
+    expect(backend.inspect.receiptVoids()).toHaveLength(1);
+    // The number the void burned is spent once, so selling goes on at the next one.
+    await expect(
+      cashier.sales.recordSale(await saleOf(till, 2, cartOf([WATER, 1]))),
+    ).resolves.toMatchObject({ receiptNumber: 'T1-2', status: 'created' });
+  });
+});
+
 describe('the credential-free demo', () => {
   it('lets the admin register T1, then the cashier open a session, sell, refund and close it', async () => {
     // Built as src/lib/backend.ts builds it, and signed in with the login page's demo buttons.
     const backend = createMemoryBackend();
     const [adminButton, cashierButton] = backend.demoAccounts;
     expect([adminButton.label, cashierButton.label]).toEqual(['Admin', 'Cashier']);
-    const device = createTerminalStore(memoryStorage());
 
     // Settings, as the admin: register this device as T1.
     const admin = await backend.auth.signIn({
@@ -854,16 +962,12 @@ describe('the credential-free demo', () => {
       password: adminButton.password,
     });
     expect(admin).toMatchObject({ role: 'admin', shopId: DEMO_SHOP_ID });
-    device.assertCanRegister();
     const registration = await backend.terminals.register('T1');
     expect(registration).toMatchObject({ code: 'T1', lastSeq: 0, epoch: 0, openSession: null });
-    device.register({
-      terminalId: registration.terminalId,
-      code: registration.code,
-      epoch: registration.epoch,
-      lastSeq: registration.lastSeq,
-      registeredAt: new Date().toISOString(),
-    });
+    // What the device keeps of the registration, and the counter it adopts from the server. Where
+    // the register stores them is its own business (src/features/terminal).
+    const terminal = { terminalCode: registration.code, epoch: registration.epoch };
+    let lastSeq = registration.lastSeq;
     await backend.auth.signOut();
 
     // The POS, as the cashier: no session yet, so open one with a float of 50 DT.
@@ -871,12 +975,7 @@ describe('the credential-free demo', () => {
       email: cashierButton.email,
       password: cashierButton.password,
     });
-    const stored = device.read();
-    if (!stored) {
-      return expect.unreachable('The device lost its registration');
-    }
-    const terminal = { terminalCode: stored.code, epoch: stored.epoch };
-    await expect(backend.sessions.current(stored.terminalId)).resolves.toBeNull();
+    await expect(backend.sessions.current(registration.terminalId)).resolves.toBeNull();
     const open = await buildOpenSessionRecord({
       id: newId(),
       terminal,
@@ -889,11 +988,10 @@ describe('the credential-free demo', () => {
       session: { terminalCode: 'T1', openedBy: cashier.id, openingFloatMillimes: 50_000 },
     });
 
-    /** Records the next receipt as the register does: pending first, committed once accepted. */
+    /** Records the next receipt as the register does: the number is allocated here, then spent. */
     async function recordNext(
       build: (envelope: RecordEnvelope) => Promise<SaleRecord>,
     ): Promise<SaleRecord> {
-      const lastSeq = device.read()?.lastSeq ?? 0;
       const record = await build({
         id: newId(),
         seq: lastSeq + 1,
@@ -901,14 +999,12 @@ describe('the credential-free demo', () => {
         createdAt: new Date().toISOString(),
         terminal,
       });
-      device.writePending({ type: 'sale', record });
       await expect(backend.sales.recordSale(record)).resolves.toEqual({
         saleId: record.id,
         receiptNumber: `T1-${record.seq}`,
         status: 'created',
       });
-      device.commitSeq(record.seq);
-      device.clearPending();
+      lastSeq = record.seq;
       return record;
     }
 
@@ -949,7 +1045,7 @@ describe('the credential-free demo', () => {
       [3, 5_225],
       [0, 0],
     ]);
-    const documents = await backend.sales.listSales({ terminalId: stored.terminalId });
+    const documents = await backend.sales.listSales({ terminalId: registration.terminalId });
     expect(documents.map((document) => document.receiptNumber)).toEqual([
       'T1-4',
       'T1-3',
@@ -998,7 +1094,7 @@ describe('the credential-free demo', () => {
       },
     });
     expect(sameZReport(closed.zReport, local)).toBe(true);
-    await expect(backend.sessions.current(stored.terminalId)).resolves.toBeNull();
+    await expect(backend.sessions.current(registration.terminalId)).resolves.toBeNull();
 
     const stock = (await backend.catalog.listProducts())
       .filter((product) => [WATER.id, YAOURT.id, HARISSA.id].includes(product.id))
@@ -1008,7 +1104,6 @@ describe('the credential-free demo', () => {
       [YAOURT.name, 8],
       [HARISSA.name, 39],
     ]);
-    expect(device.read()).toMatchObject({ lastSeq: 4 });
-    expect(device.readPending()).toBeNull();
+    expect(lastSeq).toBe(4);
   });
 });

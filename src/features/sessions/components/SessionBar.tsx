@@ -7,7 +7,7 @@ import type { CashSession } from '@/ports';
 interface SessionBarProps {
   readonly terminalCode: string;
   readonly session: CashSession;
-  /** True while a record is being sent: closing waits for it. */
+  /** True while a record is being written to this device: closing waits for it. */
   readonly isRecording: boolean;
   readonly onShowSales: () => void;
   readonly onCloseSession: () => void;

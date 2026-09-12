@@ -1,7 +1,7 @@
 import type { z } from 'zod';
 import { AppError, toAppError } from '@/lib/errors';
 import { roleSchema, type AuthState, type Role } from '@/ports';
-import type { FaultInjector, MemoryOperation } from './faults';
+import { droppedResponse, type FaultInjector, type MemoryOperation } from './faults';
 import type { MemoryProfile } from './seed';
 import type { MemoryStore } from './store';
 
@@ -19,17 +19,23 @@ export interface MemoryContext {
   readonly faults: FaultInjector;
   readonly now: () => Date;
   readonly newId: () => string;
+  /** Whether the device can reach the backend, read on every call (see `defaultConnectivity`). */
+  readonly connectivity: () => boolean;
   /** The data, shared by every client of the backend. */
   readonly store: MemoryStore;
   readonly client: MemoryClient;
 }
 
 /**
- * Runs the body of the port method `operation`: pending faults first, then `body`. Every outcome,
- * including a synchronous throw, reaches the caller as a promise, like a real backend. Every
- * failure is an AppError: anything else (a throwing clock or id source, say) becomes UNKNOWN with
- * the original as its cause. The body runs to completion before any other call, so each call sees
- * the result of the previous one, like requests serialised by the database's terminal lock.
+ * Runs the body of the port method `operation`: the device's connectivity first, then pending
+ * faults, then `body`. A call made offline throws NETWORK_ERROR before anything else, since a
+ * request that never leaves the device reaches no fault and no check of the backend's; a call whose
+ * response is dropped runs `body` and throws afterwards, so the write stands and the caller cannot
+ * tell. Every outcome, including a synchronous throw, reaches the caller as a promise, like a real
+ * backend. Every failure is an AppError: anything else (a throwing clock or id source, say) becomes
+ * UNKNOWN with the original as its cause. The body runs to completion before any other call, so
+ * each call sees the result of the previous one, like requests serialised by the database's
+ * terminal lock.
  */
 export function perform<T>(
   context: MemoryContext,
@@ -38,8 +44,18 @@ export function perform<T>(
 ): Promise<T> {
   return new Promise<T>((resolve, reject) => {
     try {
-      context.faults.check(operation);
-      resolve(body());
+      if (!context.connectivity()) {
+        throw new AppError(
+          'NETWORK_ERROR',
+          'Could not reach the server. Check the connection and try again.',
+        );
+      }
+      const effect = context.faults.check(operation);
+      const value = body();
+      if (effect === 'drop') {
+        throw droppedResponse();
+      }
+      resolve(value);
     } catch (error) {
       reject(toAppError(error));
     }
@@ -49,8 +65,8 @@ export function perform<T>(
 /**
  * The caller's shop membership, as private.require_profile: nobody signed in is UNAUTHENTICATED;
  * an account without a profile, or with a role outside `allowed` (default: any role), is
- * FORBIDDEN. Every call on shop data makes this check first in its body: after the faults, as a
- * request that never arrives cannot be refused, and before the input is parsed.
+ * FORBIDDEN. Every call on shop data makes this check first in its body: after connectivity and the
+ * faults, as a request that never arrives cannot be refused, and before the input is parsed.
  */
 export function requireProfile(
   context: MemoryContext,
@@ -130,6 +146,22 @@ export function freshId(context: MemoryContext, taken: ReadonlyMap<string, unkno
     throw new AppError('CONFIG_ERROR', `newId must return an unused lowercase UUID, got "${id}"`);
   }
   return id;
+}
+
+/** What `defaultConnectivity` reads of the device. `onLine` is missing outside a browser. */
+export interface ConnectivitySource {
+  readonly onLine?: boolean;
+}
+
+/**
+ * Whether the device can reach the backend: `navigator.onLine` in a browser, so switching Chrome to
+ * offline blocks the demo as a dropped network blocks a real backend, and true anywhere else (node,
+ * a runtime without it), where there is no network to lose.
+ */
+export function defaultConnectivity(
+  source: ConnectivitySource | undefined = globalThis.navigator,
+): boolean {
+  return source?.onLine ?? true;
 }
 
 /** The Web Crypto calls `randomId` uses. */

@@ -151,6 +151,23 @@ describe('unwrap', () => {
 
     expect(error).toMatchObject({ code: 'SERVER_ERROR', details: { status: 502 } });
   });
+
+  // A throw means no response came back at all, so nothing was decided. NETWORK_ERROR is retriable;
+  // UNKNOWN would be a conflict, and the outbox would stop the queue and block selling.
+  it('turns a thrown failure into NETWORK_ERROR', async () => {
+    const error = await failureOf(unwrap(Promise.reject(new TypeError('Failed to fetch'))));
+
+    expect(error).toMatchObject({ code: 'NETWORK_ERROR' });
+    expect(error.cause).toBeInstanceOf(TypeError);
+  });
+
+  it('keeps an AppError the request threw as it is', async () => {
+    const thrown = new AppError('UNAUTHENTICATED', 'The session has ended.');
+
+    const error = await failureOf(unwrap(Promise.reject(thrown)));
+
+    expect(error).toBe(thrown);
+  });
 });
 
 describe('toAuthAppError', () => {

@@ -10,11 +10,12 @@ import {
 } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { queueState, sessionDocuments } from '@/features/pos/queue';
 import { readCashAmount } from '@/features/pos/selling';
-import { useSales } from '@/features/sales/hooks/useSales';
+import type { OutboxRecord } from '@/features/sync/types';
 import type { Millimes } from '@/lib/money';
 import type { CashSession, ZReport } from '@/ports';
-import { LOCAL_REPORT_LIMIT, localZReport } from './zReportView';
+import { localZReport } from './zReportView';
 
 /** What closing a session takes from the cashier and from this device. */
 export interface SessionClose {
@@ -27,7 +28,9 @@ interface CloseSessionDialogProps {
   readonly open: boolean;
   readonly onOpenChange: (open: boolean) => void;
   readonly session: CashSession;
-  /** True while a record is being sent. */
+  /** This device's queue, which holds every document it wrote in the session. */
+  readonly records: readonly OutboxRecord[];
+  /** True while the close is being written to this device. */
   readonly isClosing: boolean;
   readonly onConfirm: (close: SessionClose) => void;
 }
@@ -52,45 +55,29 @@ export function CloseSessionDialog({ open, onOpenChange, ...form }: CloseSession
 
 function CloseSessionForm({
   session,
+  records,
   isClosing,
   onConfirm,
 }: Omit<CloseSessionDialogProps, 'open' | 'onOpenChange'>) {
   const [countedText, setCountedText] = useState('');
   const [showProblem, setShowProblem] = useState(false);
-  const [isPreparing, setIsPreparing] = useState(false);
-  const salesQuery = useSales({ sessionId: session.id, limit: LOCAL_REPORT_LIMIT });
   const counted = readCashAmount(countedText);
-  const isBusy = isClosing || isPreparing;
-
-  const submit = async () => {
-    if (!counted.ok) {
-      setShowProblem(true);
-      return;
-    }
-    setIsPreparing(true);
-    // The session's documents as they are now, for this device's own calculation of the report.
-    const listed = await salesQuery.refetch();
-    setIsPreparing(false);
-    if (listed.isError) {
-      console.error('Could not list the session to check its Z-report:', listed.error);
-    }
-    onConfirm({
-      countedMillimes: counted.millimes,
-      clientZReport: localZReport(
-        session,
-        listed.isSuccess ? listed.data : undefined,
-        counted.millimes,
-      ),
-    });
-  };
+  const documents = sessionDocuments(records, session.id).length;
+  const { pending } = queueState(records);
 
   return (
     <form
       className="space-y-4"
       onSubmit={(event) => {
         event.preventDefault();
-        if (!isBusy) {
-          void submit();
+        if (!counted.ok) {
+          setShowProblem(true);
+        } else if (!isClosing) {
+          // Counted from this device's own records, so the report is ready with or without network.
+          onConfirm({
+            countedMillimes: counted.millimes,
+            clientZReport: localZReport(session, records, counted.millimes),
+          });
         }
       }}
     >
@@ -108,9 +95,14 @@ function CloseSessionForm({
         />
         {showProblem && !counted.ok && <p className="text-sm text-red-600">{counted.problem}</p>}
       </div>
-      <Button type="submit" className="w-full" size="lg" disabled={isBusy}>
+      <p className="text-sm text-gray-600">
+        {documents === 1 ? '1 document' : `${documents} documents`} recorded on this device in this
+        session
+        {pending > 0 && `, ${pending} still waiting to be sent`}.
+      </p>
+      <Button type="submit" className="w-full" size="lg" disabled={isClosing}>
         <Lock className="mr-2 h-4 w-4" />
-        {isBusy ? 'Closing...' : 'Close session'}
+        {isClosing ? 'Closing...' : 'Close session'}
       </Button>
     </form>
   );
