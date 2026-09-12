@@ -1,74 +1,46 @@
-import { existsSync, readdirSync, statSync } from 'node:fs';
-import { join } from 'node:path';
 import tailwindcss from '@tailwindcss/vite';
 import react from '@vitejs/plugin-react';
-import { defineConfig, type Plugin } from 'vite';
-
-/** A short, stable id for a list of file names: the service worker's cache changes with the build. */
-function buildId(files: readonly string[]): string {
-  let hash = 5381;
-  for (const character of files.join('\n')) {
-    hash = ((hash * 33) ^ character.charCodeAt(0)) >>> 0;
-  }
-  return hash.toString(36);
-}
-
-function replaceOnce(code: string, pattern: RegExp, value: string): string {
-  if (!pattern.test(code)) {
-    throw new Error(`The service worker has no ${pattern.source} to fill in.`);
-  }
-  return code.replace(pattern, value);
-}
+import { defineConfig } from 'vite';
+import { VitePWA } from 'vite-plugin-pwa';
 
 /**
- * What Vite copies out of public/, as the paths those files take next to the bundle. Rollup never
- * sees them, so they have to be listed from disk: anything the app asks for on a cold offline load
- * — the icon among them — would otherwise go to the network and fail. Keep public/ to files worth
- * precaching; every one of them is downloaded when the worker installs.
+ * The app shell as a service worker, so a phone that reloads with no network still opens the app.
+ * It precaches the shell and nothing else. What a device keeps of the data is the query persister's
+ * (src/app/queryPersistence.ts) and the outbox's: they know whose it is and how old it may be, and a
+ * worker does not.
  */
-function copiedPublicFiles(publicDir: string): readonly string[] {
-  if (publicDir === '' || !existsSync(publicDir)) {
-    return [];
-  }
-  // The encoding is spelled out so this reads back file names rather than buffers.
-  return readdirSync(publicDir, { encoding: 'utf8', recursive: true })
-    .map((entry) => entry.replaceAll('\\', '/'))
-    .filter((name) => statSync(join(publicDir, name)).isFile());
-}
-
-/**
- * Writes the build's file list into src/sw.js, which Rollup has just built as its own entry. The
- * worker precaches exactly what this build emitted, and its cache name changes with them, so a
- * release never serves half of the old app and half of the new one.
- */
-function precacheServiceWorker(): Plugin {
-  let base = '/';
-  let copied: readonly string[] = [];
-  return {
-    name: 'pos-precache-service-worker',
-    apply: 'build',
-    // After Vite's own build plugins, so index.html is in the bundle when the list is written.
-    enforce: 'post',
-    configResolved(config) {
-      base = config.base;
-      copied = config.build.copyPublicDir ? copiedPublicFiles(config.publicDir) : [];
-    },
-    generateBundle(_options, bundle) {
-      const worker = bundle['sw.js'];
-      if (!worker || worker.type !== 'chunk') {
-        throw new Error('The build did not emit sw.js.');
-      }
-      const files = [...Object.keys(bundle).filter((name) => name !== 'sw.js'), ...copied]
-        .map((name) => `${base}${name}`)
-        .sort();
-      worker.code = replaceOnce(
-        replaceOnce(worker.code, /\[\s*(['"])__PRECACHE_MANIFEST__\1\s*\]/, JSON.stringify(files)),
-        /__BUILD_ID__/g,
-        buildId(files),
-      );
-    },
-  };
-}
+const offlineShell = VitePWA({
+  // A release waits for a person: src/app/registerServiceWorker.ts offers a reload instead of the new
+  // worker taking over on its own, because that reloads the page, and a till mid-payment would lose
+  // what the cashier was typing. What was already tapped is in the outbox either way.
+  registerType: 'prompt',
+  manifest: {
+    name: 'POS Admin Dashboard',
+    short_name: 'POS',
+    description:
+      'An offline-first point of sale for a café: the room, the counter, the kitchen and the back office.',
+    theme_color: '#2563eb',
+    background_color: '#ffffff',
+    display: 'standalone',
+    icons: [{ src: 'favicon.svg', sizes: 'any', type: 'image/svg+xml', purpose: 'any' }],
+  },
+  // The icon is in public/, which the glob below precaches already; naming it here as well would put
+  // it in the precache list twice.
+  includeManifestIcons: false,
+  workbox: {
+    // Everything the build writes and everything it copies out of public/: a cold start with no
+    // network asks for all of it, the icon included. Keep public/ to files worth downloading each
+    // time a new worker installs.
+    globPatterns: ['**/*'],
+    // The plugin adds the manifest to the precache itself, with its own revision.
+    globIgnores: ['manifest.webmanifest'],
+    // Any path that is not a file is one of the faces (/serveur, /caisse, /kitchen, /admin), and the
+    // router draws every one of them from index.html.
+    navigateFallback: 'index.html',
+    // No runtimeCaching, on purpose: a worker that cached API responses would answer with a stale
+    // sale, session or table as though the server had just said so.
+  },
+});
 
 /**
  * The libraries the app is built on, grouped into chunks a browser can keep. They change only when
@@ -128,20 +100,15 @@ function vendorChunk(id: string): string | undefined {
 }
 
 export default defineConfig({
-  plugins: [react(), tailwindcss(), precacheServiceWorker()],
+  plugins: [react(), tailwindcss(), offlineShell],
   resolve: {
     // Root-relative, so the alias resolves nothing itself; tsconfig.json mirrors it in "paths".
     alias: { '@': '/src' },
   },
   build: {
     rollupOptions: {
-      // The worker is a second entry so Rollup builds it like any other script; it has to land at
-      // the root of the site to control every page under it.
-      input: { main: 'index.html', sw: 'src/sw.js' },
       output: {
-        entryFileNames: (chunk) => (chunk.name === 'sw' ? 'sw.js' : 'assets/[name]-[hash].js'),
-        // Only modules from node_modules are moved; the app's own code, and the worker, which
-        // imports nothing, stay where Rollup put them.
+        // Only modules from node_modules are moved; the app's own code stays where Rollup put it.
         manualChunks: (id) => vendorChunk(id),
       },
     },

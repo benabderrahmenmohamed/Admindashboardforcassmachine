@@ -1,8 +1,9 @@
 import { AppError } from '@/lib/errors';
+import { isUnfinished, metaUnchanged } from './meta';
 import type { OutboxMeta, OutboxRecord, OutboxStorage } from './types';
 
-function isUnfinished(record: OutboxRecord): boolean {
-  return record.status === 'pending' || record.status === 'sending' || record.status === 'conflict';
+function copyMeta(meta: OutboxMeta): OutboxMeta {
+  return { nextOrdinal: meta.nextOrdinal, terminal: meta.terminal ? { ...meta.terminal } : null };
 }
 
 /** Outbox storage held in memory: for tests, and for the demo backend, which resets on reload anyway. */
@@ -13,18 +14,18 @@ export function createMemoryOutboxStorage(): OutboxStorage {
 
   return {
     readMeta() {
-      return Promise.resolve(meta ? { ...meta } : null);
+      return Promise.resolve(meta ? copyMeta(meta) : null);
     },
 
     writeMeta(next) {
-      meta = { ...next };
+      meta = copyMeta(next);
       return Promise.resolve();
     },
 
     // Failures are rejected rather than thrown, as the IndexedDB storage rejects them: a caller
     // holding an OutboxStorage gets the failure the same way whichever storage is behind it.
     appendIfUnchanged(expected, record, next) {
-      if (!meta || meta.lastSeq !== expected.lastSeq || meta.nextOrdinal !== expected.nextOrdinal) {
+      if (!metaUnchanged(meta, expected)) {
         return Promise.resolve(false);
       }
       if (records.has(record.id)) {
@@ -33,7 +34,7 @@ export function createMemoryOutboxStorage(): OutboxStorage {
         );
       }
       records.set(record.id, structuredClone(record));
-      meta = { ...next };
+      meta = copyMeta(next);
       return Promise.resolve(true);
     },
 

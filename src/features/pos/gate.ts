@@ -1,4 +1,4 @@
-import type { OutboxMeta, OutboxRecord } from '@/features/sync/types';
+import type { TerminalMeta, OutboxRecord } from '@/features/sync/types';
 import type { CashSession } from '@/ports';
 import { closedHere, localSession, queueState } from './queue';
 
@@ -28,10 +28,10 @@ export type PosGate =
   | { readonly kind: 'blocked'; readonly record: OutboxRecord }
   | { readonly kind: 'loading' }
   | { readonly kind: 'error'; readonly error: unknown }
-  | { readonly kind: 'closed'; readonly terminal: OutboxMeta }
+  | { readonly kind: 'closed'; readonly terminal: TerminalMeta }
   | {
       readonly kind: 'open';
-      readonly terminal: OutboxMeta;
+      readonly terminal: TerminalMeta;
       readonly session: CashSession;
       /** True for a session this device opened itself, which it knows without the server. */
       readonly isLocal: boolean;
@@ -41,7 +41,7 @@ export interface PosGateInput {
   /** `window.isSecureContext`: false on plain http from another machine. */
   readonly secureContext: boolean;
   /** This device's registration, or undefined while it is still being read. */
-  readonly terminal: OutboxMeta | null | undefined;
+  readonly terminal: TerminalMeta | null | undefined;
   readonly lock: TerminalLock;
   /** This device's outbox, in ordinal order. */
   readonly records: readonly OutboxRecord[];

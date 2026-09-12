@@ -1,7 +1,7 @@
 import { fireEvent, screen, waitFor, within } from '@testing-library/react';
 import type { RouteObject } from 'react-router';
 import { describe, expect, it } from 'vitest';
-import { addToTable, sendTable } from '@/features/orders/__fixtures__/seedOrders';
+import { addToTable, queueAddToTable, sendTable } from '@/features/orders/__fixtures__/seedOrders';
 import { formatTND, ZERO } from '@/lib/money';
 import { installWebLocks, removeWebLocks, setSecureContext } from '@/test/browserEnv';
 import { createHarness, type Harness } from '@/test/harness';
@@ -172,6 +172,37 @@ describe('paying a table', () => {
     });
     expect(screen.getByText(/erreur cuisine/)).toBeDefined();
     expect(screen.getByRole('button', { name: `Pay ${formatTND(ZERO)}` })).toBeDefined();
+  });
+
+  it('shows an item this device has not got onto the server yet, and does not let it be paid', async () => {
+    // Nothing leaves this device, so the second item exists only in its queue.
+    const harness = await createHarness({
+      signedInAs: 'Waiter',
+      terminalCode: 'T1',
+      canSend: false,
+    });
+    const [table] = await harness.backend.orders.listTables();
+    const [first, second] = await harness.backend.catalog.listProducts();
+    await addToTable(harness.backend, table.id, first);
+    await queueAddToTable(harness.outbox, table.id, second);
+
+    await openCounter(harness);
+    fireEvent.click(await screen.findByRole('button', { name: new RegExp(table.name) }));
+
+    const held = await screen.findByRole('region', { name: 'Not payable yet' });
+    expect(within(held).getByText('Changed on this device, not on the server yet.')).toBeDefined();
+    expect(within(held).getByText(`1× ${second.name}`)).toBeDefined();
+    expect(within(held).getByText('Not synced')).toBeDefined();
+    expect(within(held).queryByRole('checkbox')).toBeNull();
+    expect(screen.queryByRole('checkbox', { name: new RegExp(second.name) })).toBeNull();
+
+    // "Everything" is everything the server has: the queued item stays on the table, unpaid.
+    fireEvent.click(screen.getByRole('button', { name: 'Everything' }));
+    expect(
+      screen.getByRole('button', { name: `Pay ${formatTND(first.priceMillimes)}` }),
+    ).toBeDefined();
+    const summary = screen.getByText('Left on the table').closest('div');
+    expect(summary?.textContent).toContain(formatTND(second.priceMillimes));
   });
 
   it('records the payment and shows the receipt this terminal numbered', async () => {

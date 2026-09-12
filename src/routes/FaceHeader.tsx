@@ -7,6 +7,7 @@ import { useAuth, useCurrentUser } from '@/features/auth/hooks/useAuth';
 import { facesFor, type FacePath } from '@/features/auth/roles';
 import { SyncChip } from '@/features/sync/components/SyncChip';
 import { errorMessage } from '@/lib/errors';
+import { conflictsPathOf } from './conflictsPath';
 
 /** Signs out and returns to the way in. Every face's header offers it. */
 export function useSignOut(): () => void {
@@ -53,17 +54,16 @@ export function FaceSwitcher({ current }: { readonly current: FacePath }) {
 /**
  * The bar every face but the back office wears: who is signed in, where else they can go, how the
  * queue is doing, and the way out. Touch targets are 44 px tall, because the same bar is on a phone.
+ * Every device queues records, so every bar carries the sync chip, leading to the face's own
+ * Conflicts screen.
  */
 export function FaceHeader({
   title,
   current,
-  conflictsPath,
   children,
 }: {
   readonly title: string;
   readonly current: FacePath;
-  /** Where the sync chip sends a person to review the queue, or null when this face has no screen for it. */
-  readonly conflictsPath: string | null;
   /** Anything the face puts in the bar itself, shown before the user's details. */
   readonly children?: ReactNode;
 }) {
@@ -74,11 +74,11 @@ export function FaceHeader({
       <h1 className="text-lg font-bold text-gray-900 mr-auto">{title}</h1>
       {children}
       <FaceSwitcher current={current} />
-      {conflictsPath !== null && <SyncChip conflictsPath={conflictsPath} />}
+      <SyncChip conflictsPath={conflictsPathOf(current)} />
       <span className="hidden sm:block text-sm text-gray-600 px-2" title={user.email}>
         {user.name}
       </span>
-      <Button variant="outline" className="min-h-11" onClick={signOut} aria-label="Logout">
+      <Button variant="outline" className="min-h-11 min-w-11" onClick={signOut} aria-label="Logout">
         <LogOut className="h-4 w-4" />
         <span className="ml-2 hidden sm:inline">Logout</span>
       </Button>

@@ -13,6 +13,7 @@ const STYLES: Record<
   pending: { variant: 'outline', className: 'text-amber-700 border-amber-300', Icon: CloudOff },
   conflict: { variant: 'destructive', className: '', Icon: TriangleAlert },
   voided: { variant: 'outline', className: 'text-gray-500', Icon: Ban },
+  discarded: { variant: 'outline', className: 'text-gray-500', Icon: Ban },
 };
 
 /** How far a document got: on this device, on its way, refused, or given up on. */

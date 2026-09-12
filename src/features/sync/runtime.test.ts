@@ -6,22 +6,30 @@ import { createInProcessDrainLock } from './locks';
 import { createMemoryOutboxStorage } from './memoryStorage';
 import { createOutbox } from './outbox';
 import { createOutboxRuntime, DRAIN_INTERVAL_MS, type SyncSchedule } from './runtime';
-import type { OutboxMeta, OutboxRecord, OutboxResult, OutboxTransport } from './types';
+import type {
+  OutboxMeta,
+  OutboxRecord,
+  OutboxResult,
+  OutboxTransport,
+  TerminalMeta,
+} from './types';
 
-const TERMINAL: OutboxMeta = {
+const TERMINAL: TerminalMeta = {
   terminalId: 'terminal-1',
   code: 'T1',
   epoch: 2,
   lastSeq: 41,
-  nextOrdinal: 7,
   registeredAt: 1_699_999_000_000,
 };
+
+/** The device's queue on that terminal, six records already written. */
+const QUEUE: OutboxMeta = { nextOrdinal: 7, terminal: TERMINAL };
 const HASH = 'a'.repeat(64);
 const AT = '2026-09-12T09:00:00.000Z';
 /** Where the fake clock starts; the runtime never reads the wall clock. */
 const START = 1_700_000_000_000;
 
-function saleRecord(id: string, seq: number, meta: OutboxMeta): SaleRecord {
+function saleRecord(id: string, seq: number, meta: TerminalMeta): SaleRecord {
   return {
     id,
     kind: 'sale',
@@ -55,7 +63,7 @@ function saleRecord(id: string, seq: number, meta: OutboxMeta): SaleRecord {
   };
 }
 
-function openRecord(id: string, meta: OutboxMeta): OpenSessionRecord {
+function openRecord(id: string, meta: TerminalMeta): OpenSessionRecord {
   return {
     id,
     terminalCode: meta.code,
@@ -150,7 +158,7 @@ function harness(canSend: () => boolean = () => true) {
 
 async function registered(canSend?: () => boolean) {
   const test = harness(canSend);
-  await test.storage.writeMeta(TERMINAL);
+  await test.storage.writeMeta(QUEUE);
   test.runtime.start();
   await test.settle();
   return test;
@@ -168,7 +176,7 @@ describe('createOutboxRuntime', () => {
     expect(record.seq).toBe(42);
     expect(test.sent).toEqual(['sale-1']);
     const { summary, records, state } = test.runtime.snapshot();
-    expect(summary).toEqual({ pending: 0, conflicts: 0, lastAckAt: START });
+    expect(summary).toEqual({ pending: 0, conflicts: 0, discarded: 0, lastAckAt: START });
     expect(records.map((each) => each.status)).toEqual(['acked']);
     expect(state).toEqual({ kind: 'idle' });
   });
@@ -221,6 +229,7 @@ describe('createOutboxRuntime', () => {
     expect(test.runtime.snapshot().summary).toEqual({
       pending: 0,
       conflicts: 0,
+      discarded: 0,
       lastAckAt: START + 1000,
     });
   });
@@ -266,7 +275,7 @@ describe('createOutboxRuntime', () => {
 
     const blocked = test.runtime.snapshot();
     expect(blocked.state).toEqual({ kind: 'blocked', recordId: 'sale-1' });
-    expect(blocked.summary).toEqual({ pending: 1, conflicts: 1, lastAckAt: null });
+    expect(blocked.summary).toEqual({ pending: 1, conflicts: 1, discarded: 0, lastAckAt: null });
     expect(blocked.records.map((record) => record.status)).toEqual(['conflict', 'pending']);
     expect(blocked.records[0].lastError?.code).toBe('SEQUENCE_GAP');
     expect(test.sent).toEqual(['sale-1']);
@@ -279,6 +288,7 @@ describe('createOutboxRuntime', () => {
     expect(test.runtime.snapshot().summary).toEqual({
       pending: 0,
       conflicts: 0,
+      discarded: 0,
       lastAckAt: START,
     });
   });
@@ -305,18 +315,20 @@ describe('createOutboxRuntime', () => {
 
     const done = test.runtime.snapshot();
     expect(done.records.map((record) => record.status)).toEqual(['voided', 'acked']);
-    expect(done.summary).toEqual({ pending: 0, conflicts: 0, lastAckAt: START });
+    expect(done.summary).toEqual({ pending: 0, conflicts: 0, discarded: 0, lastAckAt: START });
     expect(test.sent).toEqual(['sale-1', 'sale-2']);
   });
 
-  it('sends nothing until the device is registered, then drains what is queued', async () => {
+  // Being a register is not a condition for sending: a waiter's phone never is one. A device with
+  // nothing written is simply idle, and sends the moment it has something.
+  it('is idle on a device that has written nothing, then drains what is queued', async () => {
     const test = harness();
     test.runtime.start();
     await test.settle();
 
-    expect(test.runtime.snapshot().state).toEqual({ kind: 'paused', reason: 'unregistered' });
+    expect(test.runtime.snapshot().state).toEqual({ kind: 'idle' });
 
-    await test.storage.writeMeta(TERMINAL);
+    await test.storage.writeMeta(QUEUE);
     await test.outbox.appendSale('sale', ({ seq, meta }) =>
       Promise.resolve(saleRecord('sale-1', seq, meta)),
     );

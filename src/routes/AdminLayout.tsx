@@ -15,6 +15,7 @@ import { Sheet, SheetContent, SheetTrigger } from '@/components/ui/sheet';
 import { useCurrentUser } from '@/features/auth/hooks/useAuth';
 import { OfflineBanner } from '@/features/sync/components/OfflineBanner';
 import { SyncChip } from '@/features/sync/components/SyncChip';
+import { conflictsPathOf } from './conflictsPath';
 import { FaceSwitcher, useSignOut } from './FaceHeader';
 
 const navItems = [
@@ -63,7 +64,7 @@ export function AdminLayout() {
         <h1 className="text-xl font-bold text-gray-900">Admin</h1>
         <div className="flex items-center gap-2">
           <FaceSwitcher current="/admin" />
-          <SyncChip conflictsPath="/admin/conflicts" />
+          <SyncChip conflictsPath={conflictsPathOf('/admin')} />
           <Sheet>
             <SheetTrigger asChild>
               <Button variant="outline" size="icon" aria-label="Open menu">
@@ -111,7 +112,7 @@ export function AdminLayout() {
 
             <div className="mt-8 space-y-4">
               <FaceSwitcher current="/admin" />
-              <SyncChip conflictsPath="/admin/conflicts" />
+              <SyncChip conflictsPath={conflictsPathOf('/admin')} />
             </div>
 
             <div className="mt-8 pt-6 border-t border-gray-200">
@@ -125,7 +126,7 @@ export function AdminLayout() {
 
         {/* Main Content */}
         <main className="flex-1 p-4 lg:p-8">
-          <OfflineBanner />
+          <OfflineBanner face="admin" />
           <Outlet />
         </main>
       </div>

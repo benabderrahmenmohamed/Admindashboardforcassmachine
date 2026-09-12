@@ -2,7 +2,13 @@
  * Outbox records and a registration for tests: the shapes the register reads off the queue, built
  * by hand so no backend, database or hashing is needed to make one.
  */
-import type { OutboxError, OutboxMeta, OutboxResult, OutboxStatus } from '@/features/sync/types';
+import type {
+  OutboxError,
+  OutboxMeta,
+  OutboxResult,
+  OutboxStatus,
+  TerminalMeta,
+} from '@/features/sync/types';
 import { add, mm, ZERO } from '@/lib/money';
 import type { PaymentMethod, SaleLine, ZReport } from '@/ports';
 import type { NumberedRecord, SessionCloseRecord, SessionOpenRecord } from '../queue';
@@ -16,16 +22,21 @@ export function uuid(index: number): string {
   return `00000000-0000-4000-8000-${String(index).padStart(12, '0')}`;
 }
 
-export function meta(overrides: Partial<OutboxMeta> = {}): OutboxMeta {
+/** The registration of the register these records were written on: T1, receipt 41 allocated. */
+export function meta(overrides: Partial<TerminalMeta> = {}): TerminalMeta {
   return {
     terminalId: 'terminal-1',
     code: 'T1',
     epoch: 2,
     lastSeq: 41,
-    nextOrdinal: 7,
     registeredAt: Date.parse(AT),
     ...overrides,
   };
+}
+
+/** The device's queue holding that registration, six records already written. */
+export function queueMeta(terminal: TerminalMeta | null = meta()): OutboxMeta {
+  return { nextOrdinal: 7, terminal };
 }
 
 export function saleLine(overrides: Partial<SaleLine> = {}): SaleLine {
@@ -69,6 +80,7 @@ function shell(common: Common, fallbackId: string) {
     lastError: common.lastError ?? null,
     result: common.result ?? null,
     ackedAt: status === 'acked' ? Date.parse(AT) : null,
+    discard: null,
   };
 }
 

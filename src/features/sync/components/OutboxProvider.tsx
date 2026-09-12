@@ -2,6 +2,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { ErrorState, FullPageLoading } from '@/components/feedback';
 import { useAuth } from '@/features/auth/hooks/useAuth';
+import { ROOM_QUERY_KEYS, roomChangedSince } from '@/features/orders/realtimeKeys';
 import { useBackend } from '@/lib/backend-context';
 import { toAppError, type AppError } from '@/lib/errors';
 import { queryKeys } from '@/lib/query';
@@ -63,15 +64,25 @@ export function OutboxProvider({ children }: { children: ReactNode }) {
     }
     let lastAckAt = runtime.snapshot().summary.lastAckAt;
     return runtime.subscribe(() => {
-      const { summary, state: sync } = runtime.snapshot();
+      const { records, summary, state: sync } = runtime.snapshot();
       // Once the pass is over, so a burst that drains fifty records reloads the lists once.
       if (sync.kind === 'sending' || summary.lastAckAt === lastAckAt) {
         return;
       }
+      const since = lastAckAt;
       lastAckAt = summary.lastAckAt;
       void queryClient.invalidateQueries({ queryKey: queryKeys.products });
       void queryClient.invalidateQueries({ queryKey: queryKeys.sales });
       void queryClient.invalidateQueries({ queryKey: queryKeys.sessions });
+      // An order record the server took changed a table that the grid, the table screens and the
+      // kitchen read before it had it; they draw the record over those reads until they are read
+      // again. Realtime would re-read them too, but not every backend has it, and not every event
+      // arrives.
+      if (roomChangedSince(records, since)) {
+        for (const queryKey of ROOM_QUERY_KEYS) {
+          void queryClient.invalidateQueries({ queryKey });
+        }
+      }
     });
   }, [queryClient, runtime]);
 

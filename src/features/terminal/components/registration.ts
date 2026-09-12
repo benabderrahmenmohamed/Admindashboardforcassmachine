@@ -5,7 +5,7 @@
 import { z } from 'zod';
 import { isUnfinished } from '@/features/pos/queue';
 import { receiptNumber } from '@/features/sales/records';
-import type { OutboxMeta, OutboxRecord } from '@/features/sync/types';
+import { isOrderRecord, type OutboxRecord, type TerminalMeta } from '@/features/sync/types';
 import { terminalCodeSchema } from '@/ports';
 
 /** The code typed to register this device; the port's rule trims and upper-cases it. */
@@ -20,7 +20,7 @@ export interface RegistrationSummary {
   readonly lastReceipt: string | null;
 }
 
-export function registrationSummary(terminal: OutboxMeta | null): RegistrationSummary | null {
+export function registrationSummary(terminal: TerminalMeta | null): RegistrationSummary | null {
   if (!terminal) {
     return null;
   }
@@ -31,7 +31,11 @@ export function registrationSummary(terminal: OutboxMeta | null): RegistrationSu
   };
 }
 
-/** A record in the queue in a few words, e.g. "sale T1-43" or "session close". */
+/**
+ * A record in the queue in a few words, e.g. "sale T1-43", "session close" or "2 items put on a
+ * table". An order record is not named by its table or product here, because the Settings card reads
+ * the queue without the cached room those names come from; the Conflicts screen names them.
+ */
 export function describeQueued(record: OutboxRecord): string {
   switch (record.kind) {
     case 'sale':
@@ -41,6 +45,18 @@ export function describeQueued(record: OutboxRecord): string {
       return 'session opening';
     case 'session_close':
       return 'session close';
+    case 'order_item_add':
+      return record.payload.qty === 1
+        ? 'an item put on a table'
+        : `${record.payload.qty} items put on a table`;
+    case 'order_item_remove':
+      return 'an item taken off a table';
+    case 'order_send':
+      return 'a table sent to the kitchen';
+    case 'order_item_prepare':
+      return 'an item marked prepared';
+    case 'order_cancel':
+      return 'an order cancelled on a table';
   }
 }
 
@@ -50,7 +66,8 @@ export function describeQueued(record: OutboxRecord): string {
  * receipt numbers they hold would be lost with them.
  */
 export function registerBlockedReason(records: readonly OutboxRecord[]): string | null {
-  const waiting = records.filter(isUnfinished);
+  // Only what names the terminal is stranded by a new registration: an order record names none.
+  const waiting = records.filter((record) => isUnfinished(record) && !isOrderRecord(record));
   const first = waiting[0];
   if (!first) {
     return null;
@@ -71,7 +88,7 @@ export function registerBlockedReason(records: readonly OutboxRecord[]): string 
  * The question asked before registering `code`. A registration replaces every earlier one of the
  * same code, on this device or any other.
  */
-export function registerConfirmMessage(code: string, current: OutboxMeta | null): string {
+export function registerConfirmMessage(code: string, current: TerminalMeta | null): string {
   const replaced = `Any other device registered as ${code} will have to be registered again before it can record sales.`;
   if (current && current.code !== code) {
     return `This device is terminal ${current.code}. Register it as ${code} instead? ${replaced}`;

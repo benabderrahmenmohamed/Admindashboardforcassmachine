@@ -6,6 +6,7 @@ import type {
   CashSession,
   CloseSessionRecord,
   OpenSessionRecord,
+  OrdersPort,
   SaleRecord,
   SalesPort,
   SessionsPort,
@@ -13,22 +14,23 @@ import type {
 } from '@/ports';
 import {
   closePayload,
-  meta,
   openPayload,
   refundPayload,
+  registration as registrationOf,
   salePayload,
   SESSION_ID,
   START,
+  storedOrder,
   TERMINAL_ID,
   uuid,
 } from './__tests__/fixtures';
 import { createPortTransport } from './transport';
-import type { OutboxRecord, OutboxTransport } from './types';
+import type { OrderKind, OutboxRecord, OutboxTransport } from './types';
 
 // Which port call each kind of record goes to, and what comes back. The transport is the only place
 // the queue touches a backend, so it must hand the record over exactly as it was queued.
 
-const registration = meta();
+const registration = registrationOf();
 
 const zReport: ZReport = computeZReport({
   sessionId: SESSION_ID,
@@ -51,6 +53,7 @@ function queued(payloadHash: string, sessionId: string) {
     lastError: null,
     result: null,
     ackedAt: null,
+    discard: null,
   };
 }
 
@@ -110,11 +113,13 @@ interface Calls {
   readonly recordSale: SaleRecord[];
   readonly open: OpenSessionRecord[];
   readonly close: CloseSessionRecord[];
+  /** Every orders-port call, as [method, record]. */
+  readonly orders: (readonly [string, unknown])[];
 }
 
 /** A backend that remembers what it was called with, and answers as the contract says it does. */
 function backend(failure?: AppError): { transport: OutboxTransport; calls: Calls } {
-  const calls: Calls = { recordSale: [], open: [], close: [] };
+  const calls: Calls = { recordSale: [], open: [], close: [], orders: [] };
   const sales: SalesPort = {
     recordSale: (record) => {
       calls.recordSale.push(record);
@@ -146,7 +151,28 @@ function backend(failure?: AppError): { transport: OutboxTransport; calls: Calls
     current: () => expect.unreachable('sending a record never reads the open session'),
     zReport: () => expect.unreachable('sending a record never asks for a Z-report'),
   };
-  return { transport: createPortTransport({ sales, sessions }), calls };
+  const written = (method: string, record: { id: string }, affected: number) => {
+    calls.orders.push([method, record]);
+    return Promise.resolve({ status: 'created' as const, orderId: 'order-1', affected });
+  };
+  const orders: OrdersPort = {
+    listTables: () => expect.unreachable('sending a record never lists tables'),
+    createTable: () => expect.unreachable('sending a record never creates a table'),
+    updateTable: () => expect.unreachable('sending a record never edits a table'),
+    board: () => expect.unreachable('sending a record never reads the board'),
+    openOrder: () => expect.unreachable('sending a record never reads an order'),
+    kitchenTickets: () => expect.unreachable('sending a record never reads the kitchen'),
+    removedAfterSent: () => expect.unreachable('sending a record never reads a report'),
+    addItem: (record) => {
+      calls.orders.push(['addItem', record]);
+      return Promise.resolve({ status: 'replayed', orderId: 'order-1', itemId: record.id });
+    },
+    removeItem: (record) => written('removeItem', record, 1),
+    send: (record) => written('send', record, 3),
+    prepareItem: (record) => written('prepareItem', record, 1),
+    cancelOrder: (record) => written('cancelOrder', record, 4),
+  };
+  return { transport: createPortTransport({ sales, sessions, orders }), calls };
 }
 
 describe('createPortTransport', () => {
@@ -210,5 +236,29 @@ describe('createPortTransport', () => {
     const { transport } = backend(failure);
 
     await expect(transport.send(await numberedRecord('sale'))).rejects.toBe(failure);
+  });
+
+  // An order record goes to the orders port that writes its kind, exactly as it was queued, and the
+  // answer brings back the order it landed on — the queue never needs to read the table to know it.
+  it.each<[OrderKind, string, number | undefined]>([
+    ['order_item_add', 'addItem', undefined],
+    ['order_item_remove', 'removeItem', 1],
+    ['order_send', 'send', 3],
+    ['order_item_prepare', 'prepareItem', 1],
+    ['order_cancel', 'cancelOrder', 4],
+  ])('sends %s through orders.%s, unchanged', async (kind, method, affected) => {
+    const { transport, calls } = backend();
+    const record = await storedOrder(kind, 1);
+
+    const result = await transport.send(record);
+
+    expect(calls.orders).toEqual([[method, record.payload]]);
+    expect(calls.orders[0][1]).toBe(record.payload);
+    expect(calls.recordSale).toEqual([]);
+    expect(result).toEqual(
+      affected === undefined
+        ? { status: 'replayed', orderId: 'order-1' }
+        : { status: 'created', orderId: 'order-1', affected },
+    );
   });
 });

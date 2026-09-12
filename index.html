@@ -15,5 +15,7 @@
   <body>
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
+    <!-- On its own rather than imported by the app, so no test ever loads the PWA plugin's module. -->
+    <script type="module" src="/src/app/registerServiceWorker.ts"></script>
   </body>
 </html>

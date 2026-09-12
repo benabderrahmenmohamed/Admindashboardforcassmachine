@@ -1,32 +1,16 @@
 import { describe, expect, it } from 'vitest';
-import { mm } from '@/lib/money';
-import type { KitchenTicket, OpenOrderItem } from '@/ports';
+import { roomItem } from '@/features/orders/__fixtures__/room';
+import { NO_LOCAL, type RoomItem, type RoomTicket } from '@/features/orders/overlay';
 import { longestWait, ticketBoard, ticketKey, ticketView } from './tickets';
 
 const SENT = '2026-09-12T10:05:00.000Z';
 const NOW = Date.parse('2026-09-12T10:20:00.000Z');
 
-function item(overrides: Partial<OpenOrderItem> & { id: string }): OpenOrderItem {
-  return {
-    orderId: 'order-1',
-    productId: 'product-1',
-    nameSnapshot: 'Express',
-    unitPriceMillimes: mm(2_500),
-    qty: 1,
-    note: '',
-    addedBy: 'waiter-1',
-    addedAt: '2026-09-12T10:00:00.000Z',
-    sentAt: SENT,
-    preparedAt: null,
-    removedAt: null,
-    removedBy: null,
-    removedReason: null,
-    paidSaleId: null,
-    ...overrides,
-  };
+function item(overrides: Partial<RoomItem> & { id: string }): RoomItem {
+  return roomItem({ sentAt: SENT, ...overrides });
 }
 
-function ticket(overrides: Partial<KitchenTicket> & { items: OpenOrderItem[] }): KitchenTicket {
+function ticket(overrides: Partial<RoomTicket> & { items: RoomItem[] }): RoomTicket {
   return {
     orderId: 'order-1',
     tableId: 'table-1',
@@ -69,6 +53,47 @@ describe('ticketView', () => {
     expect(view.voided.map((line) => line.id)).toEqual(['a']);
     expect(view.toPrepare).toHaveLength(0);
     expect(view.isDone).toBe(true);
+  });
+
+  it('still asks for an item the table has already paid for: the guest is owed the coffee', () => {
+    const view = ticketView(ticket({ items: [item({ id: 'a', paidSaleId: 'sale-1' })] }), NOW);
+
+    expect(view.toPrepare.map((line) => line.id)).toEqual(['a']);
+  });
+
+  it('takes an item this device marked prepared off what is to make at once', () => {
+    const view = ticketView(
+      ticket({ items: [item({ id: 'a', local: { ...NO_LOCAL, preparing: 'pending' } })] }),
+      NOW,
+    );
+
+    expect(view.prepared.map((line) => line.id)).toEqual(['a']);
+    expect(view.toPrepare).toHaveLength(0);
+  });
+
+  it('shows an item this device is taking off, alone or with its table, as a void at once', () => {
+    const view = ticketView(
+      ticket({
+        items: [
+          item({
+            id: 'a',
+            local: { ...NO_LOCAL, removing: { sync: 'pending', reason: 'x', cause: 'remove' } },
+          }),
+          item({
+            id: 'b',
+            local: {
+              ...NO_LOCAL,
+              preparing: 'pending',
+              removing: { sync: 'conflict', reason: 'y', cause: 'cancel' },
+            },
+          }),
+        ],
+      }),
+      NOW,
+    );
+
+    expect(view.voided.map((line) => line.id)).toEqual(['a', 'b']);
+    expect(view.prepared).toHaveLength(0);
   });
 
   it('gives one send of one order one key, so a card keeps its place across refreshes', () => {
@@ -117,6 +142,20 @@ describe('ticketBoard', () => {
     );
 
     expect(board).toHaveLength(0);
+  });
+
+  it('keeps a ticket finished on this device until the server has it, so the tap is seen to wait', () => {
+    const waiting = ticketBoard(
+      [ticket({ items: [item({ id: 'a', local: { ...NO_LOCAL, preparing: 'pending' } })] })],
+      NOW,
+    );
+    const refused = ticketBoard(
+      [ticket({ items: [item({ id: 'a', local: { ...NO_LOCAL, preparing: 'conflict' } })] })],
+      NOW,
+    );
+
+    expect(waiting.map((view) => view.isDone)).toEqual([true]);
+    expect(refused).toHaveLength(1);
   });
 
   it('keeps a finished ticket that has a void on it, so the cook is told to stop', () => {

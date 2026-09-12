@@ -1,8 +1,13 @@
-import { fireEvent, screen, within } from '@testing-library/react';
+import { fireEvent, screen, waitFor, within } from '@testing-library/react';
 import type { RouteObject } from 'react-router';
 import { describe, expect, it } from 'vitest';
-import type { Role } from '@/ports';
+import { useTables } from '@/features/orders/hooks/useOrders';
+import { buildOrderItemAddRecord } from '@/features/orders/records';
+import { useProducts } from '@/features/products/hooks/useProducts';
+import { AppError } from '@/lib/errors';
+import type { DiningTable, Product, Role } from '@/ports';
 import { createHarness, type Harness } from '@/test/harness';
+import type { OrderOutboxRecord } from '../types';
 import { ConflictsPage } from './ConflictsPage';
 
 /** A session id no server has ever heard of, so the record naming it is refused. */
@@ -102,5 +107,168 @@ describe('ConflictsPage', () => {
     fireEvent.click(within(dialog).getByRole('button', { name: 'Void receipt' }));
     expect(await within(dialog).findByText('Say why this receipt is being voided')).toBeDefined();
     expect((await harness.outbox.list())[0].status).toBe('conflict');
+  });
+
+  it('never offers to discard a sale, and says why where the button would be', async () => {
+    const harness = await stoppedQueue('Owner');
+
+    showConflicts(harness, 'Owner');
+
+    const card = await findCard('Sale T1-1');
+    expect(within(card).getByRole('button', { name: /Send again/ })).toBeDefined();
+    expect(within(card).getByRole('button', { name: /Void receipt/ })).toBeDefined();
+    expect(within(card).queryByRole('button', { name: /Discard/ })).toBeNull();
+    expect(within(card).getByText(/^A sale cannot be discarded: /)).toBeDefined();
+  });
+});
+
+/** Finds the card a record is shown on by its title. */
+async function findCard(title: string): Promise<HTMLElement> {
+  const card = (await screen.findByText(title)).closest('div[data-slot="card"]');
+  if (!(card instanceof HTMLElement)) {
+    throw new AppError('NOT_FOUND', `No card titled ${title}`);
+  }
+  return card;
+}
+
+/** What the waiter's screens load before anything goes wrong: the tables and the menu. */
+function RoomLoaded() {
+  useTables();
+  useProducts();
+  return null;
+}
+
+interface StoppedPhone {
+  readonly harness: Harness;
+  /** Two of `product`, put on a table taken out of service: the record the queue stopped at. */
+  readonly stale: OrderOutboxRecord;
+  /** One of `product` for a table in service, written after it. */
+  readonly behind: OrderOutboxRecord;
+  readonly retired: DiningTable;
+  readonly open: DiningTable;
+  readonly product: Product;
+}
+
+/** Puts `qty` of a product on a table from this phone, through its queue. */
+function putOnTable(
+  harness: Harness,
+  tableId: string,
+  productId: string,
+  qty: number,
+): Promise<OrderOutboxRecord> {
+  return harness.outbox.appendOrder('order_item_add', () =>
+    buildOrderItemAddRecord(
+      { id: crypto.randomUUID(), deviceId: 'waiter-phone', createdAt: new Date().toISOString() },
+      { tableId, productId, qty, note: '' },
+    ),
+  );
+}
+
+/**
+ * A waiter's phone whose queue stopped: it put an item on a table the admin had just taken out of
+ * service, so the server refused it with TABLE_INACTIVE, and the next item waits behind it.
+ */
+async function stoppedPhone(): Promise<StoppedPhone> {
+  const harness = await createHarness({ signedInAs: 'Waiter' });
+  const tables = await harness.backend.orders.listTables();
+  const retired = tables.find((table) => !table.isActive);
+  const open = tables.find((table) => table.isActive);
+  const [product] = await harness.backend.catalog.listProducts();
+  if (!retired || !open || !product) {
+    throw new AppError('NOT_FOUND', 'The demo café needs a retired table, an open one and a menu.');
+  }
+  const stale = await putOnTable(harness, retired.id, product.id, 2);
+  const behind = await putOnTable(harness, open.id, product.id, 1);
+  await harness.runtime.sync();
+  return { harness, stale, behind, retired, open, product };
+}
+
+function showPhoneConflicts(harness: Harness): void {
+  harness.renderScreen(
+    <>
+      <RoomLoaded />
+      <ConflictsPage home="/serveur" />
+    </>,
+    {
+      allow: ['waiter'],
+      allowOffline: true,
+      path: '/serveur/conflicts',
+      routes: [{ path: '/serveur', element: <p>Back in the room</p> }],
+    },
+  );
+}
+
+describe('ConflictsPage on a waiter’s phone', () => {
+  it('offers to discard an order record, named from the room it loaded', async () => {
+    const { harness, retired, product } = await stoppedPhone();
+    expect((await harness.outbox.list()).map((record) => record.status)).toEqual([
+      'conflict',
+      'pending',
+    ]);
+
+    showPhoneConflicts(harness);
+
+    const summary = `Adding 2 × ${product.name} to ${retired.name}`;
+    const card = (await screen.findByText(summary)).closest('div[data-slot="card"]');
+    expect(card).toBeInstanceOf(HTMLElement);
+    const conflict = card as HTMLElement;
+    expect(within(conflict).getByText('TABLE_INACTIVE')).toBeDefined();
+    expect(within(conflict).getByText(/taken out of service/)).toBeDefined();
+    expect(within(conflict).getByRole('button', { name: /Discard/ })).toBeDefined();
+    // An order record is working state: nothing on it says a sale's reasons apply.
+    expect(within(conflict).queryByText(/cannot be discarded/)).toBeNull();
+    // Only the record the queue stopped at can be discarded, not the one waiting behind it.
+    expect(screen.getAllByRole('button', { name: /Discard/ })).toHaveLength(1);
+  });
+
+  it('will not discard without a reason', async () => {
+    const { harness, stale } = await stoppedPhone();
+
+    showPhoneConflicts(harness);
+    fireEvent.click(await screen.findByRole('button', { name: /Discard/ }));
+    const dialog = await screen.findByRole('dialog');
+    fireEvent.change(within(dialog).getByLabelText('Why is it being discarded?'), {
+      target: { value: '   ' },
+    });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Discard' }));
+
+    expect(await within(dialog).findByText('Say why this record is being discarded')).toBeDefined();
+    const [record] = await harness.outbox.list();
+    expect(record).toMatchObject({ id: stale.id, status: 'conflict', discard: null });
+  });
+
+  it('moves the queue on after a discard, and keeps the record in the dead-letter list', async () => {
+    const { harness, stale, behind, retired, open, product } = await stoppedPhone();
+
+    showPhoneConflicts(harness);
+    fireEvent.click(await screen.findByRole('button', { name: /Discard/ }));
+    const dialog = await screen.findByRole('dialog');
+    fireEvent.change(within(dialog).getByLabelText('Why is it being discarded?'), {
+      target: { value: 'The guests moved inside' },
+    });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Discard' }));
+
+    // The queue goes on: the item written after it reaches its table.
+    expect(
+      await screen.findByText('Every record written on this device has reached the server.'),
+    ).toBeDefined();
+    await waitFor(async () => {
+      const order = await harness.backend.orders.openOrder(open.id);
+      expect(order?.items.map((item) => item.id)).toEqual([behind.id]);
+    });
+
+    const deadLetters = screen.getByRole('region', { name: 'Discarded on this device' });
+    expect(
+      within(deadLetters).getByText(`Adding 2 × ${product.name} to ${retired.name}`),
+    ).toBeDefined();
+    expect(within(deadLetters).getByText('The guests moved inside')).toBeDefined();
+    expect(within(deadLetters).getByText('Demo Waiter (you)')).toBeDefined();
+    expect(within(deadLetters).getByText('TABLE_INACTIVE')).toBeDefined();
+
+    const kept = (await harness.outbox.list()).find((record) => record.id === stale.id);
+    expect(kept).toMatchObject({
+      status: 'discarded',
+      discard: { reason: 'The guests moved inside', discardedBy: harness.user?.id },
+    });
   });
 });

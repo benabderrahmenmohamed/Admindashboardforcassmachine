@@ -2,11 +2,10 @@
  * The records a device writes about what is on a table: adding an item, taking one off, telling the
  * kitchen, marking something prepared, cancelling an order.
  *
- * They are built here rather than in the hooks that send them, for the same reason sales are built
- * in `src/features/sales/records.ts`: an order event is a record with an id and a payload hash, and
- * the next phase puts it in the outbox instead of sending it straight away. Nothing in this module
- * knows whether it is going over the network now or in an hour, so that move changes only the
- * caller. No React, no ports, no clock of its own: every value comes in as an argument.
+ * They are built here rather than in the hooks that queue them, for the same reason sales are built
+ * in `src/features/sales/records.ts`: an order event is a record with an id and a payload hash that
+ * goes into the device's outbox and may reach the server now or in an hour. Nothing in this module
+ * knows which. No React, no ports, no clock of its own: every value comes in as an argument.
  */
 import { withPayloadHash } from '@/lib/payloadHash';
 import { parseOrInvalid } from '@/lib/validation';

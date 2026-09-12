@@ -1,5 +1,5 @@
 import { fireEvent, screen, waitFor, within } from '@testing-library/react';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 import { addToTable, sendTable } from '@/features/orders/__fixtures__/seedOrders';
 import { itemStage } from '@/features/orders/tableOrder';
 import type { Backend, DiningTable } from '@/ports';
@@ -10,6 +10,20 @@ async function firstTable(backend: Backend): Promise<DiningTable> {
   const [table] = await backend.orders.listTables();
   return table;
 }
+
+/**
+ * The phone's network, as the browser reports it. The memory backend reads `navigator.onLine`
+ * before every call, so with it off every request fails the way a dropped connection makes it fail.
+ * No `offline` event is sent: the test is about the queue, not about TanStack pausing its reads.
+ */
+function setOnline(online: boolean): void {
+  Object.defineProperty(window.navigator, 'onLine', { configurable: true, get: () => online });
+}
+
+afterEach(() => {
+  // Back to jsdom's own answer, which lives on the prototype.
+  Reflect.deleteProperty(window.navigator, 'onLine');
+});
 
 function showTable(harness: Harness, tableId: string): void {
   harness.renderScreen(<TablePage />, {
@@ -47,9 +61,57 @@ describe('a table on the waiter’s phone', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Add to the table' }));
 
     expect(await screen.findByText('sans sucre')).toBeDefined();
+    // On the table at once; on the server once the queue has sent it.
+    await waitFor(async () => {
+      const order = await harness.backend.orders.openOrder(table.id);
+      expect(order?.items.map((item) => [item.nameSnapshot, item.note, itemStage(item)])).toEqual([
+        ['Café express', 'sans sucre', 'unsent'],
+      ]);
+    });
+  });
+
+  it('shows an item added with no network on the table at once, flagged, and once when it syncs', async () => {
+    const harness = await createHarness({ signedInAs: 'Waiter' });
+    const table = await firstTable(harness.backend);
+
+    showTable(harness, table.id);
+    fireEvent.click(await screen.findByRole('button', { name: /Add/ }));
+    // The menu was read while the phone still had a network, as its catalog cache would have it.
+    fireEvent.click(await screen.findByRole('button', { name: /Café express/ }));
+    setOnline(false);
+    fireEvent.click(screen.getByRole('button', { name: 'Add to the table' }));
+    // Written: the sheet is back on the menu, ready for the next item.
+    await screen.findByRole('button', { name: /Café express/ });
+    fireEvent.click(screen.getByRole('button', { name: 'Close' }));
+
+    const toSend = await screen.findByRole('region', { name: 'To send' });
+    expect(within(toSend).getByText('Café express')).toBeDefined();
+    expect(within(toSend).getByText('Not synced')).toBeDefined();
+    expect(
+      screen.getByText('1 change on this device is not synced yet. It goes out on its own.'),
+    ).toBeDefined();
+    expect(screen.getByRole('button', { name: 'Send 1' })).toBeDefined();
+    // It is on the phone, and the server could not be reached with it.
+    await waitFor(async () => {
+      const records = await harness.outbox.list();
+      expect(records.map((record) => [record.kind, record.status, record.lastError?.code])).toEqual(
+        [['order_item_add', 'pending', 'NETWORK_ERROR']],
+      );
+    });
+
+    setOnline(true);
+    harness.schedule.goOnline();
+
+    await waitFor(() => {
+      expect(screen.queryByText('Not synced')).toBeNull();
+    });
+    expect(screen.getAllByText('Café express')).toHaveLength(1);
+    expect(screen.queryByText(/not synced yet/)).toBeNull();
+    const [record] = await harness.outbox.list();
+    expect(record.status).toBe('acked');
     const order = await harness.backend.orders.openOrder(table.id);
-    expect(order?.items.map((item) => [item.nameSnapshot, item.note, itemStage(item)])).toEqual([
-      ['Café express', 'sans sucre', 'unsent'],
+    expect(order?.items.map((item) => [item.id, item.nameSnapshot])).toEqual([
+      [record.id, 'Café express'],
     ]);
   });
 

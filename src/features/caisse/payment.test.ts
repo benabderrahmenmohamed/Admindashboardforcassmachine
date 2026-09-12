@@ -1,10 +1,13 @@
 import { describe, expect, it } from 'vitest';
+import { roomItem, roomOrder } from '@/features/orders/__fixtures__/room';
+import { NO_LOCAL, type RoomItem, type RoomOrder } from '@/features/orders/overlay';
 import { mm } from '@/lib/money';
-import type { OpenOrder, OpenOrderItem } from '@/ports';
 import { offerLine, setCartDiscount, totals } from './cart';
 import {
   buildPaymentCart,
   cartForSelection,
+  heldItems,
+  holdReason,
   noSelection,
   paymentPlan,
   payableItems,
@@ -16,35 +19,19 @@ import {
   type LineDiscount,
 } from './payment';
 
-function item(overrides: Partial<OpenOrderItem> & { id: string }): OpenOrderItem {
-  return {
-    orderId: 'order-1',
-    productId: 'coffee',
-    nameSnapshot: 'Express',
-    unitPriceMillimes: mm(2_500),
-    qty: 1,
-    note: '',
-    addedBy: 'waiter-1',
-    addedAt: '2026-09-12T10:00:00.000Z',
-    sentAt: '2026-09-12T10:05:00.000Z',
-    preparedAt: null,
-    removedAt: null,
-    removedBy: null,
-    removedReason: null,
-    paidSaleId: null,
-    ...overrides,
-  };
+function item(overrides: Partial<RoomItem> & { id: string }): RoomItem {
+  return roomItem({ sentAt: '2026-09-12T10:05:00.000Z', ...overrides });
 }
 
-function order(...items: OpenOrderItem[]): OpenOrder {
-  return {
-    id: 'order-1',
-    tableId: 'table-1',
-    status: 'open',
-    openedAt: '2026-09-12T10:00:00.000Z',
-    closedAt: null,
-    items,
-  };
+function order(...items: RoomItem[]): RoomOrder {
+  return roomOrder(items);
+}
+
+/** A row only this device has: its add has not reached the server. */
+const addedHere = { fromServer: false, local: { ...NO_LOCAL, added: 'pending' as const } };
+
+function takenOffHere(cause: 'remove' | 'cancel'): Partial<RoomItem> {
+  return { local: { ...NO_LOCAL, removing: { sync: 'pending', reason: 'Gone', cause } } };
 }
 
 describe('payableItems', () => {
@@ -68,6 +55,59 @@ describe('payableItems', () => {
 
   it('offers nothing on a free table', () => {
     expect(payableItems(null)).toEqual([]);
+  });
+
+  it('never offers a row the server does not have, or one this device is taking off', () => {
+    const items = payableItems(
+      order(
+        item({ id: 'a' }),
+        item({ id: 'b', ...addedHere }),
+        // Acked, but not read back: the name and price are the menu's, not the server's snapshot.
+        item({ id: 'c', fromServer: false }),
+        item({ id: 'd', ...takenOffHere('remove') }),
+        item({ id: 'e', ...takenOffHere('cancel') }),
+      ),
+    );
+
+    expect(items.map((line) => line.id)).toEqual(['a']);
+  });
+
+  it('offers a row a send or a prepare on this device is waiting on: neither changes what a sale checks', () => {
+    const items = payableItems(
+      order(
+        item({ id: 'a', sentAt: null, local: { ...NO_LOCAL, sending: 'pending' } }),
+        item({ id: 'b', local: { ...NO_LOCAL, preparing: 'conflict' } }),
+      ),
+    );
+
+    expect(items.map((line) => line.id)).toEqual(['a', 'b']);
+  });
+});
+
+describe('heldItems and holdReason', () => {
+  it('lists the owed rows that cannot be paid yet, each with why', () => {
+    const table = order(
+      item({ id: 'a' }),
+      item({ id: 'b', ...addedHere }),
+      item({ id: 'c', ...takenOffHere('remove') }),
+      item({ id: 'd', ...takenOffHere('cancel') }),
+      item({ id: 'e', ...addedHere, removedAt: '2026-09-12T10:12:00.000Z' }),
+      // Paid on this device while offline: the same guest is not asked for the money twice.
+      item({ id: 'f', local: { ...NO_LOCAL, paying: 'pending' } }),
+    );
+
+    expect(heldItems(table).map((line) => [line.id, holdReason(line)])).toEqual([
+      ['b', 'not-on-server'],
+      ['c', 'coming-off'],
+      ['d', 'cancelling'],
+      ['f', 'paying'],
+    ]);
+    expect(payableItems(table).map((line) => line.id)).toEqual(['a']);
+    expect(holdReason(item({ id: 'a' }))).toBeNull();
+  });
+
+  it('holds nothing on a free table', () => {
+    expect(heldItems(null)).toEqual([]);
   });
 });
 
@@ -263,5 +303,26 @@ describe('paymentPlan', () => {
     // 10 % of 4,500 is 450, allocated to the one line; the other two rows still owe their full price.
     expect(plan.totalMillimes).toBe(4_050);
     expect(plan.remainingMillimes).toBe(5_500);
+  });
+
+  it('does not close a table that keeps a row this device added, and counts that row as left', () => {
+    const held = [
+      item({ id: 'mine', ...addedHere, unitPriceMillimes: mm(1_000) }),
+      item({ id: 'unpriced', ...addedHere, priceKnown: false, unitPriceMillimes: mm(0) }),
+    ];
+
+    const plan = paymentPlan(items, cartForSelection(items, selectAll(items)), held);
+
+    expect(plan.closesTable).toBe(false);
+    expect(plan.remainingMillimes).toBe(1_000);
+  });
+
+  it('still closes a table whose only held rows are coming off before the payment arrives', () => {
+    const held = [item({ id: 'off', ...takenOffHere('remove') })];
+
+    const plan = paymentPlan(items, cartForSelection(items, selectAll(items)), held);
+
+    expect(plan.closesTable).toBe(true);
+    expect(plan.remainingMillimes).toBe(0);
   });
 });

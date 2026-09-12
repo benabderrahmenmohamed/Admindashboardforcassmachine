@@ -10,10 +10,10 @@ import {
 } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import type { RoomItem } from '@/features/orders/overlay';
 import { itemTotal } from '@/features/orders/tableOrder';
 import { readCashAmount } from '@/features/pos/selling';
 import { formatTND, toDinarsString, ZERO } from '@/lib/money';
-import type { OpenOrderItem } from '@/ports';
 import type { LineDiscount } from '../payment';
 
 /**
@@ -28,7 +28,7 @@ export function LineDiscountDialog({
   onConfirm,
 }: {
   /** The row being discounted, or null when the dialog is closed. */
-  readonly item: OpenOrderItem | null;
+  readonly item: RoomItem | null;
   readonly current: LineDiscount | undefined;
   readonly onOpenChange: (open: boolean) => void;
   /** A discount of zero takes the offer back off the row. */
@@ -58,7 +58,7 @@ function DiscountForm({
   onCancel,
   onConfirm,
 }: {
-  readonly item: OpenOrderItem;
+  readonly item: RoomItem;
   readonly current: LineDiscount | undefined;
   readonly onCancel: () => void;
   readonly onConfirm: (discount: LineDiscount) => void;

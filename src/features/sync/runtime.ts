@@ -53,7 +53,8 @@ export interface AsyncKeyValueStorage {
  * - `sending`: a pass of this tab is running; `busy`: another tab holds the drain lock.
  * - `waiting`: the head failed with a retriable error and goes again at `retryAt`.
  * - `blocked`: the head is in conflict and a person has to act; later records stay pending.
- * - `paused`: nothing is sent because there is no live session, or no terminal registration.
+ * - `paused`: nothing is sent because there is no live session. A device with no terminal still
+ *   sends: a waiter's phone queues order records and has never been registered.
  * - `failed`: the pass itself could not run (no storage, no Web Locks): not a record's failure.
  */
 export type SyncState =
@@ -62,7 +63,7 @@ export type SyncState =
   | { readonly kind: 'busy' }
   | { readonly kind: 'waiting'; readonly retryAt: number }
   | { readonly kind: 'blocked'; readonly recordId: string }
-  | { readonly kind: 'paused'; readonly reason: 'auth' | 'unregistered' }
+  | { readonly kind: 'paused'; readonly reason: 'auth' }
   | { readonly kind: 'failed'; readonly error: OutboxError };
 
 /** The queue as the screens see it: one object per change, so React can compare snapshots. */
@@ -84,7 +85,7 @@ export interface SyncSchedule {
 
 export interface OutboxRuntimeDeps {
   readonly outbox: Outbox;
-  /** The same storage the outbox writes through; the registration lives in it, beside the records. */
+  /** The same storage the outbox writes through; the device's registration, if any, lives in it too. */
   readonly storage: OutboxStorage;
   readonly schedule: SyncSchedule;
   readonly clock: Clock;
@@ -93,7 +94,7 @@ export interface OutboxRuntimeDeps {
 /** What the screens see before the queue has been read. */
 export const EMPTY_SNAPSHOT: OutboxSnapshot = {
   records: [],
-  summary: { pending: 0, conflicts: 0, lastAckAt: null },
+  summary: { pending: 0, conflicts: 0, discarded: 0, lastAckAt: null },
   state: { kind: 'idle' },
 };
 
@@ -126,9 +127,9 @@ export async function createOutboxStorage(kind: Backend['kind']): Promise<Outbox
   return createIdbOutboxStorage(await openOutboxDatabase());
 }
 
-/** The outbox of this device: records go out through the ports, one tab of a terminal at a time. */
+/** The outbox of this device: records go out through the ports, one tab of the device at a time. */
 export function createBackendOutbox(options: {
-  readonly backend: Pick<Backend, 'sales' | 'sessions'>;
+  readonly backend: Pick<Backend, 'sales' | 'sessions' | 'orders'>;
   readonly storage: OutboxStorage;
   readonly clock: Clock;
   readonly canSend: () => boolean;
@@ -176,6 +177,7 @@ function sameSnapshot(a: OutboxSnapshot, b: OutboxSnapshot): boolean {
     stateKey(a.state) === stateKey(b.state) &&
     a.summary.pending === b.summary.pending &&
     a.summary.conflicts === b.summary.conflicts &&
+    a.summary.discarded === b.summary.discarded &&
     a.summary.lastAckAt === b.summary.lastAckAt &&
     a.records.length === b.records.length &&
     a.records.every((record, index) => sameRecord(record, b.records[index]))
@@ -185,8 +187,8 @@ function sameSnapshot(a: OutboxSnapshot, b: OutboxSnapshot): boolean {
 /**
  * The queue of this device with its triggers: app start, the `online` event, every 30 s, every
  * change made through the outbox — an append, a retry, a void — and a timer for the earliest retry.
- * A pass runs under the Web Lock of the terminal, so several tabs of one register send each record
- * once. Screens read `snapshot()`; nothing they do ever waits for a pass.
+ * A pass runs under the device's Web Lock, so several tabs on one phone or one till send each
+ * record once. Screens read `snapshot()`; nothing they do ever waits for a pass.
  */
 export function createOutboxRuntime(deps: OutboxRuntimeDeps) {
   const listeners = new Set<() => void>();
@@ -258,7 +260,7 @@ export function createOutboxRuntime(deps: OutboxRuntimeDeps) {
         setState({ kind: 'idle' });
         return;
       case 'busy':
-        // Another tab is draining this terminal; what it sends shows up on the next pass here.
+        // Another tab is draining this device's queue; what it sends shows up on the next pass here.
         setState({ kind: 'busy' });
         return;
       case 'blocked':
@@ -335,7 +337,7 @@ export function createOutboxRuntime(deps: OutboxRuntimeDeps) {
         return;
       }
       stops = [
-        // Every change the outbox makes or is told about: an append, a retry, a resolved void.
+        // Every change the outbox makes or is told about: an append, a retry, a void, a discard.
         deps.outbox.subscribe(() => {
           void refresh();
           void sync();

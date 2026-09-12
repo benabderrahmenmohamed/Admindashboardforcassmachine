@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient, type UseQueryResult } from '@tanstack/react-query';
 import { useOutbox } from '@/features/sync/hooks/useOutbox';
-import type { OutboxMeta } from '@/features/sync/types';
+import type { TerminalMeta } from '@/features/sync/types';
 import { useBackend } from '@/lib/backend-context';
 import { queryKeys } from '@/lib/query';
 import {
@@ -20,7 +20,7 @@ export const terminalRegistrationKey = ['terminal', 'registration'] as const;
  * This device's registration and receipt counter, or null when it is not a terminal. A device
  * coming from Phase 3 is moved out of local storage on the first read.
  */
-export function useDeviceTerminal(): UseQueryResult<OutboxMeta | null> {
+export function useDeviceTerminal(): UseQueryResult<TerminalMeta | null> {
   const runtime = useOutbox();
   return useQuery({
     queryKey: terminalRegistrationKey,

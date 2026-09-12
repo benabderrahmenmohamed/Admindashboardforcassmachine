@@ -10,7 +10,7 @@ import {
   SheetTitle,
 } from '@/components/ui/sheet';
 import { useSale, useSales } from '@/features/sales/hooks/useSales';
-import type { OutboxMeta, OutboxRecord } from '@/features/sync/types';
+import type { TerminalMeta, OutboxRecord } from '@/features/sync/types';
 import { AppError, errorMessage } from '@/lib/errors';
 import { formatTND } from '@/lib/money';
 import type { PaymentMethod, RefundSelection, Sale } from '../types';
@@ -31,7 +31,7 @@ type View =
 interface SalesSheetProps {
   readonly open: boolean;
   readonly onOpenChange: (open: boolean) => void;
-  readonly terminal: OutboxMeta;
+  readonly terminal: TerminalMeta;
   /** This device's queue: what it wrote, sent or not. */
   readonly records: readonly OutboxRecord[];
   /** True while a record is being written to this device. */

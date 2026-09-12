@@ -1,7 +1,8 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { openRecord, saleRecord } from '@/features/pos/__fixtures__/records';
+import { storedOrder } from '@/features/sync/__tests__/fixtures';
 import { createMemoryOutboxStorage } from '@/features/sync/memoryStorage';
-import type { OutboxMeta, OutboxRecord, OutboxStorage } from '@/features/sync/types';
+import type { OutboxRecord, OutboxStorage, TerminalMeta } from '@/features/sync/types';
 import { AppError } from '@/lib/errors';
 import type { TerminalRegistration } from '@/ports';
 import {
@@ -49,11 +50,15 @@ function registration(overrides: Partial<TerminalRegistration> = {}): TerminalRe
 /** A storage with one record in the queue, so registering is refused while it is unfinished. */
 async function withRecord(record: OutboxRecord): Promise<OutboxStorage> {
   const storage = createMemoryOutboxStorage();
-  const meta = await registerTerminal(storage, registration(), NOW);
+  await registerTerminal(storage, registration(), NOW);
+  const queue = await storage.readMeta();
+  if (!queue) {
+    return expect.unreachable('registering wrote no queue');
+  }
   const added = await storage.appendIfUnchanged(
-    { lastSeq: meta.lastSeq, nextOrdinal: meta.nextOrdinal },
-    { ...record, ordinal: meta.nextOrdinal },
-    { ...meta, nextOrdinal: meta.nextOrdinal + 1 },
+    queue,
+    { ...record, ordinal: queue.nextOrdinal },
+    { ...queue, nextOrdinal: queue.nextOrdinal + 1 },
   );
   expect(added).toBe(true);
   return storage;
@@ -79,15 +84,16 @@ describe('registerTerminal', () => {
 
     const meta = await registerTerminal(storage, registration(), NOW);
 
-    expect(meta).toEqual<OutboxMeta>({
+    expect(meta).toEqual<TerminalMeta>({
       terminalId: 'terminal-t1',
       code: 'T1',
       epoch: 1,
       lastSeq: 41,
-      nextOrdinal: 1,
       registeredAt: NOW,
     });
     expect(await readRegistration(storage)).toEqual(meta);
+    // The first record this device writes, whatever its kind, takes ordinal 1.
+    await expect(storage.readMeta()).resolves.toEqual({ nextOrdinal: 1, terminal: meta });
   });
 
   it('keeps the higher number when the same terminal is registered again', async () => {
@@ -130,9 +136,9 @@ describe('registerTerminal', () => {
   it('never reuses an ordinal, because the records that took them are still in the queue', async () => {
     const storage = await withRecord(saleRecord({ seq: 42, status: 'acked' }));
 
-    const again = await registerTerminal(storage, registration({ epoch: 2 }), NOW);
+    await registerTerminal(storage, registration({ epoch: 2 }), NOW);
 
-    expect(again.nextOrdinal).toBe(2);
+    await expect(storage.readMeta()).resolves.toMatchObject({ nextOrdinal: 2 });
     expect((await storage.list()).map((record) => record.ordinal)).toEqual([1]);
   });
 });
@@ -159,6 +165,19 @@ describe('registering while the queue still has records', () => {
     await expect(assertCanRegister(storage)).resolves.toBeUndefined();
     expect((await registerTerminal(storage, registration({ epoch: 2 }), NOW)).epoch).toBe(2);
   });
+
+  // An order record names no terminal, so a new registration leaves it exactly as sendable: a till
+  // that also takes table orders is not kept from registering by an item on its way to a table.
+  it.each(['pending', 'conflict'] as const)(
+    'is allowed while the only unsent record is a table order that is %s',
+    async (status) => {
+      const storage = await withRecord(await storedOrder('order_item_add', 1, { status }));
+
+      await expect(assertCanRegister(storage)).resolves.toBeUndefined();
+      expect((await registerTerminal(storage, registration({ epoch: 2 }), NOW)).epoch).toBe(2);
+      expect((await storage.list()).map((record) => record.status)).toEqual([status]);
+    },
+  );
 });
 
 describe('migrateLegacyTerminal', () => {
@@ -187,16 +206,16 @@ describe('migrateLegacyTerminal', () => {
     const moved = await migrateLegacyTerminal(storage, NOW, keyValue);
 
     expect(moved).toEqual({ terminal: true, record: true });
-    expect(await readRegistration(storage)).toEqual<OutboxMeta>({
+    expect(await readRegistration(storage)).toEqual<TerminalMeta>({
       terminalId: 'terminal-t1',
       code: 'T1',
       epoch: 1,
       // Phase 3 committed a number only once the server answered, so the record holds 42 and the
       // counter has not reached it: the queue must not hand 42 out again.
       lastSeq: 42,
-      nextOrdinal: 2,
       registeredAt: Date.parse(legacyTerminal.registeredAt),
     });
+    await expect(storage.readMeta()).resolves.toMatchObject({ nextOrdinal: 2 });
     const [record] = await storage.list();
     expect(record).toMatchObject({
       id: unsent.payload.id,
@@ -216,7 +235,8 @@ describe('migrateLegacyTerminal', () => {
 
     await migrateLegacyTerminal(storage, NOW, keyValue);
 
-    expect(await readRegistration(storage)).toMatchObject({ lastSeq: 41, nextOrdinal: 2 });
+    expect(await readRegistration(storage)).toMatchObject({ lastSeq: 41 });
+    await expect(storage.readMeta()).resolves.toMatchObject({ nextOrdinal: 2 });
     expect((await storage.list())[0]).toMatchObject({ kind: 'session_open', seq: null });
   });
 
@@ -228,7 +248,8 @@ describe('migrateLegacyTerminal', () => {
       terminal: true,
       record: false,
     });
-    expect(await readRegistration(storage)).toMatchObject({ lastSeq: 41, nextOrdinal: 1 });
+    expect(await readRegistration(storage)).toMatchObject({ lastSeq: 41 });
+    await expect(storage.readMeta()).resolves.toMatchObject({ nextOrdinal: 1 });
   });
 
   it('does nothing on a device that never had the old keys', async () => {

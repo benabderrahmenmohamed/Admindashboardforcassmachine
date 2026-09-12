@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { AppError, ERROR_CODES } from '@/lib/errors';
-import { orderErrorMessage, shouldRefreshTable, type OrderAction } from './messages';
+import { orderErrorMessage, type OrderAction } from './messages';
 
 const ACTIONS: readonly OrderAction[] = ['add', 'remove', 'send', 'prepare', 'cancel'];
 
@@ -46,17 +46,5 @@ describe('orderErrorMessage', () => {
 
   it('turns something that is not an AppError into an answer rather than throwing', () => {
     expect(orderErrorMessage(new TypeError('boom'), 'add')).toContain('boom');
-  });
-});
-
-describe('shouldRefreshTable', () => {
-  it('re-reads the table when it moved underneath the screen', () => {
-    for (const code of ['ORDER_CHANGED', 'ORDER_CLOSED', 'ITEM_NOT_FOUND'] as const) {
-      expect(shouldRefreshTable(new AppError(code, code)), code).toBe(true);
-    }
-  });
-
-  it('leaves the screen alone when the network is simply down', () => {
-    expect(shouldRefreshTable(new AppError('NETWORK_ERROR', 'offline'))).toBe(false);
   });
 });

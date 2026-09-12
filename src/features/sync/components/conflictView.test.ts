@@ -1,8 +1,16 @@
 import { describe, expect, it } from 'vitest';
+import type { RecordNames } from '@/features/pos/recording';
 import { formatTND, mm, ZERO } from '@/lib/money';
 import type { CloseSessionRecord, OpenSessionRecord, SaleRecord } from '@/ports';
+import { storedOrder, TABLE_ID } from '../__tests__/fixtures';
 import type { OutboxError, OutboxRecord, OutboxStatus } from '../types';
-import { conflictRows } from './conflictView';
+import {
+  conflictRows,
+  deadLetterHeadline,
+  deadLetterRows,
+  discardedByLabel,
+  type Viewer,
+} from './conflictView';
 
 const HASH = 'b'.repeat(64);
 const AT = '2026-09-12T09:00:00.000Z';
@@ -60,6 +68,7 @@ function base(ordinal: number, status: OutboxStatus, lastError: OutboxError | nu
     lastError,
     result: null,
     ackedAt: status === 'acked' ? WRITTEN_AT : null,
+    discard: null,
   };
 }
 
@@ -215,5 +224,149 @@ describe('the reason a conflict row carries', () => {
     const [row] = conflictRows([closeRecord(1, 'conflict', superseded)]);
 
     expect(row.message).toContain('Terminal T1 was registered again');
+  });
+});
+
+const CLOSED: OutboxError = { code: 'ORDER_CLOSED', message: 'This table has no open order.' };
+
+/** A waiter's phone that had the room open: the fixtures' table has a name. */
+const ROOM: RecordNames = {
+  tables: new Map([[TABLE_ID, 'Terrasse 1']]),
+  products: new Map(),
+  items: new Map(),
+};
+
+const WAITER: Viewer = { id: 'user-waiter', name: 'Demo Waiter' };
+
+describe('what a person may do with the record the queue stopped at', () => {
+  it('offers the discard for an order record, and only for the one the queue stopped at', async () => {
+    const rows = conflictRows(
+      [
+        await storedOrder('order_send', 1, { status: 'conflict', lastError: CLOSED }),
+        await storedOrder('order_item_add', 2),
+      ],
+      ROOM,
+    );
+
+    expect(rows.map((row) => [row.kindLabel, row.discardable, row.whyNoDiscard])).toEqual([
+      ['Sent to the kitchen', true, null],
+      ['Item added', false, null],
+    ]);
+    expect(rows[0]).toMatchObject({
+      summary: 'Sending Terrasse 1 to the kitchen',
+      sessionId: null,
+      receipt: null,
+      voidable: null,
+      errorCode: 'ORDER_CLOSED',
+    });
+    expect(rows[0].message).toContain('the kitchen was never told');
+  });
+
+  it.each([
+    ['sale', () => saleRecord(1, 42, 'conflict', GAP), 'A sale cannot be discarded'],
+    ['refund', () => saleRecord(1, 42, 'conflict', GAP, 'refund'), 'A refund cannot be discarded'],
+    ['session close', () => closeRecord(1, 'conflict', GAP), 'A session close cannot be discarded'],
+  ] as const)(
+    'never offers the discard for a %s, and says why in one sentence',
+    (_, record, why) => {
+      const [row] = conflictRows([record()]);
+
+      expect(row.discardable).toBe(false);
+      expect(row.whyNoDiscard).toMatch(new RegExp(`^${why}: [^.]+\\.$`));
+    },
+  );
+
+  it('has nothing to explain on a ledger record that is only waiting its turn', () => {
+    const rows = conflictRows([saleRecord(1, 42, 'conflict', GAP), saleRecord(2, 43, 'pending')]);
+
+    expect(rows[1]).toMatchObject({ discardable: false, whyNoDiscard: null });
+  });
+});
+
+describe('deadLetterRows', () => {
+  it('lists what was discarded, why, by whom, when, and what the server refused it with', async () => {
+    const rows = deadLetterRows(
+      [
+        await storedOrder('order_item_add', 1, { status: 'acked' }),
+        await storedOrder('order_send', 2, {
+          status: 'discarded',
+          lastError: CLOSED,
+          discard: {
+            reason: 'The caisse closed the table first',
+            discardedBy: WAITER.id,
+            discardedByName: WAITER.name,
+            discardedAt: WRITTEN_AT + 5_000,
+          },
+        }),
+        await storedOrder('order_item_add', 3, { status: 'conflict', lastError: CLOSED }),
+      ],
+      WAITER,
+      ROOM,
+    );
+
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      kindLabel: 'Sent to the kitchen',
+      summary: 'Sending Terrasse 1 to the kitchen',
+      reason: 'The caisse closed the table first',
+      discardedBy: 'Demo Waiter (you)',
+      discardedAt: WRITTEN_AT + 5_000,
+      errorCode: 'ORDER_CLOSED',
+    });
+  });
+
+  it('puts the latest discard first', async () => {
+    const discardedAt = (at: number) => ({
+      status: 'discarded' as const,
+      lastError: CLOSED,
+      discard: {
+        reason: `At ${at}`,
+        discardedBy: WAITER.id,
+        discardedByName: null,
+        discardedAt: at,
+      },
+    });
+    const rows = deadLetterRows(
+      [
+        await storedOrder('order_send', 1, discardedAt(100)),
+        await storedOrder('order_send', 2, discardedAt(300)),
+        await storedOrder('order_send', 3, discardedAt(200)),
+      ],
+      WAITER,
+    );
+
+    expect(rows.map((row) => row.reason)).toEqual(['At 300', 'At 200', 'At 100']);
+    // Without names cached, the record is still described in plain words.
+    expect(rows[0].summary).toBe('Sending a table to the kitchen');
+  });
+});
+
+describe('discardedByLabel', () => {
+  const OTHER = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa2';
+  const by = (discardedBy: string | null, discardedByName: string | null) => ({
+    discardedBy,
+    discardedByName,
+  });
+
+  // The phone an admin reads the list on has no staff list: the name stored with the discard is the
+  // only way to say who someone else was.
+  it('names whoever discarded it by the name kept with the discard', () => {
+    expect(discardedByLabel(by(OTHER, 'Sonia'), WAITER)).toBe('Sonia');
+    expect(discardedByLabel(by(WAITER.id, 'Demo Waiter'), WAITER)).toBe('Demo Waiter (you)');
+  });
+
+  it('falls back to the reader, or the start of the account id, when no name was kept', () => {
+    expect(discardedByLabel(by(WAITER.id, null), WAITER)).toBe('Demo Waiter (you)');
+    expect(discardedByLabel(by(WAITER.id, null), { id: WAITER.id, name: '' })).toBe('You');
+    expect(discardedByLabel(by(OTHER, null), WAITER)).toBe('Another account (aaaaaaaa)');
+    expect(discardedByLabel(by(OTHER, ''), WAITER)).toBe('Another account (aaaaaaaa)');
+    expect(discardedByLabel(by(null, null), WAITER)).toBe('Nobody signed in');
+  });
+});
+
+describe('deadLetterHeadline', () => {
+  it('counts the list for the admin', () => {
+    expect(deadLetterHeadline(1)).toBe('1 order record was discarded on this device');
+    expect(deadLetterHeadline(3)).toBe('3 order records were discarded on this device');
   });
 });

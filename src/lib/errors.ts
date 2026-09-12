@@ -57,20 +57,6 @@ export function errorClass(code: ErrorCode): ErrorClass {
   return ERROR_CLASS[code];
 }
 
-/**
- * The kinds of queued record a person may throw away instead of sending. An order event that can no
- * longer land — a stale item on a table the caisse already closed — must not block a waiter's phone
- * for ever. A ledger record is never discardable: one that reached the server must not be dropped,
- * and one that did not has to be looked at.
- */
-export const DISCARDABLE_KINDS = [
-  'order_item_add',
-  'order_item_remove',
-  'order_send',
-  'order_item_prepare',
-  'order_cancel',
-] as const;
-
 export function isErrorCode(value: unknown): value is ErrorCode {
   return typeof value === 'string' && (ERROR_CODES as readonly string[]).includes(value);
 }

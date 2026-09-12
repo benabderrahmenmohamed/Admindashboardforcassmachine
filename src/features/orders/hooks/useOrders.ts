@@ -1,12 +1,26 @@
-import { useMutation, useQuery, useQueryClient, type QueryClient } from '@tanstack/react-query';
-import { useCallback, useMemo } from 'react';
+import { useQueries, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useCallback, useMemo, useState } from 'react';
 import { toast } from 'sonner';
+import { useProducts } from '@/features/products/hooks/useProducts';
+import { useOutbox, useOutboxRecords } from '@/features/sync/hooks/useOutbox';
 import { useBackend } from '@/lib/backend-context';
 import { deviceId } from '@/lib/deviceId';
 import { AppError } from '@/lib/errors';
 import { queryKeys } from '@/lib/query';
-import type { OrdersPort, RemovedAfterSentQuery } from '@/ports';
-import { orderErrorMessage, shouldRefreshTable, type OrderAction } from '../messages';
+import type { OpenOrder, OrdersPort, RemovedAfterSentQuery } from '@/ports';
+import { overlayBoard, type RoomBoardEntry } from '../board';
+import { orderErrorMessage, type OrderAction } from '../messages';
+import {
+  changedTables,
+  menuOf,
+  overlayKitchen,
+  overlayOrder,
+  rowTables,
+  type LocalChanges,
+  type Menu,
+  type RoomOrder,
+  type RoomTicket,
+} from '../overlay';
 import {
   buildOrderCancelRecord,
   buildOrderItemAddRecord,
@@ -25,7 +39,7 @@ export function useTables() {
   });
 }
 
-/** The grid: one entry per table, free or with what it owes. */
+/** The grid as the server last read it: one entry per table, free or with what it owes. */
 export function useBoard() {
   const { orders } = useBackend();
   return useQuery({
@@ -34,17 +48,24 @@ export function useBoard() {
   });
 }
 
-/** One table's open order, or null when it is free. Idle until a table is chosen. */
+/** The one definition of a table's order query, so every reader of it shares one cache entry. */
+function openOrderQuery(orders: OrdersPort, tableId: string) {
+  return {
+    queryKey: queryKeys.openOrder(tableId),
+    queryFn: () => orders.openOrder(tableId),
+  };
+}
+
+/** One table's open order as the server last read it, or null when it is free. */
 export function useOpenOrder(tableId: string | null) {
   const { orders } = useBackend();
   return useQuery({
-    queryKey: queryKeys.openOrder(tableId ?? ''),
-    queryFn: () => orders.openOrder(tableId ?? ''),
+    ...openOrderQuery(orders, tableId ?? ''),
     enabled: tableId !== null,
   });
 }
 
-/** Sent, unprepared items grouped by send, oldest first. */
+/** Sent, unprepared items grouped by send, oldest first, as the server last read them. */
 export function useKitchenTickets() {
   const { orders } = useBackend();
   return useQuery({
@@ -62,6 +83,102 @@ export function useRemovedAfterSent(query: RemovedAfterSentQuery) {
   });
 }
 
+/**
+ * The menu this device has, by product: where a row it added takes its name and price from until
+ * the server's snapshot is read. It is the catalog cache the menu sheet already keeps offline.
+ */
+function useMenu(): Menu {
+  const productsQuery = useProducts();
+  const products = productsQuery.data;
+  return useMemo(() => menuOf(products ?? []), [products]);
+}
+
+/**
+ * One table as this device draws it (`overlayOrder`): the server's order with what this device has
+ * written since and the server does not show yet. `order` is null while the table is free, and
+ * until `query` has read it — a screen checks `query` for loading and errors first.
+ */
+export function useRoomOrder(tableId: string | null) {
+  const query = useOpenOrder(tableId);
+  const records = useOutboxRecords();
+  const menu = useMenu();
+  const { data, dataUpdatedAt } = query;
+  const order = useMemo(
+    (): RoomOrder | null =>
+      tableId === null || data === undefined
+        ? null
+        : overlayOrder(tableId, { data, readAt: dataUpdatedAt }, records, menu),
+    [data, dataUpdatedAt, menu, records, tableId],
+  );
+  return { query, order };
+}
+
+const NO_CHANGED_TABLES: ReadonlyMap<string, LocalChanges> = new Map();
+
+/**
+ * The grid as this device draws it (`overlayBoard`). A table this device has changed is drawn from
+ * its own order, so this reads the order of each such table too; the rest come from the grid alone.
+ * `entries` is empty until `query` has read the grid.
+ */
+export function useRoomBoard() {
+  const { orders } = useBackend();
+  const queryClient = useQueryClient();
+  const query = useBoard();
+  const records = useOutboxRecords();
+  const menu = useMenu();
+  const board = query.data;
+
+  // Nothing is placed before the grid is read: against no read at all, every ack this device ever
+  // had would count as unshown, and the order of every table it ever served would be fetched.
+  const changed =
+    board === undefined
+      ? NO_CHANGED_TABLES
+      : changedTables(
+          records,
+          query.dataUpdatedAt,
+          // A removal names a row, not a table. The orders this device has already read say which
+          // table each row is on; they are taken from the cache rather than fetched, because only
+          // a table that turns out to be changed needs its order, and that one is fetched below.
+          rowTables(
+            records,
+            board.map(
+              (entry) =>
+                queryClient.getQueryData<OpenOrder | null>(queryKeys.openOrder(entry.table.id)) ??
+                null,
+            ),
+          ),
+        );
+  const tableIds = [...changed.keys()];
+  const orderQueries = useQueries({
+    queries: tableIds.map((tableId) => openOrderQuery(orders, tableId)),
+  });
+
+  const drawn = new Map<string, RoomOrder | null>();
+  tableIds.forEach((tableId, index) => {
+    const { data, dataUpdatedAt } = orderQueries[index];
+    if (data !== undefined) {
+      drawn.set(tableId, overlayOrder(tableId, { data, readAt: dataUpdatedAt }, records, menu));
+    }
+  });
+
+  const entries: readonly RoomBoardEntry[] =
+    board === undefined ? [] : overlayBoard(board, changed, drawn);
+  return { query, entries };
+}
+
+/** The kitchen's tickets as this device draws them (`overlayKitchen`); empty until `query` has read them. */
+export function useRoomKitchen() {
+  const query = useKitchenTickets();
+  const records = useOutboxRecords();
+  const { data, dataUpdatedAt } = query;
+  const tickets = useMemo(
+    (): readonly RoomTicket[] =>
+      data === undefined ? [] : overlayKitchen({ data, readAt: dataUpdatedAt }, records),
+    [data, dataUpdatedAt, records],
+  );
+  return { query, tickets };
+}
+
 /** A new record id, chosen on this device. */
 function newRecordId(): string {
   if (typeof crypto.randomUUID !== 'function') {
@@ -72,14 +189,6 @@ function newRecordId(): string {
 
 function envelope(): OrderEnvelope {
   return { id: newRecordId(), deviceId: deviceId(), createdAt: new Date().toISOString() };
-}
-
-/** After any order write: the grid, the table on screen and the kitchen board are all stale. */
-async function refreshRoom(queryClient: QueryClient): Promise<void> {
-  await Promise.all([
-    queryClient.invalidateQueries({ queryKey: queryKeys.tables }),
-    queryClient.invalidateQueries({ queryKey: queryKeys.kitchen }),
-  ]);
 }
 
 export interface AddItemInput {
@@ -100,7 +209,7 @@ export interface CancelOrderInput {
 }
 
 export interface OrderWrites {
-  /** True while any of them is in flight; the screens disable their buttons on it. */
+  /** True while a record is being written to this device; the screens disable their buttons on it. */
   readonly isWriting: boolean;
   readonly addItem: (input: AddItemInput) => Promise<boolean>;
   readonly removeItem: (input: RemoveItemInput) => Promise<boolean>;
@@ -110,67 +219,72 @@ export interface OrderWrites {
 }
 
 /**
- * The writes of the four order RPCs, awaited.
+ * The order records, written into this device's outbox. Each resolves true as soon as its record
+ * is on the device: the queue delivers it, in the order it was written, and the screens draw it at
+ * once from the queue (`useRoomOrder` and friends), so nothing here waits for the network.
  *
- * This phase sends them and waits: the screen knows the answer before it moves on. The next phase
- * puts the same records — built by `../records.ts`, which is why they are built there and not here —
- * into the device's outbox and returns as soon as they are on the device. Nothing else in a screen
- * changes when that happens, because a screen already only learns "it worked" or "here is why not".
- *
- * A failure is never swallowed: it becomes a sentence chosen by the error's code, and a table that
- * moved underneath the screen is re-read before the person tries again.
+ * Only this device can refuse at this point — no https to take an id from, a record that does not
+ * validate, a queue that could not be written — and that is toasted, worded by the error's code.
+ * What the server refuses arrives later as a conflict the queue stops at, which the sync chip shows.
  */
 export function useOrderWrites(): OrderWrites {
-  const { orders } = useBackend();
-  const queryClient = useQueryClient();
+  // Kept whole rather than destructured: the outbox's methods are called on it, like a port's.
+  const runtime = useOutbox();
+  const [writing, setWriting] = useState(0);
 
-  const write = useMutation({
-    mutationFn: async ({
-      run,
-    }: {
-      readonly action: OrderAction;
-      readonly run: (port: OrdersPort) => Promise<unknown>;
-    }) => run(orders),
-    onSettled: () => refreshRoom(queryClient),
-  });
-
-  // Kept whole rather than destructured: `mutateAsync` is a method of the mutation, like a port's.
-  const run = useCallback(
-    async (action: OrderAction, task: (port: OrdersPort) => Promise<unknown>): Promise<boolean> => {
+  const write = useCallback(
+    async (
+      action: OrderAction,
+      append: (recordEnvelope: OrderEnvelope) => Promise<unknown>,
+    ): Promise<boolean> => {
+      setWriting((count) => count + 1);
       try {
-        await write.mutateAsync({ action, run: task });
+        await append(envelope());
         return true;
       } catch (error) {
         toast.error(orderErrorMessage(error, action));
-        if (shouldRefreshTable(error)) {
-          await refreshRoom(queryClient);
-        }
         return false;
+      } finally {
+        setWriting((count) => count - 1);
       }
     },
-    [queryClient, write],
+    [],
   );
 
   return useMemo<OrderWrites>(
     () => ({
-      isWriting: write.isPending,
+      isWriting: writing > 0,
       addItem: (input) =>
-        run('add', async (port) => port.addItem(await buildOrderItemAddRecord(envelope(), input))),
+        write('add', (recordEnvelope) =>
+          runtime.outbox.appendOrder('order_item_add', () =>
+            buildOrderItemAddRecord(recordEnvelope, input),
+          ),
+        ),
       removeItem: (input) =>
-        run('remove', async (port) =>
-          port.removeItem(await buildOrderItemRemoveRecord(envelope(), input)),
+        write('remove', (recordEnvelope) =>
+          runtime.outbox.appendOrder('order_item_remove', () =>
+            buildOrderItemRemoveRecord(recordEnvelope, input),
+          ),
         ),
       send: (tableId) =>
-        run('send', async (port) => port.send(await buildOrderSendRecord(envelope(), { tableId }))),
+        write('send', (recordEnvelope) =>
+          runtime.outbox.appendOrder('order_send', () =>
+            buildOrderSendRecord(recordEnvelope, { tableId }),
+          ),
+        ),
       prepareItem: (itemId) =>
-        run('prepare', async (port) =>
-          port.prepareItem(await buildOrderItemPrepareRecord(envelope(), { itemId })),
+        write('prepare', (recordEnvelope) =>
+          runtime.outbox.appendOrder('order_item_prepare', () =>
+            buildOrderItemPrepareRecord(recordEnvelope, { itemId }),
+          ),
         ),
       cancelOrder: (input) =>
-        run('cancel', async (port) =>
-          port.cancelOrder(await buildOrderCancelRecord(envelope(), input)),
+        write('cancel', (recordEnvelope) =>
+          runtime.outbox.appendOrder('order_cancel', () =>
+            buildOrderCancelRecord(recordEnvelope, input),
+          ),
         ),
     }),
-    [run, write.isPending],
+    [runtime, write, writing],
   );
 }

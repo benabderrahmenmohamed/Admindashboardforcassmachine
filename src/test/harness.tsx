@@ -17,7 +17,7 @@ import {
   type SyncSchedule,
 } from '@/features/sync/runtime';
 import { createPortTransport } from '@/features/sync/transport';
-import type { OutboxRecord, OutboxStorage, OutboxTransport } from '@/features/sync/types';
+import type { LedgerOutboxRecord, OutboxStorage, OutboxTransport } from '@/features/sync/types';
 import { registerTerminal } from '@/features/terminal/terminalStore';
 import { createBackend } from '@/lib/backend';
 import { BackendProvider } from '@/lib/backend-context';
@@ -138,13 +138,13 @@ export interface Harness {
   /** A route tree of the test's own, inside the app's providers. */
   renderRoutes(routes: readonly RouteObject[], initialEntry?: string): RenderResult;
   /** Opens a session on this device, as the cashier does; returns the record. */
-  openSession(openingFloatMillimes?: Millimes): Promise<OutboxRecord>;
+  openSession(openingFloatMillimes?: Millimes): Promise<LedgerOutboxRecord>;
   /** Closes the session this device opened; returns the record. */
-  closeSession(sessionId: string, countedMillimes?: Millimes): Promise<OutboxRecord>;
+  closeSession(sessionId: string, countedMillimes?: Millimes): Promise<LedgerOutboxRecord>;
   /** Opens `sessionId` straight on the server, without putting anything in this device's queue. */
   openSessionOnServer(sessionId: string): Promise<void>;
   /** Sells `qty` of `product` in `sessionId`, as the register does; returns the record. */
-  sell(sessionId: string, product: CartProduct, qty?: number): Promise<OutboxRecord>;
+  sell(sessionId: string, product: CartProduct, qty?: number): Promise<LedgerOutboxRecord>;
   stop(): void;
 }
 
@@ -293,14 +293,14 @@ export async function createHarness(options: HarnessOptions = {}): Promise<Harne
 
     async openSessionOnServer(sessionId) {
       const actor = requireUser();
-      const meta = await storage.readMeta();
-      if (!meta) {
+      const terminal = (await storage.readMeta())?.terminal;
+      if (!terminal) {
         throw new Error('A session belongs to a terminal: register the device first.');
       }
       await backend.sessions.open(
         await buildOpenSessionRecord({
           id: sessionId,
-          terminal: terminalContext(meta),
+          terminal: terminalContext(terminal),
           actorUserId: actor.id,
           openedAt: new Date().toISOString(),
           openingFloatMillimes: mm(20_000),

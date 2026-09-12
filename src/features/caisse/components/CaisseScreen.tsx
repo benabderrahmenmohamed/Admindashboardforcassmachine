@@ -14,14 +14,14 @@ import {
   type SessionClose,
 } from '@/features/sessions/components/CloseSessionDialog';
 import { SessionBar } from '@/features/sessions/components/SessionBar';
-import type { OutboxMeta, OutboxRecord } from '@/features/sync/types';
+import type { TerminalMeta, OutboxRecord } from '@/features/sync/types';
 import { queryKeys } from '@/lib/query';
 import type { CashSession, PaymentMethod, Sale } from '@/ports';
 import type { Cart } from '../cart';
 import { TablePayment } from './TablePayment';
 
 interface CaisseScreenProps {
-  readonly terminal: OutboxMeta;
+  readonly terminal: TerminalMeta;
   readonly session: CashSession;
   /** This device's queue, in ordinal order. */
   readonly records: readonly OutboxRecord[];

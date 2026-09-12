@@ -21,7 +21,7 @@ import { createMemoryOutboxStorage } from '@/features/sync/memoryStorage';
 import { createOutbox } from '@/features/sync/outbox';
 import { createOutboxRuntime, type SyncSchedule } from '@/features/sync/runtime';
 import { createPortTransport } from '@/features/sync/transport';
-import type { OutboxMeta, OutboxRecord } from '@/features/sync/types';
+import type { OutboxRecord, TerminalMeta } from '@/features/sync/types';
 import { registerTerminal } from '@/features/terminal/terminalStore';
 import { mm, type Millimes } from '@/lib/money';
 import type { CashSession } from '@/ports';
@@ -83,10 +83,10 @@ function demoDevice() {
     clock,
     runtime,
     records: () => runtime.snapshot().records,
-    /** The registration as the outbox holds it, which is where Phase 4 keeps it. */
-    meta: async (): Promise<OutboxMeta> => {
-      const meta = await storage.readMeta();
-      return meta ?? expect.unreachable('This device should be registered by now');
+    /** The registration as the outbox holds it: the terminal half of the device's queue. */
+    meta: async (): Promise<TerminalMeta> => {
+      const terminal = (await storage.readMeta())?.terminal;
+      return terminal ?? expect.unreachable('This device should be registered by now');
     },
     /** The network comes back and the wait the failures earned is over: every trigger fires. */
     reconnect: async () => {
@@ -116,7 +116,7 @@ async function numbered(append: Promise<OutboxRecord>): Promise<NumberedRecord> 
  * which is what a device that went offline before asking has.
  */
 function gateOf(
-  meta: OutboxMeta,
+  meta: TerminalMeta,
   records: readonly OutboxRecord[],
   session: CashSession | null | undefined,
 ) {
@@ -142,7 +142,8 @@ describe('the demo path', () => {
     await registerTerminal(device.runtime.storage, registration, device.clock.now());
     await backend.auth.signOut();
     const meta = await device.meta();
-    expect(meta).toMatchObject({ code: 'T1', lastSeq: 0, nextOrdinal: 1 });
+    expect(meta).toMatchObject({ code: 'T1', lastSeq: 0 });
+    await expect(device.runtime.storage.readMeta()).resolves.toMatchObject({ nextOrdinal: 1 });
 
     // The POS, as the cashier: a session opened while the network is still there.
     const cashier = await backend.auth.signIn({

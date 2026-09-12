@@ -5,7 +5,14 @@
  * Phase 3 kept both in local storage; `migrateLegacyTerminal` moves an old device over once.
  */
 import { z } from 'zod';
-import type { OutboxMeta, OutboxRecord, OutboxStorage } from '@/features/sync/types';
+import { isUnfinished } from '@/features/sync/meta';
+import {
+  isOrderRecord,
+  type LedgerOutboxRecord,
+  type OutboxMeta,
+  type OutboxStorage,
+  type TerminalMeta,
+} from '@/features/sync/types';
 import { AppError } from '@/lib/errors';
 import {
   closeSessionRecordSchema,
@@ -50,19 +57,25 @@ export function browserStorage(): KeyValueStorage | null {
   }
 }
 
-export function readRegistration(storage: OutboxStorage): Promise<OutboxMeta | null> {
-  return storage.readMeta();
+/** This device's terminal registration, or null on a device that is not a register. */
+export async function readRegistration(storage: OutboxStorage): Promise<TerminalMeta | null> {
+  return (await storage.readMeta())?.terminal ?? null;
 }
 
 /**
- * Registering bumps the terminal's epoch on the server, so a record still waiting to be sent would
- * be refused under the new registration, and a record in conflict would lose the terminal it names.
+ * Registering bumps the terminal's epoch on the server, so a sale, refund or session record still
+ * waiting to be sent would be refused under the new registration, and one in conflict would lose the
+ * terminal it names. An order record names no terminal, so it goes out the same either way: a till
+ * that also takes table orders is not kept from registering by an item still on its way to a table.
  */
 export async function assertCanRegister(storage: OutboxStorage): Promise<void> {
-  if (await storage.firstUnfinished()) {
+  const stranded = (await storage.list()).some(
+    (record) => isUnfinished(record) && !isOrderRecord(record),
+  );
+  if (stranded) {
     throw new AppError(
       'VALIDATION_ERROR',
-      'This device still has records waiting to be sent. Let the queue empty before registering again.',
+      'This device still has sales or session records waiting to be sent. Let the queue empty before registering again.',
     );
   }
 }
@@ -77,23 +90,23 @@ export async function registerTerminal(
   storage: OutboxStorage,
   registration: TerminalRegistration,
   now: number,
-): Promise<OutboxMeta> {
+): Promise<TerminalMeta> {
   await assertCanRegister(storage);
-  const previous = await storage.readMeta();
+  const stored = await storage.readMeta();
+  const previous = stored?.terminal ?? null;
   const sameTerminal =
     previous !== null &&
     previous.code === registration.code &&
     previous.terminalId === registration.terminalId;
-  const meta: OutboxMeta = {
+  const terminal: TerminalMeta = {
     terminalId: registration.terminalId,
     code: registration.code,
     epoch: registration.epoch,
     lastSeq: sameTerminal ? Math.max(previous.lastSeq, registration.lastSeq) : registration.lastSeq,
-    nextOrdinal: previous?.nextOrdinal ?? 1,
     registeredAt: now,
   };
-  await storage.writeMeta(meta);
-  return meta;
+  await storage.writeMeta({ nextOrdinal: stored?.nextOrdinal ?? 1, terminal });
+  return terminal;
 }
 
 function readLegacy<Schema extends z.ZodType>(
@@ -131,7 +144,7 @@ function legacyTimestamp(pending: LegacyPending, fallback: number): number {
 }
 
 /** The Phase 3 unsent record as a queue record, keeping its id, its hash and its receipt number. */
-function legacyRecord(pending: LegacyPending, ordinal: number, now: number): OutboxRecord {
+function legacyRecord(pending: LegacyPending, ordinal: number, now: number): LedgerOutboxRecord {
   const createdAt = legacyTimestamp(pending, now);
   const base = {
     id: pending.record.id,
@@ -145,6 +158,7 @@ function legacyRecord(pending: LegacyPending, ordinal: number, now: number): Out
     lastError: null,
     result: null,
     ackedAt: null,
+    discard: null,
   };
   switch (pending.type) {
     case 'sale':
@@ -210,32 +224,33 @@ export async function migrateLegacyTerminal(
   }
   const registeredAt = Date.parse(legacy.registeredAt);
   const base: OutboxMeta = {
-    terminalId: legacy.terminalId,
-    code: legacy.code,
-    epoch: legacy.epoch,
-    lastSeq: legacy.lastSeq,
     nextOrdinal: 1,
-    registeredAt: Number.isNaN(registeredAt) ? now : registeredAt,
+    terminal: {
+      terminalId: legacy.terminalId,
+      code: legacy.code,
+      epoch: legacy.epoch,
+      lastSeq: legacy.lastSeq,
+      registeredAt: Number.isNaN(registeredAt) ? now : registeredAt,
+    },
   };
+  const terminal = base.terminal;
   await storage.writeMeta(base);
   let moved = false;
-  if (pending && !(await storage.get(pending.record.id))) {
+  if (terminal && pending && !(await storage.get(pending.record.id))) {
     const record = legacyRecord(pending, base.nextOrdinal, now);
     // Phase 3 committed a receipt number only once the server had answered, so the record still
     // holds a number the counter has not reached; the queue must not hand that number out again.
     const next: OutboxMeta = {
-      ...base,
-      lastSeq:
-        record.seq !== null && record.terminalCode === base.code
-          ? Math.max(record.seq, base.lastSeq)
-          : base.lastSeq,
       nextOrdinal: base.nextOrdinal + 1,
+      terminal: {
+        ...terminal,
+        lastSeq:
+          record.seq !== null && record.terminalCode === terminal.code
+            ? Math.max(record.seq, terminal.lastSeq)
+            : terminal.lastSeq,
+      },
     };
-    moved = await storage.appendIfUnchanged(
-      { lastSeq: base.lastSeq, nextOrdinal: base.nextOrdinal },
-      record,
-      next,
-    );
+    moved = await storage.appendIfUnchanged(base, record, next);
   }
   drop();
   return { terminal: true, record: moved };

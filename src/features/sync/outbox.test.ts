@@ -11,11 +11,14 @@ import {
   isoAt,
   meta,
   openPayload,
+  orderPayload,
   raise,
+  registration as registrationOf,
   salePayload,
   SESSION_ID,
   START,
   storedSale,
+  TABLE_ID,
   uuid,
   type Answer,
   type FakeClock,
@@ -24,8 +27,15 @@ import {
 import { createIdbOutboxStorage, openOutboxDatabase } from './idbStorage';
 import { createInProcessDrainLock } from './locks';
 import { createMemoryOutboxStorage } from './memoryStorage';
-import { backoffDelay, createOutbox, type Outbox } from './outbox';
-import type { DrainLock, DrainOutcome, OutboxRecord, OutboxStorage } from './types';
+import { backoffDelay, createOutbox, DRAIN_LOCK_NAME, type Outbox } from './outbox';
+import type {
+  DrainLock,
+  DrainOutcome,
+  OrderKind,
+  OutboxMeta,
+  OutboxRecord,
+  OutboxStorage,
+} from './types';
 
 // Black-box tests of the outbox: append, drain, retry and void, with the clock, the randomness, the
 // transport and the cross-tab lock all injected, so every wait and every jitter here is exact and no
@@ -45,7 +55,7 @@ interface Options {
   readonly lock?: DrainLock;
   readonly random?: () => number;
   readonly canSend?: () => boolean;
-  /** False when the storage already holds a registration, or to test an unregistered device. */
+  /** False for a device that is not a register — a waiter's phone — or one whose storage is filled. */
   readonly registered?: boolean;
 }
 
@@ -72,6 +82,13 @@ async function setup(answer?: Answer, options: Options = {}): Promise<Harness> {
 function sell(harness: Harness, n: number): Promise<OutboxRecord> {
   return harness.outbox.appendSale('sale', ({ seq, meta: registration }) =>
     salePayload(registration, seq, uuid(n), isoAt(harness.clock.now())),
+  );
+}
+
+/** An order record of `kind` numbered `n`, written as a waiter's phone writes it. */
+function order(harness: Harness, kind: OrderKind, n: number): Promise<OutboxRecord> {
+  return harness.outbox.appendOrder(kind, () =>
+    orderPayload(kind, uuid(5_000 + n), isoAt(harness.clock.now())),
   );
 }
 
@@ -149,6 +166,24 @@ describe('backoffDelay', () => {
   });
 });
 
+/** Another context commits the next sale between an append's read of the queue and its commit. */
+async function commitSaleElsewhere(storage: OutboxStorage): Promise<void> {
+  const current = await storage.readMeta();
+  if (!current?.terminal) {
+    return expect.unreachable('the storage holds no registration');
+  }
+  const seq = current.terminal.lastSeq + 1;
+  const next: OutboxMeta = {
+    nextOrdinal: current.nextOrdinal + 1,
+    terminal: { ...current.terminal, lastSeq: seq },
+  };
+  await storage.appendIfUnchanged(
+    current,
+    await storedSale(current.terminal, current.nextOrdinal, seq),
+    next,
+  );
+}
+
 describe('append', () => {
   it('numbers sales and refunds only, and orders every kind by one ordinal', async () => {
     const harness = await setup();
@@ -175,10 +210,9 @@ describe('append', () => {
       SESSION_ID,
       SESSION_ID,
     ]);
-    await expect(harness.storage.readMeta()).resolves.toMatchObject({
-      lastSeq: 2,
-      nextOrdinal: 5,
-    });
+    await expect(harness.storage.readMeta()).resolves.toEqual(
+      meta({ nextOrdinal: 5, terminal: registrationOf({ lastSeq: 2 }) }),
+    );
   });
 
   it('queues a sale before anything is sent, ready to go out at once', async () => {
@@ -196,23 +230,64 @@ describe('append', () => {
       lastError: null,
       result: null,
       ackedAt: null,
+      discard: null,
     });
     expect(record.payloadHash).toBe(record.payload.payloadHash);
     await expect(harness.outbox.list()).resolves.toEqual([record]);
   });
 
-  it('refuses to queue anything while the device is not registered', async () => {
+  it('refuses to queue a sale on a device that is not a register', async () => {
     const harness = await setup(undefined, { registered: false });
 
     await expectFailure(sell(harness, 1), 'CONFIG_ERROR');
 
     await expect(harness.outbox.list()).resolves.toEqual([]);
+    await expect(harness.storage.readMeta()).resolves.toBeNull();
+  });
+
+  // A waiter's phone is never registered: an item put on a table is still on the device before
+  // anything is sent, with a place in the queue and nothing else — no terminal, no session, no number.
+  it('queues an order record on a device that is not a register', async () => {
+    const harness = await setup(undefined, { registered: false });
+
+    const record = await order(harness, 'order_item_add', 1);
+
+    expect(record).toMatchObject({
+      id: uuid(5_001),
+      kind: 'order_item_add',
+      ordinal: 1,
+      seq: null,
+      terminalCode: null,
+      sessionId: null,
+      status: 'pending',
+      discard: null,
+    });
+    expect(record.payloadHash).toBe(record.payload.payloadHash);
+    expect(harness.transport.sent).toEqual([]);
+    await expect(harness.storage.readMeta()).resolves.toEqual({ nextOrdinal: 2, terminal: null });
+  });
+
+  it('orders the sales of a register and its order records by the one ordinal', async () => {
+    const harness = await setup();
+
+    const added = await order(harness, 'order_item_add', 1);
+    const sold = await sell(harness, 1);
+    const sent = await order(harness, 'order_send', 2);
+
+    expect([added, sold, sent].map((record) => [record.kind, record.ordinal, record.seq])).toEqual([
+      ['order_item_add', 1, null],
+      ['sale', 2, 1],
+      ['order_send', 3, null],
+    ]);
+    // An order record takes no receipt number, so the next sale's number is the one after 1.
+    await expect(harness.storage.readMeta()).resolves.toEqual(
+      meta({ nextOrdinal: 4, terminal: registrationOf({ lastSeq: 1 }) }),
+    );
   });
 
   it('takes fresh numbers when another context allocated first, with no gap and no duplicate', async () => {
     const base = createMemoryOutboxStorage();
-    const registration = meta();
-    await base.writeMeta(registration);
+    await base.writeMeta(meta());
     let interfered = false;
     const storage = interferingStorage(base, async () => {
       if (interfered) {
@@ -220,15 +295,7 @@ describe('append', () => {
       }
       interfered = true;
       // Another context commits sale number 1 between our read of the counters and our own commit.
-      const current = await base.readMeta();
-      if (!current) {
-        return expect.unreachable('the storage holds no registration');
-      }
-      await base.appendIfUnchanged(
-        { lastSeq: current.lastSeq, nextOrdinal: current.nextOrdinal },
-        await storedSale(registration, current.nextOrdinal, current.lastSeq + 1),
-        { ...current, lastSeq: current.lastSeq + 1, nextOrdinal: current.nextOrdinal + 1 },
-      );
+      await commitSaleElsewhere(base);
     });
     const harness = await setup(undefined, { storage });
 
@@ -244,24 +311,15 @@ describe('append', () => {
       [2, 2],
     ]);
     expect(new Set(queued.map((each) => each.id)).size).toBe(2);
-    await expect(storage.readMeta()).resolves.toMatchObject({ lastSeq: 2, nextOrdinal: 3 });
+    await expect(storage.readMeta()).resolves.toEqual(
+      meta({ nextOrdinal: 3, terminal: registrationOf({ lastSeq: 2 }) }),
+    );
   });
 
   it('gives up rather than guess when it is outrun over and over', async () => {
     const base = createMemoryOutboxStorage();
-    const registration = meta();
-    await base.writeMeta(registration);
-    const storage = interferingStorage(base, async () => {
-      const current = await base.readMeta();
-      if (!current) {
-        return expect.unreachable('the storage holds no registration');
-      }
-      await base.appendIfUnchanged(
-        { lastSeq: current.lastSeq, nextOrdinal: current.nextOrdinal },
-        await storedSale(registration, current.nextOrdinal, current.lastSeq + 1),
-        { ...current, lastSeq: current.lastSeq + 1, nextOrdinal: current.nextOrdinal + 1 },
-      );
-    });
+    await base.writeMeta(meta());
+    const storage = interferingStorage(base, () => commitSaleElsewhere(base));
     const harness = await setup(undefined, { storage });
 
     await expectFailure(sell(harness, 1), 'UNKNOWN');
@@ -273,18 +331,29 @@ describe('append', () => {
 });
 
 describe('drain', () => {
-  it('pauses, and sends nothing, while the device is not registered', async () => {
+  it('sends the order records of a device that has never been registered', async () => {
+    const harness = await setup(undefined, { registered: false });
+    await order(harness, 'order_item_add', 1);
+    await order(harness, 'order_send', 2);
+
+    await expect(harness.outbox.drain()).resolves.toEqual({ state: 'idle' });
+
+    expect(harness.transport.sent.map((record) => record.kind)).toEqual([
+      'order_item_add',
+      'order_send',
+    ]);
+    expect(await statusesOf(harness)).toEqual(['acked', 'acked']);
+  });
+
+  it('is idle, with nothing to send, on a device that has written nothing', async () => {
     const harness = await setup(undefined, { registered: false });
 
-    await expect(harness.outbox.drain()).resolves.toEqual({
-      state: 'paused',
-      reason: 'unregistered',
-    });
+    await expect(harness.outbox.drain()).resolves.toEqual({ state: 'idle' });
 
     expect(harness.transport.sent).toEqual([]);
   });
 
-  it('drains under the name of the terminal it is registered for', async () => {
+  it('drains under one name for the whole device, register or not', async () => {
     const names: string[] = [];
     const lock: DrainLock = {
       runExclusive: <T>(name: string, pass: () => Promise<T>): Promise<T | 'busy'> => {
@@ -297,11 +366,13 @@ describe('drain', () => {
 
     await expect(harness.outbox.drain()).resolves.toEqual({ state: 'idle' });
 
-    // Not `terminal:T1`, which the POS page holds for as long as it is mounted.
-    expect(names).toEqual(['outbox:T1']);
+    // Not `terminal:T1`, which the caisse holds for as long as it is mounted, and not named after
+    // the terminal at all: a phone has none, and a device has one queue whatever it is registered as.
+    expect(names).toEqual([DRAIN_LOCK_NAME]);
+    expect(DRAIN_LOCK_NAME).toBe('outbox');
   });
 
-  it('skips the pass while another tab is draining this terminal', async () => {
+  it('skips the pass while another tab is draining this device', async () => {
     const lock: DrainLock = { runExclusive: () => Promise.resolve('busy' as const) };
     const harness = await setup(undefined, { lock });
     await sell(harness, 1);
@@ -331,6 +402,7 @@ describe('drain', () => {
     await expect(harness.outbox.summary()).resolves.toEqual({
       pending: 0,
       conflicts: 0,
+      discarded: 0,
       lastAckAt: START,
     });
   });
@@ -428,6 +500,7 @@ describe('drain', () => {
     await expect(harness.outbox.summary()).resolves.toEqual({
       pending: 2,
       conflicts: 1,
+      discarded: 0,
       lastAckAt: null,
     });
 
@@ -510,6 +583,7 @@ describe('drain', () => {
     await expect(harness.outbox.summary()).resolves.toEqual({
       pending: 0,
       conflicts: 0,
+      discarded: 0,
       lastAckAt: START,
     });
   });
@@ -714,6 +788,7 @@ describe('summary, list and subscribe', () => {
     await expect(harness.outbox.summary()).resolves.toEqual({
       pending: 4,
       conflicts: 0,
+      discarded: 0,
       lastAckAt: null,
     });
 
@@ -723,6 +798,7 @@ describe('summary, list and subscribe', () => {
     await expect(harness.outbox.summary()).resolves.toEqual({
       pending: 2,
       conflicts: 1,
+      discarded: 0,
       lastAckAt: START + 5_000,
     });
     await expect(harness.outbox.list()).resolves.toMatchObject([
@@ -750,5 +826,200 @@ describe('summary, list and subscribe', () => {
     await sell(harness, 2);
     await harness.outbox.drain();
     expect(changes).toBe(2);
+  });
+});
+
+describe('order records', () => {
+  // Every code a table can answer with when it moved under a waiter's phone. Each one stops the
+  // queue, because what comes after — a send, a removal — was written about the table as it was.
+  it.each<ErrorCode>(['ORDER_CHANGED', 'ORDER_CLOSED', 'ITEM_NOT_FOUND', 'TABLE_INACTIVE'])(
+    'stops the queue at an order record the server answers %s',
+    async (code) => {
+      const harness = await setup(
+        (record) => (record.kind === 'order_item_remove' ? raise(code) : ackOf(record)),
+        {
+          registered: false,
+        },
+      );
+      await order(harness, 'order_item_add', 1);
+      const removal = await order(harness, 'order_item_remove', 2);
+      await order(harness, 'order_send', 3);
+
+      await expect(harness.outbox.drain()).resolves.toEqual({
+        state: 'blocked',
+        recordId: removal.id,
+      });
+
+      expect(await statusesOf(harness)).toEqual(['acked', 'conflict', 'pending']);
+      await expect(recordAt(harness, 2)).resolves.toMatchObject({
+        attempts: 0,
+        lastError: { code },
+      });
+    },
+  );
+
+  it('sends an item added offline before the removal written after it, whatever the timing', async () => {
+    const harness = await setup(undefined, { registered: false });
+    const added = await order(harness, 'order_item_add', 1);
+    harness.clock.advance(60_000);
+    const removal = await harness.outbox.appendOrder('order_item_remove', async () => ({
+      ...(await orderPayload('order_item_remove', uuid(5_002), isoAt(harness.clock.now()))),
+    }));
+
+    await harness.outbox.drain();
+
+    expect(harness.transport.sent.map((record) => record.id)).toEqual([added.id, removal.id]);
+  });
+});
+
+describe('discard', () => {
+  /** A phone whose queue stopped at an order record the server refused with ORDER_CLOSED. */
+  async function stoppedAtOrder() {
+    const harness = await setup(
+      (record) => (record.ordinal === 2 ? raise('ORDER_CLOSED') : ackOf(record)),
+      {
+        registered: false,
+      },
+    );
+    await order(harness, 'order_item_add', 1);
+    const stale = await order(harness, 'order_send', 2);
+    const behind = await order(harness, 'order_item_add', 3);
+    await harness.outbox.drain();
+    return { harness, stale, behind };
+  }
+
+  it('gives up on an order record with the reason, and the queue goes on behind it', async () => {
+    const { harness, stale, behind } = await stoppedAtOrder();
+    harness.clock.advance(2_000);
+
+    await harness.outbox.discard(stale.id, {
+      reason: '  The caisse closed the table first  ',
+      discardedBy: 'user-waiter',
+      discardedByName: 'Sonia',
+    });
+
+    await expect(harness.outbox.list()).resolves.toMatchObject([
+      { ordinal: 1, status: 'acked' },
+      {
+        ordinal: 2,
+        status: 'discarded',
+        discard: {
+          reason: 'The caisse closed the table first',
+          discardedBy: 'user-waiter',
+          discardedByName: 'Sonia',
+          discardedAt: START + 2_000,
+        },
+        // What the server said stays, so the dead-letter list can show why it was refused.
+        lastError: { code: 'ORDER_CLOSED' },
+      },
+      { ordinal: 3, status: 'pending' },
+    ]);
+    await expect(harness.outbox.drain()).resolves.toEqual({ state: 'idle' });
+    expect(harness.transport.sent.map((record) => record.id)).toEqual([
+      uuid(5_001),
+      stale.id,
+      behind.id,
+    ]);
+    await expect(harness.outbox.summary()).resolves.toMatchObject({
+      pending: 0,
+      conflicts: 0,
+      discarded: 1,
+    });
+  });
+
+  it('never sends a discarded record again', async () => {
+    const { harness, stale } = await stoppedAtOrder();
+    await harness.outbox.discard(stale.id, {
+      reason: 'Stale',
+      discardedBy: null,
+      discardedByName: null,
+    });
+
+    await harness.outbox.drain();
+    await harness.outbox.drain();
+
+    expect(harness.transport.sent.filter((record) => record.id === stale.id)).toHaveLength(1);
+  });
+
+  // Money that was taken is never dropped: a sale in conflict is retried or voided by an admin.
+  it.each(['sale', 'session_open'] as const)('refuses to discard a %s record', async (kind) => {
+    const harness = await setup(() => raise('SESSION_CLOSED'));
+    const record =
+      kind === 'sale'
+        ? await sell(harness, 1)
+        : await harness.outbox.appendSessionOpen(({ meta: registration }) =>
+            openPayload(registration, isoAt(START)),
+          );
+    await harness.outbox.drain();
+
+    await expectFailure(
+      harness.outbox.discard(record.id, {
+        reason: 'Give up',
+        discardedBy: 'user-admin',
+        discardedByName: null,
+      }),
+      'VALIDATION_ERROR',
+    );
+
+    await expect(recordAt(harness, 1)).resolves.toMatchObject({
+      status: 'conflict',
+      discard: null,
+    });
+  });
+
+  it('refuses to discard without a reason, or a record that is not in conflict', async () => {
+    const { harness, stale, behind } = await stoppedAtOrder();
+
+    await expectFailure(
+      harness.outbox.discard(stale.id, { reason: '   ', discardedBy: null, discardedByName: null }),
+      'VALIDATION_ERROR',
+    );
+    await expectFailure(
+      harness.outbox.discard(behind.id, {
+        reason: 'Stale',
+        discardedBy: null,
+        discardedByName: null,
+      }),
+      'VALIDATION_ERROR',
+    );
+    await expectFailure(
+      harness.outbox.discard(uuid(9_999), {
+        reason: 'Stale',
+        discardedBy: null,
+        discardedByName: null,
+      }),
+      'VALIDATION_ERROR',
+    );
+
+    expect(await statusesOf(harness)).toEqual(['acked', 'conflict', 'pending']);
+  });
+
+  it('tells its subscribers when a record is discarded', async () => {
+    const { harness, stale } = await stoppedAtOrder();
+    let calls = 0;
+    harness.outbox.subscribe(() => {
+      calls += 1;
+    });
+
+    await harness.outbox.discard(stale.id, {
+      reason: 'Stale',
+      discardedBy: null,
+      discardedByName: null,
+    });
+
+    expect(calls).toBe(1);
+  });
+
+  it('keeps the table the discarded record named, for the dead-letter list', async () => {
+    const { harness, stale } = await stoppedAtOrder();
+
+    await harness.outbox.discard(stale.id, {
+      reason: 'Stale',
+      discardedBy: null,
+      discardedByName: null,
+    });
+
+    const [, discarded] = await harness.outbox.list();
+    expect(discarded.kind === 'order_send' ? discarded.payload.tableId : null).toBe(TABLE_ID);
   });
 });

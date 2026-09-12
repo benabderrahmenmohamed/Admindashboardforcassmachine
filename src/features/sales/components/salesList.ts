@@ -5,7 +5,7 @@
  */
 import { isNumbered, syncStatus, type NumberedRecord, type SyncStatus } from '@/features/pos/queue';
 import { receiptNumber } from '@/features/sales/records';
-import type { OutboxMeta, OutboxRecord } from '@/features/sync/types';
+import type { TerminalMeta, OutboxRecord } from '@/features/sync/types';
 import { add, neg, ZERO } from '@/lib/money';
 import type { Sale, SaleLineView } from '@/ports';
 
@@ -21,7 +21,7 @@ export interface SaleRow {
  * when the record was written, so it is the number on the printed receipt either way. `receivedAt`
  * is the device's own time until the server answers with its own, which it alone is trusted for.
  */
-export function localSaleView(meta: OutboxMeta, record: NumberedRecord): Sale {
+export function localSaleView(meta: TerminalMeta, record: NumberedRecord): Sale {
   const { payload } = record;
   return {
     id: payload.id,
@@ -86,7 +86,7 @@ export function withLocalRefunds(sale: Sale, refunds: readonly NumberedRecord[])
  * what later refunds took back; every other record is shown from the copy this device kept.
  */
 export function mergeSales(
-  meta: OutboxMeta,
+  meta: TerminalMeta,
   serverSales: readonly Sale[],
   records: readonly OutboxRecord[],
 ): SaleRow[] {

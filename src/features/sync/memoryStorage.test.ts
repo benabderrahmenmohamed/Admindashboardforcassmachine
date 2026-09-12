@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { AppError } from '@/lib/errors';
-import { meta, storedSale } from './__tests__/fixtures';
+import { meta, registration, storedSale } from './__tests__/fixtures';
 import { describeOutboxStorage } from './__tests__/storageSuite';
 import { createMemoryOutboxStorage } from './memoryStorage';
 
@@ -12,14 +12,13 @@ describeOutboxStorage('the memory outbox storage', () =>
 
 describe('createMemoryOutboxStorage', () => {
   it('gives every caller a storage of its own', async () => {
-    const registration = meta();
     const first = createMemoryOutboxStorage();
     const second = createMemoryOutboxStorage();
-    await first.writeMeta(registration);
+    await first.writeMeta(meta());
     await first.appendIfUnchanged(
-      { lastSeq: 0, nextOrdinal: 1 },
-      await storedSale(registration, 1, 1),
-      meta({ lastSeq: 1, nextOrdinal: 2 }),
+      meta(),
+      await storedSale(registration(), 1, 1),
+      meta({ nextOrdinal: 2, terminal: registration({ lastSeq: 1 }) }),
     );
 
     await expect(second.readMeta()).resolves.toBeNull();
@@ -39,20 +38,16 @@ describe('createMemoryOutboxStorage', () => {
   });
 
   it('reports a duplicate id as a rejected promise too', async () => {
-    const registration = meta();
     const storage = createMemoryOutboxStorage();
-    const record = await storedSale(registration, 1, 1);
-    await storage.writeMeta(registration);
-    await storage.appendIfUnchanged(
-      { lastSeq: 0, nextOrdinal: 1 },
-      record,
-      meta({ lastSeq: 1, nextOrdinal: 2 }),
-    );
+    const record = await storedSale(registration(), 1, 1);
+    const afterFirst = meta({ nextOrdinal: 2, terminal: registration({ lastSeq: 1 }) });
+    await storage.writeMeta(meta());
+    await storage.appendIfUnchanged(meta(), record, afterFirst);
 
     const settled = storage.appendIfUnchanged(
-      { lastSeq: 1, nextOrdinal: 2 },
+      afterFirst,
       { ...record, ordinal: 2 },
-      meta({ lastSeq: 2, nextOrdinal: 3 }),
+      meta({ nextOrdinal: 3, terminal: registration({ lastSeq: 2 }) }),
     );
 
     await expect(settled).rejects.toBeInstanceOf(AppError);

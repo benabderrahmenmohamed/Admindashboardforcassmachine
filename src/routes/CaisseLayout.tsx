@@ -6,9 +6,9 @@ import { FaceHeader } from './FaceHeader';
 export function CaisseLayout() {
   return (
     <div className="min-h-screen bg-gray-50">
-      <FaceHeader title="Caisse" current="/caisse" conflictsPath="/caisse/conflicts" />
+      <FaceHeader title="Caisse" current="/caisse" />
       <main className="p-4">
-        <OfflineBanner />
+        <OfflineBanner face="caisse" />
         <Outlet />
       </main>
     </div>

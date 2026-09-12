@@ -1,18 +1,23 @@
 import { Percent, Tag } from 'lucide-react';
-import { useMemo, useState } from 'react';
+import { useId, useMemo, useState } from 'react';
 import { ErrorState, LoadingState } from '@/components/feedback';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { useOpenOrder } from '@/features/orders/hooks/useOrders';
+import { LocalBadge } from '@/features/orders/components/LocalBadge';
+import { useRoomOrder } from '@/features/orders/hooks/useOrders';
+import { NEEDS_ATTENTION, itemSync } from '@/features/orders/localFlags';
+import type { RoomItem } from '@/features/orders/overlay';
 import { itemTotal } from '@/features/orders/tableOrder';
 import type { CheckoutPayment } from '@/features/pos/types';
 import { formatTND } from '@/lib/money';
-import type { DiningTable, OpenOrderItem, PaymentMethod } from '@/ports';
+import type { DiningTable, PaymentMethod } from '@/ports';
 import { totals, type Cart } from '../cart';
 import {
   buildPaymentCart,
+  heldItems,
+  holdReason,
   noSelection,
   payableItems,
   paymentPlan,
@@ -20,6 +25,7 @@ import {
   readDiscountPercent,
   selectAll,
   toggleItem,
+  type HoldReason,
   type ItemSelection,
   type LineDiscount,
 } from '../payment';
@@ -34,6 +40,9 @@ import { LineDiscountDialog } from './LineDiscountDialog';
  * whatever was not ticked. The cart is derived from what is on the table on every render rather than
  * kept in state, so a waiter adding or removing something while the cashier is looking corrects the
  * screen instead of stranding it on a row that is no longer there.
+ *
+ * A row this device changed and the server does not have yet is shown but cannot be ticked: a
+ * payment naming it would be refused (see `holdReason`).
  */
 export function TablePayment({
   table,
@@ -50,36 +59,38 @@ export function TablePayment({
   }) => Promise<boolean>;
   readonly isRecording: boolean;
 }) {
-  const orderQuery = useOpenOrder(table.id);
+  const room = useRoomOrder(table.id);
   const [rawSelection, setSelection] = useState<ItemSelection>(noSelection);
   const [discounts, setDiscounts] = useState<ReadonlyMap<string, LineDiscount>>(new Map());
   const [percentText, setPercentText] = useState('');
-  const [discounting, setDiscounting] = useState<OpenOrderItem | null>(null);
+  const [discounting, setDiscounting] = useState<RoomItem | null>(null);
   const [isCheckoutOpen, setIsCheckoutOpen] = useState(false);
   const [method, setMethod] = useState<PaymentMethod>('cash');
 
-  const items = useMemo(() => payableItems(orderQuery.data ?? null), [orderQuery.data]);
-  // Rows somebody else paid or removed drop out of the ticks on their own.
+  const items = useMemo(() => payableItems(room.order), [room.order]);
+  const held = useMemo(() => heldItems(room.order), [room.order]);
+  // Rows somebody else paid or removed, and rows this device is now taking off, drop out of the
+  // ticks on their own.
   const selection = useMemo(() => pruneSelection(items, rawSelection), [items, rawSelection]);
   const percent = readDiscountPercent(percentText);
   const cart = buildPaymentCart(items, selection, discounts, percent.ok ? percent.basisPoints : 0);
-  const plan = paymentPlan(items, cart);
+  const plan = paymentPlan(items, cart, held);
   const cartTotals = totals(cart);
 
-  if (orderQuery.isPending) {
+  if (room.query.isPending) {
     return <LoadingState />;
   }
-  if (orderQuery.isLoadingError) {
+  if (room.query.isLoadingError) {
     return (
       <ErrorState
         title={`Failed to load ${table.name}`}
-        error={orderQuery.error}
-        onRetry={() => void orderQuery.refetch()}
+        error={room.query.error}
+        onRetry={() => void room.query.refetch()}
       />
     );
   }
 
-  if (items.length === 0) {
+  if (items.length === 0 && held.length === 0) {
     return (
       <Card>
         <CardHeader>
@@ -118,98 +129,108 @@ export function TablePayment({
     <Card>
       <CardHeader className="flex flex-row items-center justify-between">
         <CardTitle>{table.name}</CardTitle>
-        <Button
-          type="button"
-          variant="outline"
-          className="min-h-11"
-          onClick={() =>
-            setSelection(selection.size === items.length ? noSelection : selectAll(items))
-          }
-        >
-          {selection.size === items.length ? 'Clear' : 'Everything'}
-        </Button>
+        {items.length > 0 && (
+          <Button
+            type="button"
+            variant="outline"
+            className="min-h-11"
+            onClick={() =>
+              setSelection(selection.size === items.length ? noSelection : selectAll(items))
+            }
+          >
+            {selection.size === items.length ? 'Clear' : 'Everything'}
+          </Button>
+        )}
       </CardHeader>
       <CardContent className="space-y-4">
-        <ul className="space-y-2">
-          {items.map((item) => {
-            const chosen = selection.has(item.id);
-            const discount = discounts.get(item.id);
-            return (
-              <li key={item.id} className="flex items-center gap-2">
-                <label className="flex-1 flex items-center gap-3 p-2 rounded-lg border border-gray-200 cursor-pointer min-h-11">
-                  <input
-                    type="checkbox"
-                    className="w-5 h-5"
-                    checked={chosen}
-                    onChange={() => setSelection(toggleItem(selection, item.id))}
-                  />
-                  <span className="flex-1">
-                    <span className="block font-medium text-gray-900">
-                      {item.qty}× {item.nameSnapshot}
-                    </span>
-                    {discount && (
-                      <span className="block text-sm text-emerald-700">
-                        −{formatTND(discount.millimes)} · {discount.reason}
+        {items.length > 0 && (
+          <ul className="space-y-2">
+            {items.map((item) => {
+              const chosen = selection.has(item.id);
+              const discount = discounts.get(item.id);
+              return (
+                <li key={item.id} className="flex items-center gap-2">
+                  <label className="flex-1 flex items-center gap-3 p-2 rounded-lg border border-gray-200 cursor-pointer min-h-11">
+                    <input
+                      type="checkbox"
+                      className="w-5 h-5"
+                      checked={chosen}
+                      onChange={() => setSelection(toggleItem(selection, item.id))}
+                    />
+                    <span className="flex-1">
+                      <span className="block font-medium text-gray-900">
+                        {item.qty}× {item.nameSnapshot}
                       </span>
-                    )}
-                  </span>
-                  <span className="text-gray-700">{formatTND(itemTotal(item))}</span>
-                </label>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  className="min-h-11 min-w-11"
-                  aria-label={`Discount ${item.nameSnapshot}`}
-                  disabled={!chosen}
-                  onClick={() => setDiscounting(item)}
-                >
-                  <Tag className="h-5 w-5" />
-                </Button>
-              </li>
-            );
-          })}
-        </ul>
+                      {discount && (
+                        <span className="block text-sm text-emerald-700">
+                          −{formatTND(discount.millimes)} · {discount.reason}
+                        </span>
+                      )}
+                    </span>
+                    <span className="text-gray-700">{formatTND(itemTotal(item))}</span>
+                  </label>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    className="min-h-11 min-w-11"
+                    aria-label={`Discount ${item.nameSnapshot}`}
+                    disabled={!chosen}
+                    onClick={() => setDiscounting(item)}
+                  >
+                    <Tag className="h-5 w-5" />
+                  </Button>
+                </li>
+              );
+            })}
+          </ul>
+        )}
 
-        <div>
-          <Label htmlFor="cart-discount">Discount on this payment (%)</Label>
-          <div className="mt-2 flex items-center gap-2">
-            <Percent className="h-4 w-4 text-gray-500" />
-            <Input
-              id="cart-discount"
-              className="min-h-11"
-              inputMode="decimal"
-              autoComplete="off"
-              placeholder="0"
-              value={percentText}
-              onChange={(event) => setPercentText(event.target.value)}
-              aria-invalid={!percent.ok}
-            />
-          </div>
-          {!percent.ok && <p className="mt-1 text-sm text-red-600">{percent.problem}</p>}
-        </div>
+        {held.length > 0 && <HeldItems items={held} />}
 
-        <dl className="space-y-1 text-sm border-t border-gray-200 pt-3">
-          <Row label="Subtotal" value={formatTND(cartTotals.subtotalMillimes)} />
-          {cartTotals.discountMillimes > 0 && (
-            <Row label="Discount" value={`−${formatTND(cartTotals.discountMillimes)}`} />
-          )}
-          <Row label="To pay" value={formatTND(plan.totalMillimes)} strong />
-          {plan.remainingMillimes > 0 && (
-            <Row label="Left on the table" value={formatTND(plan.remainingMillimes)} />
-          )}
-        </dl>
+        {items.length > 0 && (
+          <>
+            <div>
+              <Label htmlFor="cart-discount">Discount on this payment (%)</Label>
+              <div className="mt-2 flex items-center gap-2">
+                <Percent className="h-4 w-4 text-gray-500" />
+                <Input
+                  id="cart-discount"
+                  className="min-h-11"
+                  inputMode="decimal"
+                  autoComplete="off"
+                  placeholder="0"
+                  value={percentText}
+                  onChange={(event) => setPercentText(event.target.value)}
+                  aria-invalid={!percent.ok}
+                />
+              </div>
+              {!percent.ok && <p className="mt-1 text-sm text-red-600">{percent.problem}</p>}
+            </div>
 
-        {plan.problem !== null && <p className="text-sm text-gray-600">{plan.problem}</p>}
+            <dl className="space-y-1 text-sm border-t border-gray-200 pt-3">
+              <Row label="Subtotal" value={formatTND(cartTotals.subtotalMillimes)} />
+              {cartTotals.discountMillimes > 0 && (
+                <Row label="Discount" value={`−${formatTND(cartTotals.discountMillimes)}`} />
+              )}
+              <Row label="To pay" value={formatTND(plan.totalMillimes)} strong />
+              {plan.remainingMillimes > 0 && (
+                <Row label="Left on the table" value={formatTND(plan.remainingMillimes)} />
+              )}
+            </dl>
 
-        <Button
-          type="button"
-          size="lg"
-          className="w-full min-h-12"
-          disabled={plan.problem !== null || !percent.ok || isRecording}
-          onClick={() => setIsCheckoutOpen(true)}
-        >
-          {plan.closesTable ? 'Pay the whole table' : `Pay ${formatTND(plan.totalMillimes)}`}
-        </Button>
+            {plan.problem !== null && <p className="text-sm text-gray-600">{plan.problem}</p>}
+
+            <Button
+              type="button"
+              size="lg"
+              className="w-full min-h-12"
+              disabled={plan.problem !== null || !percent.ok || isRecording}
+              onClick={() => setIsCheckoutOpen(true)}
+            >
+              {plan.closesTable ? 'Pay the whole table' : `Pay ${formatTND(plan.totalMillimes)}`}
+            </Button>
+          </>
+        )}
       </CardContent>
 
       <LineDiscountDialog
@@ -238,6 +259,55 @@ export function TablePayment({
         isConfirming={isRecording}
       />
     </Card>
+  );
+}
+
+const HOLD_TEXT: Record<HoldReason, string> = {
+  'not-on-server': 'Not synced',
+  paying: 'Being paid',
+  'coming-off': 'Coming off',
+  cancelling: 'Cancelling',
+};
+
+/**
+ * Rows on the table this counter cannot take money for yet. No checkbox: the only way to pay one
+ * is to wait until the server has it, which the flag says it has not.
+ */
+function HeldItems({ items }: { readonly items: readonly RoomItem[] }) {
+  const titleId = useId();
+  return (
+    <section aria-labelledby={titleId} className="space-y-2">
+      <div>
+        <h4 id={titleId} className="text-sm font-semibold text-gray-900">
+          Not payable yet
+        </h4>
+        <p className="text-sm text-gray-600">Changed on this device, not on the server yet.</p>
+      </div>
+      <ul className="space-y-2">
+        {items.map((item) => {
+          const reason = holdReason(item);
+          const sync = itemSync(item);
+          return (
+            <li
+              key={item.id}
+              className="flex items-center gap-3 p-2 rounded-lg border border-dashed border-gray-300 min-h-11 text-gray-600"
+            >
+              <span className="flex-1">
+                <span className="block font-medium">
+                  {item.qty}× {item.nameSnapshot}
+                </span>
+                {reason !== null && (
+                  <LocalBadge sync={sync ?? 'pending'}>
+                    {sync === 'conflict' ? NEEDS_ATTENTION : HOLD_TEXT[reason]}
+                  </LocalBadge>
+                )}
+              </span>
+              <span>{item.priceKnown ? formatTND(itemTotal(item)) : 'Price to come'}</span>
+            </li>
+          );
+        })}
+      </ul>
+    </section>
   );
 }
 

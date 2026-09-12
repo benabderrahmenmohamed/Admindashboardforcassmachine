@@ -1,7 +1,7 @@
 import { IDBFactory as FakeIdbFactory } from 'fake-indexeddb';
 import { describe, expect, it } from 'vitest';
 import { AppError } from '@/lib/errors';
-import { meta, storedSale, uuid } from './__tests__/fixtures';
+import { meta, registration as registrationOf, storedSale, uuid } from './__tests__/fixtures';
 import { describeOutboxStorage } from './__tests__/storageSuite';
 import {
   createIdbOutboxStorage,
@@ -14,7 +14,7 @@ import {
 // outlive the page, and one database seen through several connections. Each test gets its own
 // IDBFactory, so no test can see another one's database.
 
-const registration = meta();
+const registration = registrationOf();
 
 describeOutboxStorage('the IndexedDB outbox storage', async () => {
   const db = await openOutboxDatabase(new FakeIdbFactory());
@@ -30,11 +30,11 @@ describeOutboxStorage('the IndexedDB outbox storage', async () => {
 /** The first record, and the counters it leaves behind. */
 async function appendFirst(storage: ReturnType<typeof createIdbOutboxStorage>) {
   const record = await storedSale(registration, 1, 1);
-  await storage.writeMeta(registration);
+  await storage.writeMeta(meta());
   await storage.appendIfUnchanged(
-    { lastSeq: 0, nextOrdinal: 1 },
+    meta(),
     record,
-    meta({ lastSeq: 1, nextOrdinal: 2 }),
+    meta({ nextOrdinal: 2, terminal: { ...registration, lastSeq: 1 } }),
   );
   return record;
 }
@@ -72,8 +72,41 @@ describe('openOutboxDatabase', () => {
     const storage = createIdbOutboxStorage(reopened);
 
     await expect(storage.list()).resolves.toEqual([record]);
-    await expect(storage.readMeta()).resolves.toMatchObject({ lastSeq: 1, nextOrdinal: 2 });
+    await expect(storage.readMeta()).resolves.toEqual(
+      meta({ nextOrdinal: 2, terminal: { ...registration, lastSeq: 1 } }),
+    );
     reopened.close();
+  });
+
+  // A device that updates keeps the row it wrote before the café model: the registration, flat,
+  // with the ordinal counter beside it. It has to read back as the same register with the same
+  // counters, or the next sale would take a receipt number already spent.
+  it('reads the registration row a build before the café model wrote, counters and all', async () => {
+    const factory = new FakeIdbFactory();
+    const db = await openOutboxDatabase(factory);
+    const legacy = { key: 'terminal', ...registration, lastSeq: 41, nextOrdinal: 57 };
+    await new Promise<void>((resolve, reject) => {
+      const tx = db.transaction('meta', 'readwrite');
+      tx.objectStore('meta').put(legacy);
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(new AppError('UNKNOWN', 'Could not write the legacy row'));
+    });
+
+    const storage = createIdbOutboxStorage(db);
+
+    await expect(storage.readMeta()).resolves.toEqual(
+      meta({ nextOrdinal: 57, terminal: { ...registration, lastSeq: 41 } }),
+    );
+    // And the next append is measured against that reading, so it goes through.
+    const next = await storedSale({ ...registration, lastSeq: 41 }, 57, 42);
+    await expect(
+      storage.appendIfUnchanged(
+        meta({ nextOrdinal: 57, terminal: { ...registration, lastSeq: 41 } }),
+        next,
+        meta({ nextOrdinal: 58, terminal: { ...registration, lastSeq: 42 } }),
+      ),
+    ).resolves.toBe(true);
+    db.close();
   });
 
   it('shows one connection what another connection wrote, as a second tab sees it', async () => {
@@ -94,18 +127,18 @@ describe('openOutboxDatabase', () => {
     const db = await openOutboxDatabase(new FakeIdbFactory());
     const storage = createIdbOutboxStorage(db);
     const record = await appendFirst(storage);
-    await storage.writeMeta(registration);
+    await storage.writeMeta(meta());
 
     await expect(
       storage.appendIfUnchanged(
-        { lastSeq: 0, nextOrdinal: 1 },
+        meta(),
         { ...record, id: uuid(4_242) },
-        meta({ lastSeq: 1, nextOrdinal: 2 }),
+        meta({ nextOrdinal: 2, terminal: { ...registration, lastSeq: 1 } }),
       ),
     ).rejects.toBeInstanceOf(AppError);
 
     await expect(storage.list()).resolves.toEqual([record]);
-    await expect(storage.readMeta()).resolves.toEqual(registration);
+    await expect(storage.readMeta()).resolves.toEqual(meta());
     db.close();
   });
 });

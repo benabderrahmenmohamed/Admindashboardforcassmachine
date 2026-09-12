@@ -1,6 +1,11 @@
 /**
  * What a waiter, a cook or a cashier is told when an order event does not land.
  *
+ * An order event is a record written into this device's queue, so a tap now fails only on the
+ * device — no https, a record that does not validate, a queue that could not be written. The
+ * server's refusals reach a person later, as a conflict on the sync chip. The wording still answers
+ * every code, so whichever of them an order write ever meets, it has something to say.
+ *
  * Decided from the error's code and nothing else — never from the message text — so the same answer
  * reads the same whichever backend gave it. The wording says what happened to the table rather than
  * what happened to the request, because that is what the person in front of the guest needs.
@@ -52,10 +57,4 @@ export function orderErrorMessage(error: unknown, action: OrderAction): string {
     case 'UNKNOWN':
       return `Could not ${WHAT[action]}: ${message}`;
   }
-}
-
-/** Whether the screen should re-read the table before the person tries again. */
-export function shouldRefreshTable(error: unknown): boolean {
-  const { code } = toAppError(error);
-  return code === 'ORDER_CHANGED' || code === 'ORDER_CLOSED' || code === 'ITEM_NOT_FOUND';
 }

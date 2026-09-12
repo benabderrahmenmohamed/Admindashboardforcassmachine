@@ -10,8 +10,7 @@ import {
 } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { itemStage } from '@/features/orders/tableOrder';
-import type { OpenOrderItem } from '@/ports';
+import type { RoomItem } from '@/features/orders/overlay';
 
 /**
  * Taking something off a table always says why. The row is kept either way — the reason is what the
@@ -25,7 +24,7 @@ export function RemoveItemDialog({
   isRemoving,
 }: {
   /** The row being taken off, or null when the dialog is closed. */
-  readonly item: OpenOrderItem | null;
+  readonly item: RoomItem | null;
   readonly onOpenChange: (open: boolean) => void;
   readonly onConfirm: (reason: string) => void;
   readonly isRemoving: boolean;
@@ -54,14 +53,16 @@ function RemoveForm({
   onConfirm,
   isRemoving,
 }: {
-  readonly item: OpenOrderItem;
+  readonly item: RoomItem;
   readonly onCancel: () => void;
   readonly onConfirm: (reason: string) => void;
   readonly isRemoving: boolean;
 }) {
   const [reason, setReason] = useState('');
   const trimmed = reason.trim();
-  const wasSent = itemStage(item) !== 'unsent';
+  // A send already on this phone goes out before this removal does, so the kitchen will have the
+  // row by then and be told to void it.
+  const wasSent = item.sentAt !== null || item.local.sending !== null;
 
   return (
     <>

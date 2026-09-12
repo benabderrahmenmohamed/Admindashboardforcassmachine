@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
+import { saleRecord } from '@/features/pos/__fixtures__/records';
 import { queryKeys } from '@/lib/query';
 import { realtimeTopicSchema, type RealtimeTopic } from '@/ports';
-import { affectedQueryKeys } from './realtimeKeys';
+import { addRecord, ms, sendRecord } from './__fixtures__/room';
+import { affectedQueryKeys, ROOM_QUERY_KEYS, roomChangedSince } from './realtimeKeys';
 
 const TOPICS: readonly RealtimeTopic[] = realtimeTopicSchema.options;
 
@@ -30,5 +32,33 @@ describe('affectedQueryKeys', () => {
       ...queryKeys.tables,
     ]);
     expect(queryKeys.board.slice(0, queryKeys.tables.length)).toEqual([...queryKeys.tables]);
+  });
+});
+
+describe('roomChangedSince', () => {
+  it('re-reads the grid, the tables and the kitchen', () => {
+    expect(ROOM_QUERY_KEYS).toEqual([queryKeys.tables, queryKeys.kitchen]);
+  });
+
+  it('is true once an order record reached the server after the last pass', () => {
+    const records = [
+      addRecord({ id: 'a' }, { ordinal: 1, status: 'acked', ackedAt: ms(5) }),
+      sendRecord('s', { ordinal: 2, status: 'acked', ackedAt: ms(8) }),
+    ];
+
+    expect(roomChangedSince(records, null)).toBe(true);
+    expect(roomChangedSince(records, ms(7))).toBe(true);
+    expect(roomChangedSince(records, ms(8))).toBe(false);
+  });
+
+  it('is false for an order record the server has not taken, and for a sale', () => {
+    const records = [
+      addRecord({ id: 'a' }, { ordinal: 1, status: 'pending' }),
+      addRecord({ id: 'b' }, { ordinal: 2, status: 'conflict' }),
+      addRecord({ id: 'c' }, { ordinal: 3, status: 'discarded' }),
+      saleRecord({ seq: 1, ordinal: 4, status: 'acked' }),
+    ];
+
+    expect(roomChangedSince(records, null)).toBe(false);
   });
 });

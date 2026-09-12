@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { closeRecord, meta, openRecord, saleRecord } from '@/features/pos/__fixtures__/records';
+import { storedOrder } from '@/features/sync/__tests__/fixtures';
 import { AppError } from '@/lib/errors';
 import {
   describeQueued,
@@ -57,6 +58,26 @@ describe('describeQueued', () => {
   ])('names $name', ({ record, text }) => {
     expect(describeQueued(record)).toBe(text);
   });
+
+  it.each([
+    { kind: 'order_item_add', text: '2 items put on a table' },
+    { kind: 'order_item_remove', text: 'an item taken off a table' },
+    { kind: 'order_send', text: 'a table sent to the kitchen' },
+    { kind: 'order_item_prepare', text: 'an item marked prepared' },
+    { kind: 'order_cancel', text: 'an order cancelled on a table' },
+  ] as const)('names $kind as it reads after "starting with"', async ({ kind, text }) => {
+    expect(describeQueued(await storedOrder(kind, 1))).toBe(text);
+  });
+
+  it('counts a single item as one', async () => {
+    const add = await storedOrder('order_item_add', 1);
+    if (add.kind !== 'order_item_add') {
+      throw new AppError('VALIDATION_ERROR', `Expected an add, got ${add.kind}`);
+    }
+    expect(describeQueued({ ...add, payload: { ...add.payload, qty: 1 } })).toBe(
+      'an item put on a table',
+    );
+  });
 });
 
 describe('registerBlockedReason', () => {
@@ -73,6 +94,22 @@ describe('registerBlockedReason', () => {
       'This device has an unsent record, starting with sale T1-43. Registering now would strand ' +
         'it under the old registration: let the queue empty on the POS on this device first.',
     );
+  });
+
+  it('lets a device whose only unsent records are table orders register', async () => {
+    expect(registerBlockedReason([await storedOrder('order_send', 1)])).toBeNull();
+    expect(
+      registerBlockedReason([await storedOrder('order_item_add', 1, { status: 'conflict' })]),
+    ).toBeNull();
+  });
+
+  it('names the first record a registration would strand, not a table order in front of it', async () => {
+    const reason = registerBlockedReason([
+      await storedOrder('order_item_add', 1),
+      saleRecord({ seq: 43, ordinal: 2 }),
+    ]);
+
+    expect(reason).toContain('an unsent record, starting with sale T1-43');
   });
 
   it('counts what is waiting and points at the queue when it is stopped', () => {

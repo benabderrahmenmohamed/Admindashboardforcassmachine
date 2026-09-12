@@ -5,7 +5,7 @@
  */
 import type { ZReportDocument } from '@/features/sessions/zReport';
 import type { Outbox } from '@/features/sync/outbox';
-import type { OutboxMeta, OutboxRecord, OutboxStorage } from '@/features/sync/types';
+import type { TerminalMeta, OutboxRecord, OutboxStorage } from '@/features/sync/types';
 import type { CashSession } from '@/ports';
 
 /**
@@ -29,9 +29,10 @@ export type SessionCloseRecord = Extract<OutboxRecord, { readonly kind: 'session
  * - `pending`: written here, waiting its turn or its next attempt;
  * - `conflict`: the server refused it and the queue stops at it until a person acts;
  * - `voided`: an admin gave up on it, and its receipt number is spent;
+ * - `discarded`: a person gave up on an order record, saying why; it stays in the dead-letter list;
  * - `synced`: the server holds it.
  */
-export type SyncStatus = 'synced' | 'pending' | 'conflict' | 'voided';
+export type SyncStatus = 'synced' | 'pending' | 'conflict' | 'voided' | 'discarded';
 
 export function syncStatus(record: OutboxRecord): SyncStatus {
   switch (record.status) {
@@ -44,6 +45,8 @@ export function syncStatus(record: OutboxRecord): SyncStatus {
       return 'conflict';
     case 'voided':
       return 'voided';
+    case 'discarded':
+      return 'discarded';
   }
 }
 
@@ -111,7 +114,7 @@ export function waitingBehind(
  * A voided record is one an admin gave up on, so the session it opens or closes never happened here.
  */
 export function localSession(
-  meta: OutboxMeta,
+  meta: TerminalMeta,
   records: readonly OutboxRecord[],
 ): CashSession | null {
   let open: SessionOpenRecord | null = null;

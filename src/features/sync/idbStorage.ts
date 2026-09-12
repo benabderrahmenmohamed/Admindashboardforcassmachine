@@ -1,13 +1,19 @@
 import { AppError } from '@/lib/errors';
+import {
+  isUnfinished,
+  metaUnchanged,
+  readStoredMeta,
+  readStoredRecord,
+  type StoredOutboxRecord,
+} from './meta';
 import type { OutboxMeta, OutboxRecord, OutboxStorage } from './types';
 
 export const OUTBOX_DB_NAME = 'pos-outbox';
 const DB_VERSION = 1;
 const RECORDS = 'records';
 const META = 'meta';
+/** The key the row has always had; the row itself now holds the device's queue, not just a till. */
 const META_KEY = 'terminal';
-
-type StoredMeta = OutboxMeta & { readonly key: typeof META_KEY };
 
 /**
  * The parts of an IndexedDB request this module uses. `IDBRequest<T>` is invariant in `T` (its
@@ -34,15 +40,6 @@ function completion(tx: IDBTransaction): Promise<void> {
     tx.onerror = () => reject(tx.error ?? new Error('IndexedDB transaction failed'));
     tx.onabort = () => reject(tx.error ?? new Error('IndexedDB transaction aborted'));
   });
-}
-
-function withoutKey({ key, ...meta }: StoredMeta): OutboxMeta {
-  void key;
-  return meta;
-}
-
-function isUnfinished(record: OutboxRecord): boolean {
-  return record.status === 'pending' || record.status === 'sending' || record.status === 'conflict';
 }
 
 export function openOutboxDatabase(
@@ -104,6 +101,10 @@ export function deleteOutboxDatabase(
   });
 }
 
+function storedMeta(meta: OutboxMeta): OutboxMeta & { readonly key: typeof META_KEY } {
+  return { ...meta, key: META_KEY };
+}
+
 /**
  * Outbox storage on IndexedDB. Allocation and the record write happen in one readwrite transaction
  * over both stores, so a crash leaves either both or neither.
@@ -122,17 +123,16 @@ export function createIdbOutboxStorage(db: IDBDatabase): OutboxStorage {
 
   return {
     readMeta: () =>
-      guard('reading the terminal registration', async () => {
+      guard('reading the queue of this device', async () => {
         const tx = db.transaction(META, 'readonly');
-        const row = await request<StoredMeta | undefined>(tx.objectStore(META).get(META_KEY));
-        return row ? withoutKey(row) : null;
+        return readStoredMeta(await request<unknown>(tx.objectStore(META).get(META_KEY)));
       }),
 
     writeMeta: (meta) =>
-      guard('saving the terminal registration', async () => {
+      guard('saving the queue of this device', async () => {
         const tx = db.transaction(META, 'readwrite');
         const done = completion(tx);
-        tx.objectStore(META).put({ ...meta, key: META_KEY });
+        tx.objectStore(META).put(storedMeta(meta));
         await done;
       }),
 
@@ -140,19 +140,15 @@ export function createIdbOutboxStorage(db: IDBDatabase): OutboxStorage {
       guard('saving a record', async () => {
         const tx = db.transaction([META, RECORDS], 'readwrite');
         const done = completion(tx);
-        const current = await request<StoredMeta | undefined>(tx.objectStore(META).get(META_KEY));
-        if (
-          !current ||
-          current.lastSeq !== expected.lastSeq ||
-          current.nextOrdinal !== expected.nextOrdinal
-        ) {
+        const current = readStoredMeta(await request<unknown>(tx.objectStore(META).get(META_KEY)));
+        if (!metaUnchanged(current, expected)) {
           tx.abort();
           // Our own abort: the promise rejects with an AbortError that carries no information.
           await done.catch(() => undefined);
           return false;
         }
         tx.objectStore(RECORDS).add(record);
-        tx.objectStore(META).put({ ...next, key: META_KEY });
+        tx.objectStore(META).put(storedMeta(next));
         await done;
         return true;
       }),
@@ -160,13 +156,17 @@ export function createIdbOutboxStorage(db: IDBDatabase): OutboxStorage {
     get: (id) =>
       guard('reading a record', async () => {
         const tx = db.transaction(RECORDS, 'readonly');
-        return await request<OutboxRecord | undefined>(tx.objectStore(RECORDS).get(id));
+        const row = await request<StoredOutboxRecord | undefined>(tx.objectStore(RECORDS).get(id));
+        return row ? readStoredRecord(row) : undefined;
       }),
 
     list: () =>
       guard('reading the queue', async () => {
         const tx = db.transaction(RECORDS, 'readonly');
-        return await request<OutboxRecord[]>(tx.objectStore(RECORDS).index('ordinal').getAll());
+        const rows = await request<StoredOutboxRecord[]>(
+          tx.objectStore(RECORDS).index('ordinal').getAll(),
+        );
+        return rows.map(readStoredRecord);
       }),
 
     firstUnfinished: () =>
@@ -180,7 +180,7 @@ export function createIdbOutboxStorage(db: IDBDatabase): OutboxStorage {
               resolve(undefined);
               return;
             }
-            const value = cursor.value as OutboxRecord;
+            const value = readStoredRecord(cursor.value as StoredOutboxRecord);
             if (isUnfinished(value)) {
               resolve(value);
               return;
@@ -197,7 +197,8 @@ export function createIdbOutboxStorage(db: IDBDatabase): OutboxStorage {
         const tx = db.transaction(RECORDS, 'readwrite');
         const done = completion(tx);
         const store = tx.objectStore(RECORDS);
-        const current = await request<OutboxRecord | undefined>(store.get(id));
+        const row = await request<StoredOutboxRecord | undefined>(store.get(id));
+        const current = row ? readStoredRecord(row) : undefined;
         if (!current) {
           tx.abort();
           // Our own abort, reported as NOT_FOUND below.
@@ -215,7 +216,9 @@ export function createIdbOutboxStorage(db: IDBDatabase): OutboxStorage {
         const tx = db.transaction(RECORDS, 'readwrite');
         const done = completion(tx);
         const store = tx.objectStore(RECORDS);
-        const sending = await request<OutboxRecord[]>(store.index('status').getAll('sending'));
+        const sending = (
+          await request<StoredOutboxRecord[]>(store.index('status').getAll('sending'))
+        ).map(readStoredRecord);
         for (const record of sending) {
           store.put({ ...record, status: 'pending' });
         }

@@ -1,4 +1,5 @@
 import {
+  Archive,
   CheckCircle2,
   CloudOff,
   PauseCircle,
@@ -33,24 +34,34 @@ const TONE_ICONS: Record<SyncTone, LucideIcon> = {
 };
 
 /**
- * Whether what this register has sold has reached the server, in both layouts. It leads to the
- * Conflicts screen, which is where anything it cannot settle on its own is dealt with.
+ * Whether what this device wrote has reached the server, on every face. It leads to the face's
+ * Conflicts screen, which is where anything the queue cannot settle on its own is dealt with. It is
+ * 44 px tall because on the waiter's phone and the kitchen screen it is a touch target like any other.
  */
 export function SyncChip({ conflictsPath }: { readonly conflictsPath: string }) {
   const { summary, state } = useOutboxSnapshot();
   const view = syncChipView(summary, state, useNow(TICK_MS));
   const Icon = TONE_ICONS[view.tone];
+  const discarded = view.discarded === null ? '' : `, ${view.discarded.label}`;
 
   return (
     <Link
       to={conflictsPath}
       title={view.detail}
-      aria-label={`Sync: ${view.label}, ${view.lastAck}. ${view.detail}`}
-      className={`inline-flex items-center gap-2 rounded-lg border px-3 py-2 transition-colors ${TONE_STYLES[view.tone]}`}
+      aria-label={`Sync: ${view.label}, ${view.lastAck}${discarded}. ${view.detail}`}
+      className={`inline-flex min-h-11 items-center gap-2 rounded-lg border px-3 py-2 transition-colors ${TONE_STYLES[view.tone]}`}
     >
       <Icon className={`w-4 h-4 shrink-0 ${view.tone === 'working' ? 'animate-spin' : ''}`} />
       <span className="text-sm font-semibold">{view.label}</span>
       <span className="hidden sm:inline text-xs opacity-80">{view.lastAck}</span>
+      {view.discarded && (
+        // Grey whatever the tone, so a dead-letter list never reads louder than a live conflict.
+        <span className="inline-flex items-center gap-1 rounded-full border border-gray-300 bg-white px-1.5 text-xs font-medium text-gray-600">
+          <Archive className="h-3 w-3" aria-hidden="true" />
+          {view.discarded.count}
+          <span className="hidden sm:inline">discarded</span>
+        </span>
+      )}
     </Link>
   );
 }

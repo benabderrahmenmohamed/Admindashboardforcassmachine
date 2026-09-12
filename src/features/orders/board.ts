@@ -6,16 +6,36 @@
  * tile a waiter taps says "3 to send" or "12,500 DT due", and that reading is the same on the phone
  * and at the counter. No React here, and the clock comes in as an argument.
  */
-import { add, formatTND, type Millimes } from '@/lib/money';
+import { add, formatTND, ZERO, type Millimes } from '@/lib/money';
 import type { TableBoardEntry } from '@/ports';
+import { NO_CHANGES, type LocalChanges, type LocalSync, type RoomOrder } from './overlay';
+import { orderTotals } from './tableOrder';
 
 /**
- * - `free`: nobody is sitting there — no open order.
+ * - `free`: nothing is on the table — no open order, or everything on it was taken off.
  * - `unsent`: something has been ordered that the kitchen has not been told about yet.
  * - `owing`: everything is with the kitchen and money is still due.
  * - `settled`: an open order with nothing left to send and nothing left to pay.
  */
 export type TableState = 'free' | 'unsent' | 'owing' | 'settled';
+
+/** What this device has changed on a table that the grid's read does not show yet. */
+export interface BoardLocal {
+  readonly changes: LocalChanges;
+  readonly cancelling: LocalSync | null;
+  /** Rows owed whose price the menu on this device does not know, so `dueMillimes` leaves out. */
+  readonly unpricedCount: number;
+}
+
+export const NO_BOARD_LOCAL: BoardLocal = {
+  changes: NO_CHANGES,
+  cancelling: null,
+  unpricedCount: 0,
+};
+
+export interface RoomBoardEntry extends TableBoardEntry {
+  readonly local: BoardLocal;
+}
 
 export interface TableTile {
   readonly tableId: string;
@@ -28,10 +48,13 @@ export interface TableTile {
   readonly openedAt: string | null;
   /** The line under the table's name, already worded. */
   readonly statusText: string;
+  readonly local: BoardLocal;
 }
 
 export function tableState(entry: TableBoardEntry): TableState {
-  if (entry.orderId === null || entry.activeCount === 0) {
+  // Counted rather than read off `orderId`: a table this device put the first item on has rows and
+  // no server order yet, and is not free.
+  if (entry.activeCount === 0) {
     return 'free';
   }
   if (entry.unsentCount > 0) {
@@ -45,16 +68,18 @@ function items(count: number): string {
 }
 
 /** One tile. `unsent` leads with what the kitchen is waiting for, because that is the waiter's job. */
-export function tableTile(entry: TableBoardEntry): TableTile {
+export function tableTile(entry: TableBoardEntry, local: BoardLocal = NO_BOARD_LOCAL): TableTile {
   const state = tableState(entry);
   const due = formatTND(entry.dueMillimes);
+  // A price this device does not know is not guessed, and not silently left out either.
+  const unpriced = local.unpricedCount > 0 ? ` + ${local.unpricedCount} unpriced` : '';
   const statusText =
     state === 'free'
       ? 'Free'
       : state === 'unsent'
-        ? `${items(entry.unsentCount)} to send · ${due}`
+        ? `${items(entry.unsentCount)} to send · ${due}${unpriced}`
         : state === 'owing'
-          ? `${due} due`
+          ? `${due} due${unpriced}`
           : 'Paid';
   return {
     tableId: entry.table.id,
@@ -65,6 +90,7 @@ export function tableTile(entry: TableBoardEntry): TableTile {
     activeCount: entry.activeCount,
     openedAt: entry.openedAt,
     statusText,
+    local,
   };
 }
 
@@ -72,7 +98,7 @@ export function tableTile(entry: TableBoardEntry): TableTile {
  * The grid in the order the admin put the tables in, inactive ones left out: a table taken out of
  * service must not be tapped, and the board a backend sends may carry one until it catches up.
  */
-export function tableTiles(entries: readonly TableBoardEntry[]): TableTile[] {
+export function tableTiles(entries: readonly RoomBoardEntry[]): TableTile[] {
   return entries
     .filter((entry) => entry.table.isActive)
     .slice()
@@ -81,7 +107,71 @@ export function tableTiles(entries: readonly TableBoardEntry[]): TableTile[] {
         ? a.table.name.localeCompare(b.table.name)
         : a.table.sortOrder - b.table.sortOrder,
     )
-    .map(tableTile);
+    .map((entry) => tableTile(entry, entry.local));
+}
+
+/** A tile's counts and flags as its table draws them, for a table this device has changed. */
+function entryOf(entry: TableBoardEntry, order: RoomOrder | null): RoomBoardEntry {
+  if (order === null) {
+    return {
+      table: entry.table,
+      orderId: null,
+      openedAt: null,
+      dueMillimes: ZERO,
+      activeCount: 0,
+      unsentCount: 0,
+      unpaidCount: 0,
+      local: NO_BOARD_LOCAL,
+    };
+  }
+  const totals = orderTotals(order.items);
+  return {
+    table: entry.table,
+    orderId: order.orderId,
+    openedAt: order.openedAt,
+    dueMillimes: totals.dueMillimes,
+    activeCount: totals.activeCount,
+    // What is left for a waiter to send: the tile's "to send" is a call to action, and a send this
+    // device already made has answered it.
+    unsentCount: totals.toSendCount,
+    unpaidCount: totals.unpaidCount,
+    local: {
+      changes: order.changes,
+      cancelling: order.cancelling?.sync ?? null,
+      unpricedCount: totals.unpricedCount,
+    },
+  };
+}
+
+/**
+ * The grid with this device's changes drawn over it.
+ *
+ * The grid's read carries counts, not rows, so it cannot tell whether it already holds an item this
+ * device added: an ack and the read that follows it can land in either order. A table this device
+ * has changed is therefore drawn from its own order, overlaid (`orders`), whose rows are matched by
+ * id. A changed table whose order has not been read yet keeps the grid's counts and says it has
+ * changes waiting; every other table is exactly as the grid read it.
+ *
+ * `changed` comes from `changedTables` over the grid's read, and `orders` from `overlayOrder` over
+ * each changed table's own read.
+ */
+export function overlayBoard(
+  entries: readonly TableBoardEntry[],
+  changed: ReadonlyMap<string, LocalChanges>,
+  orders: ReadonlyMap<string, RoomOrder | null>,
+): RoomBoardEntry[] {
+  return entries.map((entry) => {
+    const tableId = entry.table.id;
+    const changes = changed.get(tableId);
+    if (changes === undefined) {
+      return { ...entry, local: NO_BOARD_LOCAL };
+    }
+    const order = orders.get(tableId);
+    if (order === undefined) {
+      return { ...entry, local: { ...NO_BOARD_LOCAL, changes } };
+    }
+    return entryOf(entry, order);
+  });
 }
 
 export interface BoardSummary {

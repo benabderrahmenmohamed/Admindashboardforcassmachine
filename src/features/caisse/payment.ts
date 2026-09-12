@@ -17,16 +17,53 @@ import {
   type Cart,
   type CartLine,
 } from '@/features/caisse/cart';
+import type { RoomItem, RoomOrder } from '@/features/orders/overlay';
 import { itemStage, itemTotal } from '@/features/orders/tableOrder';
 import { add, ZERO, type Millimes } from '@/lib/money';
-import type { OpenOrder, OpenOrderItem } from '@/ports';
 
-/** The rows a sale may take: on the table, not taken off, not already paid. */
-export function payableItems(order: OpenOrder | null): OpenOrderItem[] {
-  return (order?.items ?? []).filter((item) => {
-    const stage = itemStage(item);
-    return stage === 'unsent' || stage === 'sent' || stage === 'prepared';
-  });
+/** Rows on the table that a sale does not take: not taken off, not already paid. */
+function isOwed(item: RoomItem): boolean {
+  const stage = itemStage(item);
+  return stage === 'unsent' || stage === 'sent' || stage === 'prepared';
+}
+
+/**
+ * Why an owed row cannot be paid on this device yet:
+ * - `not-on-server`: the row is this device's own add, which the server does not have — or has, but
+ *   this device has not read back the name, price and quantity the server snapshotted. A sale line
+ *   must match those exactly.
+ * - `coming-off`: a removal written on this device goes out before any payment written after it,
+ *   so the server would take the row off first.
+ * - `cancelling`: the same, for a cancel of the whole table.
+ * - `paying`: a sale written on this device already pays the row. Its money is in this till; a
+ *   second sale for it is the same guest paying twice, and can only come back refused.
+ *
+ * A sale naming any of them would come back ORDER_CHANGED and stop this register's queue behind a
+ * receipt number that can never be recorded. A send or a prepare changes nothing a sale checks.
+ */
+export type HoldReason = 'not-on-server' | 'paying' | 'coming-off' | 'cancelling';
+
+export function holdReason(item: RoomItem): HoldReason | null {
+  if (!item.fromServer) {
+    return 'not-on-server';
+  }
+  if (item.local.paying !== null) {
+    return 'paying';
+  }
+  if (item.local.removing !== null) {
+    return item.local.removing.cause === 'cancel' ? 'cancelling' : 'coming-off';
+  }
+  return null;
+}
+
+/** The rows a sale may take: owed, as the server last read them, and not being taken off here. */
+export function payableItems(order: RoomOrder | null): RoomItem[] {
+  return (order?.items ?? []).filter((item) => isOwed(item) && holdReason(item) === null);
+}
+
+/** Owed rows the counter shows but cannot take payment for yet; see `holdReason`. */
+export function heldItems(order: RoomOrder | null): RoomItem[] {
+  return (order?.items ?? []).filter((item) => isOwed(item) && holdReason(item) !== null);
 }
 
 /** The chosen rows, by order-item id. */
@@ -42,7 +79,7 @@ export function toggleItem(selection: ItemSelection, itemId: string): ItemSelect
   return next;
 }
 
-export function selectAll(items: readonly OpenOrderItem[]): ItemSelection {
+export function selectAll(items: readonly Pick<RoomItem, 'id'>[]): ItemSelection {
   return new Set(items.map((item) => item.id));
 }
 
@@ -51,23 +88,23 @@ export function selectAll(items: readonly OpenOrderItem[]): ItemSelection {
  * else paid or removed them while the counter was looking — drop out on their own, which is what
  * keeps a stale tick from ever reaching `record_sale` and coming back as ORDER_CHANGED.
  */
-export function selectedItems(
-  items: readonly OpenOrderItem[],
+export function selectedItems<Item extends Pick<RoomItem, 'id'>>(
+  items: readonly Item[],
   selection: ItemSelection,
-): OpenOrderItem[] {
+): Item[] {
   return items.filter((item) => selection.has(item.id));
 }
 
 /** A selection with everything the table no longer offers dropped, for a screen that just refreshed. */
 export function pruneSelection(
-  items: readonly OpenOrderItem[],
+  items: readonly Pick<RoomItem, 'id'>[],
   selection: ItemSelection,
 ): ItemSelection {
   return new Set(items.filter((item) => selection.has(item.id)).map((item) => item.id));
 }
 
 /** One cart line per chosen row, at the price snapshotted when it was ordered. */
-export function cartLine(item: OpenOrderItem): CartLine {
+export function cartLine(item: RoomItem): CartLine {
   return {
     productId: item.productId,
     name: item.nameSnapshot,
@@ -79,7 +116,7 @@ export function cartLine(item: OpenOrderItem): CartLine {
 }
 
 /** The cart for what has been ticked, with no discount on it yet. */
-export function cartForSelection(items: readonly OpenOrderItem[], selection: ItemSelection): Cart {
+export function cartForSelection(items: readonly RoomItem[], selection: ItemSelection): Cart {
   return cartOf(selectedItems(items, selection).map(cartLine));
 }
 
@@ -127,7 +164,7 @@ export interface LineDiscount {
  * a stale click can never take the payment screen down.
  */
 export function buildPaymentCart(
-  items: readonly OpenOrderItem[],
+  items: readonly RoomItem[],
   selection: ItemSelection,
   discounts: ReadonlyMap<string, LineDiscount>,
   cartDiscountBasisPoints: number,
@@ -153,7 +190,10 @@ export interface PaymentPlan {
   /** The rows this payment closes; the order stays open for the rest. */
   readonly itemIds: readonly string[];
   readonly totalMillimes: Millimes;
-  /** What the table would still owe afterwards. */
+  /**
+   * What the table would still owe afterwards: the payable rows left unticked, and the rows this
+   * device added that the server does not have yet, at the prices known.
+   */
   readonly remainingMillimes: Millimes;
   /** True when nothing unpaid is left, so the server closes the order. */
   readonly closesTable: boolean;
@@ -164,20 +204,30 @@ export interface PaymentPlan {
 /**
  * Everything the payment screen needs to decide from: what is being paid, what is left, and whether
  * the button may be pressed. `cart` is passed in rather than rebuilt so a discount the cashier has
- * already applied is part of the answer.
+ * already applied is part of the answer. `held` are the rows the counter shows but cannot charge
+ * (`heldItems`): a row this device added stays on the table after this payment, so the table does
+ * not close; a row being taken off does not stay.
  */
-export function paymentPlan(items: readonly OpenOrderItem[], cart: Cart): PaymentPlan {
+export function paymentPlan(
+  items: readonly RoomItem[],
+  cart: Cart,
+  held: readonly RoomItem[] = [],
+): PaymentPlan {
   const chosen = new Set(
     cart.lines.flatMap((line) => (line.orderItemId ? [line.orderItemId] : [])),
   );
   const rest = items.filter((item) => !chosen.has(item.id));
+  const staying = held.filter((item) => holdReason(item) === 'not-on-server');
   const cartTotals = totals(cart);
   return {
     cart,
     itemIds: [...chosen],
     totalMillimes: cartTotals.totalMillimes,
-    remainingMillimes: add(...rest.map(itemTotal)),
-    closesTable: rest.length === 0 && chosen.size > 0,
+    remainingMillimes: add(
+      ...rest.map(itemTotal),
+      ...staying.filter((item) => item.priceKnown).map(itemTotal),
+    ),
+    closesTable: rest.length === 0 && staying.length === 0 && chosen.size > 0,
     problem: chosen.size === 0 ? 'Choose what is being paid for' : null,
   };
 }

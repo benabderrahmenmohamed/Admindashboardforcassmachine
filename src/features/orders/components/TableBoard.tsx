@@ -2,8 +2,10 @@ import { LayoutGrid } from 'lucide-react';
 import { ErrorState, LoadingState } from '@/components/feedback';
 import { formatTND } from '@/lib/money';
 import { boardSummary, tableTiles, type TableState, type TableTile } from '../board';
-import { useBoard } from '../hooks/useOrders';
+import { useRoomBoard } from '../hooks/useOrders';
 import { useRealtimeRefresh } from '../hooks/useRealtime';
+import { NEEDS_ATTENTION } from '../localFlags';
+import { LocalBadge } from './LocalBadge';
 
 /**
  * The room, as both the waiter's phone and the counter see it.
@@ -28,6 +30,8 @@ export function TableTileButton({
   readonly isSelected: boolean;
   readonly onSelect: (tableId: string) => void;
 }) {
+  const { changes, cancelling } = tile.local;
+  const hasChanges = changes.pending > 0 || changes.conflicts > 0;
   return (
     <button
       type="button"
@@ -39,9 +43,20 @@ export function TableTileButton({
     >
       <span className="block text-lg font-bold text-gray-900">{tile.name}</span>
       <span className="block mt-1 text-sm text-gray-700">{tile.statusText}</span>
-      {tile.unsentCount > 0 && (
-        <span className="inline-block mt-2 px-2 py-0.5 rounded-full bg-amber-500 text-white text-xs font-semibold">
-          To send
+      {(tile.unsentCount > 0 || cancelling !== null || hasChanges) && (
+        <span className="mt-2 flex flex-wrap gap-1">
+          {tile.unsentCount > 0 && (
+            <span className="inline-block px-2 py-0.5 rounded-full bg-amber-500 text-white text-xs font-semibold">
+              To send
+            </span>
+          )}
+          {cancelling !== null && <LocalBadge sync={cancelling}>Cancelling</LocalBadge>}
+          {/* One flag for the table: what it is waiting on is on the table's own screen. */}
+          {changes.conflicts > 0 ? (
+            <LocalBadge sync="conflict">{NEEDS_ATTENTION}</LocalBadge>
+          ) : (
+            changes.pending > 0 && <LocalBadge sync="pending">Not synced</LocalBadge>
+          )}
         </span>
       )}
     </button>
@@ -50,7 +65,8 @@ export function TableTileButton({
 
 /**
  * The grid with its own loading, error and empty states, and a live subscription: every other
- * device's add, send or payment marks this query stale, so two waiters see one room.
+ * device's add, send or payment marks this query stale, so two waiters see one room. What this
+ * device changed and the server does not show yet is on the tiles at once, flagged.
  */
 export function TableBoard({
   selectedTableId = null,
@@ -59,23 +75,23 @@ export function TableBoard({
   readonly selectedTableId?: string | null;
   readonly onSelect: (tableId: string) => void;
 }) {
-  const boardQuery = useBoard();
+  const room = useRoomBoard();
   useRealtimeRefresh();
 
-  if (boardQuery.isPending) {
+  if (room.query.isPending) {
     return <LoadingState />;
   }
-  if (boardQuery.isLoadingError) {
+  if (room.query.isLoadingError) {
     return (
       <ErrorState
         title="Failed to load the room"
-        error={boardQuery.error}
-        onRetry={() => void boardQuery.refetch()}
+        error={room.query.error}
+        onRetry={() => void room.query.refetch()}
       />
     );
   }
 
-  const tiles = tableTiles(boardQuery.data);
+  const tiles = tableTiles(room.entries);
   if (tiles.length === 0) {
     return (
       <div className="flex flex-col items-center justify-center h-64 text-center px-4">

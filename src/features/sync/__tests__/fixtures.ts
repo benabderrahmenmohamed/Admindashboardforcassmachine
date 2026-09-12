@@ -1,4 +1,11 @@
-import { addItem, emptyCart, type Cart, type CartProduct } from '@/features/pos/cart';
+import { addItem, emptyCart, type Cart, type CartProduct } from '@/features/caisse/cart';
+import {
+  buildOrderCancelRecord,
+  buildOrderItemAddRecord,
+  buildOrderItemPrepareRecord,
+  buildOrderItemRemoveRecord,
+  buildOrderSendRecord,
+} from '@/features/orders/records';
 import { buildRefundRecord, buildSaleRecord, type RecordEnvelope } from '@/features/sales/records';
 import { buildCloseSessionRecord, buildOpenSessionRecord } from '@/features/sessions/records';
 import { AppError, type ErrorCode } from '@/lib/errors';
@@ -12,11 +19,15 @@ import type {
 } from '@/ports';
 import type {
   Clock,
+  OrderKind,
+  OrderOutboxRecord,
+  OrderPayload,
   OutboxMeta,
   OutboxRecord,
   OutboxRecordPatch,
   OutboxResult,
   OutboxTransport,
+  TerminalMeta,
 } from '../types';
 
 // What every outbox test shares: stable ids, a clock and a random the test drives, a transport that
@@ -47,18 +58,27 @@ export function isoAt(millis: number): string {
   return new Date(millis).toISOString();
 }
 
-/** This device's registration: terminal T1, nothing allocated yet. */
-export function meta(overrides: Partial<OutboxMeta> = {}): OutboxMeta {
+/** This device's registration: terminal T1, no receipt number allocated yet. */
+export function registration(overrides: Partial<TerminalMeta> = {}): TerminalMeta {
   return {
     terminalId: TERMINAL_ID,
     code: TERMINAL_CODE,
     epoch: 1,
     lastSeq: 0,
-    nextOrdinal: 1,
     registeredAt: START,
     ...overrides,
   };
 }
+
+/** This device's queue: nothing written yet, and registered as terminal T1 unless told otherwise. */
+export function meta(overrides: Partial<OutboxMeta> = {}): OutboxMeta {
+  return { nextOrdinal: 1, terminal: registration(), ...overrides };
+}
+
+/** A waiter's phone or the kitchen screen: a queue, and no terminal. */
+export const DEVICE_ID = 'device-outbox-test';
+export const TABLE_ID = uuid(90_006);
+export const ITEM_ID = uuid(90_007);
 
 export interface FakeClock extends Clock {
   advance(ms: number): void;
@@ -94,9 +114,10 @@ export function ackOf(
   record: OutboxRecord,
   status: OutboxResult['status'] = 'created',
 ): OutboxResult {
-  return record.kind === 'sale' || record.kind === 'refund'
-    ? { status, receiptNumber: `${record.terminalCode}-${record.seq}` }
-    : { status };
+  if (record.kind === 'sale' || record.kind === 'refund') {
+    return { status, receiptNumber: `${record.terminalCode}-${record.seq}` };
+  }
+  return record.terminalCode === null ? { status, orderId: uuid(70_000), affected: 1 } : { status };
 }
 
 /** What the fake backend answers for one send; `attempt` counts the sends of that record. */
@@ -142,7 +163,7 @@ function cartOf(units = 1): Cart {
 }
 
 function envelopeFor(
-  registration: OutboxMeta,
+  registration: TerminalMeta,
   seq: number,
   id: string,
   createdAt: string,
@@ -159,7 +180,7 @@ function envelopeFor(
 }
 
 export function salePayload(
-  registration: OutboxMeta,
+  registration: TerminalMeta,
   seq: number,
   id: string,
   createdAt: string = isoAt(START),
@@ -188,18 +209,13 @@ function saleView(record: SaleRecord): Sale {
     changeMillimes: record.payment.changeMillimes,
     createdAt: record.createdAt,
     receivedAt: record.createdAt,
-    lines: record.lines.map((line) => ({
-      ...line,
-      id: `${record.id}-${line.lineNo}`,
-      refundedQty: 0,
-      refundedMillimes: mm(0),
-    })),
+    lines: record.lines.map((line) => ({ ...line, refundedQty: 0, refundedMillimes: mm(0) })),
   };
 }
 
 /** A refund of one unit of the sale numbered `seq - 1`. */
 export async function refundPayload(
-  registration: OutboxMeta,
+  registration: TerminalMeta,
   seq: number,
   id: string,
   createdAt: string = isoAt(START),
@@ -214,7 +230,7 @@ export async function refundPayload(
 }
 
 export function openPayload(
-  registration: OutboxMeta,
+  registration: TerminalMeta,
   openedAt: string = isoAt(START),
   id: string = SESSION_ID,
 ): Promise<OpenSessionRecord> {
@@ -228,7 +244,7 @@ export function openPayload(
 }
 
 export function closePayload(
-  registration: OutboxMeta,
+  registration: TerminalMeta,
   closedAt: string = isoAt(START),
   id: string = CLOSE_ID,
 ): Promise<CloseSessionRecord> {
@@ -251,7 +267,7 @@ export type SessionOutboxRecord = Extract<OutboxRecord, { kind: 'session_open' }
 
 /** A queued sale: ordinal `ordinal`, receipt number `seq`, pending since the clock started. */
 export async function storedSale(
-  registration: OutboxMeta,
+  registration: TerminalMeta,
   ordinal: number,
   seq: number,
   patch: OutboxRecordPatch = {},
@@ -273,13 +289,14 @@ export async function storedSale(
     lastError: null,
     result: null,
     ackedAt: null,
+    discard: null,
     ...patch,
   };
 }
 
 /** A queued session opening, which carries no receipt number. */
 export async function storedOpen(
-  registration: OutboxMeta,
+  registration: TerminalMeta,
   ordinal: number,
   patch: OutboxRecordPatch = {},
 ): Promise<SessionOutboxRecord> {
@@ -300,6 +317,75 @@ export async function storedOpen(
     lastError: null,
     result: null,
     ackedAt: null,
+    discard: null,
     ...patch,
   };
+}
+
+// Order records, built as the waiter's phone and the kitchen screen build them.
+
+function orderEnvelope(id: string, createdAt: string) {
+  return { id, deviceId: DEVICE_ID, createdAt };
+}
+
+/** The payload of an order record of `kind`, on table TABLE_ID or item ITEM_ID. */
+export function orderPayload<K extends OrderKind>(
+  kind: K,
+  id: string,
+  createdAt: string = isoAt(START),
+): Promise<OrderPayload<K>> {
+  const envelope = orderEnvelope(id, createdAt);
+  const built = (() => {
+    switch (kind) {
+      case 'order_item_add':
+        return buildOrderItemAddRecord(envelope, {
+          tableId: TABLE_ID,
+          productId: PRODUCT.id,
+          qty: 2,
+          note: '',
+        });
+      case 'order_item_remove':
+        return buildOrderItemRemoveRecord(envelope, {
+          itemId: ITEM_ID,
+          reason: 'Guest changed their mind',
+        });
+      case 'order_send':
+        return buildOrderSendRecord(envelope, { tableId: TABLE_ID });
+      case 'order_item_prepare':
+        return buildOrderItemPrepareRecord(envelope, { itemId: ITEM_ID });
+      case 'order_cancel':
+        return buildOrderCancelRecord(envelope, { tableId: TABLE_ID, reason: 'The guests left' });
+      default:
+        throw new AppError('VALIDATION_ERROR', `No order record of kind ${String(kind)}`);
+    }
+  })();
+  return built as Promise<OrderPayload<K>>;
+}
+
+/** A queued order record of `kind`: ordinal `ordinal`, pending since the clock started. */
+export async function storedOrder(
+  kind: OrderKind,
+  ordinal: number,
+  patch: OutboxRecordPatch = {},
+): Promise<OrderOutboxRecord> {
+  const payload = await orderPayload(kind, uuid(3_000 + ordinal));
+  return {
+    id: payload.id,
+    kind,
+    ordinal,
+    seq: null,
+    terminalCode: null,
+    sessionId: null,
+    payload,
+    payloadHash: payload.payloadHash,
+    createdAt: START,
+    attempts: 0,
+    nextAttemptAt: START,
+    status: 'pending',
+    lastError: null,
+    result: null,
+    ackedAt: null,
+    discard: null,
+    ...patch,
+  } as OrderOutboxRecord;
 }
