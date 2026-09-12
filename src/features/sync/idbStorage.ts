@@ -225,5 +225,30 @@ export function createIdbOutboxStorage(db: IDBDatabase): OutboxStorage {
         await done;
         return sending.length;
       }),
+
+    prune: (select) =>
+      guard('clearing out old records', async () => {
+        const tx = db.transaction(RECORDS, 'readwrite');
+        const done = completion(tx);
+        const store = tx.objectStore(RECORDS);
+        const records = (await request<StoredOutboxRecord[]>(store.index('ordinal').getAll())).map(
+          readStoredRecord,
+        );
+        // Chosen before anything is deleted: a `select` that throws leaves the transaction with
+        // nothing to commit.
+        const chosen = new Set(select(records));
+        const acked = new Set(
+          records.filter((record) => record.status === 'acked').map((record) => record.id),
+        );
+        let count = 0;
+        for (const id of chosen) {
+          if (acked.has(id)) {
+            store.delete(id);
+            count += 1;
+          }
+        }
+        await done;
+        return count;
+      }),
   };
 }

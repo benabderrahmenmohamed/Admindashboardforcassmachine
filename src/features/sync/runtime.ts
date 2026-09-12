@@ -25,6 +25,12 @@ import type {
 export const DRAIN_INTERVAL_MS = 30_000;
 
 /**
+ * How often a tab clears out the records the server has had for a week (`prunable`), on top of once
+ * at start: a till left open for days still sheds what it no longer needs.
+ */
+export const PRUNE_INTERVAL_MS = 60 * 60 * 1000;
+
+/**
  * The version of the app the browser is running. It busts the persisted catalog cache, so move it
  * with the version in package.json whenever a release must not read what the one before cached.
  */
@@ -198,6 +204,7 @@ export function createOutboxRuntime(deps: OutboxRuntimeDeps) {
   let sendAgain = false;
   let reading: Promise<void> | null = null;
   let readAgain = false;
+  let pruning: Promise<void> | null = null;
   let cancelRetry: (() => void) | null = null;
   let stops: (() => void)[] = [];
 
@@ -307,6 +314,24 @@ export function createOutboxRuntime(deps: OutboxRuntimeDeps) {
     return sending;
   }
 
+  /**
+   * Clears out the records this device no longer needs, one pass at a time: a call during a pass
+   * waits for that one. A failure is logged and left for the next hour; it changes nothing a screen
+   * shows, so it is not the queue's state to report.
+   */
+  function prune(): Promise<void> {
+    pruning ??= (async () => {
+      try {
+        await deps.outbox.prune();
+      } catch (error) {
+        console.error('Old records on this device could not be cleared out', toAppError(error));
+      } finally {
+        pruning = null;
+      }
+    })();
+    return pruning;
+  }
+
   return {
     /** The queue itself: a screen appends to it and reads a record back at once. */
     outbox: deps.outbox,
@@ -331,18 +356,23 @@ export function createOutboxRuntime(deps: OutboxRuntimeDeps) {
       };
     },
 
-    /** Starts the triggers and drains once. Calling it again while started changes nothing. */
+    /**
+     * Starts the triggers, drains once and clears out old records once. Calling it again while
+     * started changes nothing.
+     */
     start: (): void => {
       if (stops.length > 0) {
         return;
       }
       stops = [
-        // Every change the outbox makes or is told about: an append, a retry, a void, a discard.
+        // Every change the outbox makes or is told about: an append, a retry, a void, a discard, a
+        // prune.
         deps.outbox.subscribe(() => {
           void refresh();
           void sync();
         }),
         deps.schedule.every(DRAIN_INTERVAL_MS, () => void sync()),
+        deps.schedule.every(PRUNE_INTERVAL_MS, () => void prune()),
         deps.schedule.onOnline(() => {
           // A record that failed while the connection was down may be waiting out a backoff of up
           // to a minute. The connection is back, so bring those waits forward and send at once.
@@ -358,6 +388,7 @@ export function createOutboxRuntime(deps: OutboxRuntimeDeps) {
       ];
       void refresh();
       void sync();
+      void prune();
     },
 
     stop: (): void => {
@@ -374,6 +405,9 @@ export function createOutboxRuntime(deps: OutboxRuntimeDeps) {
 
     /** Reads the queue back from storage, for a change another context made. */
     refresh,
+
+    /** A prune to wait for, in tests; the app leaves it to start and the hourly timer. */
+    prune,
   };
 }
 

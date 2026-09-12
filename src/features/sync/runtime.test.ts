@@ -1,11 +1,18 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { AppError } from '@/lib/errors';
 import { mm, ZERO } from '@/lib/money';
 import type { OpenSessionRecord, SaleRecord } from '@/ports';
+import { orderPayload, uuid } from './__tests__/fixtures';
 import { createInProcessDrainLock } from './locks';
 import { createMemoryOutboxStorage } from './memoryStorage';
 import { createOutbox } from './outbox';
-import { createOutboxRuntime, DRAIN_INTERVAL_MS, type SyncSchedule } from './runtime';
+import { RETENTION_MS } from './retention';
+import {
+  createOutboxRuntime,
+  DRAIN_INTERVAL_MS,
+  PRUNE_INTERVAL_MS,
+  type SyncSchedule,
+} from './runtime';
 import type {
   OutboxMeta,
   OutboxRecord,
@@ -183,7 +190,10 @@ describe('createOutboxRuntime', () => {
 
   it('drains every 30 s and when the device comes back online', async () => {
     const test = await registered();
-    expect(test.schedule.intervals.map((entry) => entry.ms)).toEqual([DRAIN_INTERVAL_MS]);
+    expect(test.schedule.intervals.map((entry) => entry.ms)).toEqual([
+      DRAIN_INTERVAL_MS,
+      PRUNE_INTERVAL_MS,
+    ]);
 
     // Written by the other tab, so nothing here was told to send.
     await test.neighbour.appendSessionOpen(({ meta }) =>
@@ -365,6 +375,69 @@ describe('createOutboxRuntime', () => {
     );
     await test.settle();
     expect(changes).toBe(after);
+  });
+
+  it('clears out what the server has had for a week, when it starts and every hour after', async () => {
+    const test = harness();
+    const sendOrder = (n: number) =>
+      test.outbox.appendOrder('order_send', () => orderPayload('order_send', uuid(n)));
+    await sendOrder(1);
+    await sendOrder(2);
+    await test.outbox.drain();
+    test.advance(RETENTION_MS);
+    const pruned = vi.spyOn(test.outbox, 'prune');
+
+    test.runtime.start();
+    expect(pruned).toHaveBeenCalledTimes(1);
+    // Waiting for a prune joins the one running rather than starting another.
+    await test.runtime.prune();
+    expect(pruned).toHaveBeenCalledTimes(1);
+    // The read of the queue its deletion asked for.
+    await test.runtime.refresh();
+    // The last record the server took stays.
+    expect(test.runtime.snapshot().records.map((record) => record.id)).toEqual([uuid(2)]);
+
+    await sendOrder(3);
+    await test.settle();
+    test.advance(RETENTION_MS);
+    const hourly = test.schedule.intervals.find((entry) => entry.ms === PRUNE_INTERVAL_MS);
+    hourly?.run();
+    expect(pruned).toHaveBeenCalledTimes(2);
+    await test.runtime.prune();
+    await test.runtime.refresh();
+
+    expect(test.runtime.snapshot().records.map((record) => record.id)).toEqual([uuid(3)]);
+    expect(test.runtime.snapshot().summary.lastAckAt).toBe(START + RETENTION_MS);
+  });
+
+  // Clearing out is housekeeping: a failure changes nothing the screens show, so the queue carries
+  // on and the chip says nothing about it; the next hour tries again.
+  it('logs a prune that fails and goes on sending', async () => {
+    const test = harness();
+    vi.spyOn(test.storage, 'prune').mockRejectedValue(
+      new AppError('UNKNOWN', 'The local outbox failed while clearing out old records.'),
+    );
+    const logged = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    try {
+      test.runtime.start();
+      await test.runtime.prune();
+      await test.settle();
+      // Once more with no pass running, so none can cover up a state the failure might set.
+      await test.runtime.prune();
+
+      expect(logged).toHaveBeenCalledTimes(2);
+      expect(logged).toHaveBeenCalledWith(
+        'Old records on this device could not be cleared out',
+        expect.any(AppError),
+      );
+      expect(test.runtime.snapshot().state).toEqual({ kind: 'idle' });
+
+      await test.outbox.appendOrder('order_send', () => orderPayload('order_send', uuid(1)));
+      await test.settle();
+      expect(test.sent).toEqual([uuid(1)]);
+    } finally {
+      logged.mockRestore();
+    }
   });
 
   it('stops every trigger when the app stops it', async () => {

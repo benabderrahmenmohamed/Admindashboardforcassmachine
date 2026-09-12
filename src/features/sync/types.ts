@@ -192,6 +192,12 @@ export interface OutboxStorage {
   update(id: string, patch: OutboxRecordPatch): Promise<OutboxRecord>;
   /** Moves every 'sending' record back to 'pending'; returns how many. */
   resetSending(): Promise<number>;
+  /**
+   * In one transaction: hands `select` every record in ordinal order, and deletes the records whose
+   * ids it returns — only those the server has taken, whatever `select` says, so a record only this
+   * device holds is never lost. The counters stay, so no ordinal is used twice. Returns how many went.
+   */
+  prune(select: (records: readonly OutboxRecord[]) => readonly string[]): Promise<number>;
 }
 
 export interface OutboxTransport {

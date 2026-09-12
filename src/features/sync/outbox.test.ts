@@ -28,6 +28,7 @@ import { createIdbOutboxStorage, openOutboxDatabase } from './idbStorage';
 import { createInProcessDrainLock } from './locks';
 import { createMemoryOutboxStorage } from './memoryStorage';
 import { backoffDelay, createOutbox, DRAIN_LOCK_NAME, type Outbox } from './outbox';
+import { RETENTION_MS } from './retention';
 import type {
   DrainLock,
   DrainOutcome,
@@ -136,6 +137,7 @@ function interferingStorage(base: OutboxStorage, interfere: () => Promise<void>)
     firstUnfinished: () => base.firstUnfinished(),
     update: (id, patch) => base.update(id, patch),
     resetSending: () => base.resetSending(),
+    prune: (select) => base.prune(select),
   };
 }
 
@@ -826,6 +828,31 @@ describe('summary, list and subscribe', () => {
     await sell(harness, 2);
     await harness.outbox.drain();
     expect(changes).toBe(2);
+  });
+});
+
+describe('prune', () => {
+  it('deletes what the server has had for a week, keeps the last, and tells its subscribers', async () => {
+    const harness = await setup(undefined, { registered: false });
+    for (const n of [1, 2, 3]) {
+      await order(harness, 'order_send', n);
+    }
+    await harness.outbox.drain();
+    let changes = 0;
+    harness.outbox.subscribe(() => {
+      changes += 1;
+    });
+
+    harness.clock.advance(RETENTION_MS - 1);
+    await expect(harness.outbox.prune()).resolves.toBe(0);
+    expect(changes).toBe(0);
+
+    harness.clock.advance(1);
+    await expect(harness.outbox.prune()).resolves.toBe(2);
+    expect(changes).toBe(1);
+    // The last record the server took stays, so the device still knows when that was.
+    await expect(harness.outbox.list()).resolves.toMatchObject([{ ordinal: 3 }]);
+    await expect(harness.outbox.summary()).resolves.toMatchObject({ lastAckAt: START });
   });
 });
 

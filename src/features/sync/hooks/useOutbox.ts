@@ -28,7 +28,10 @@ export function useOutboxSummary(): OutboxSummary {
   return useOutboxSnapshot().summary;
 }
 
-/** Every record this device has written, in the order they go out. */
+/**
+ * The records this device keeps, in the order they go out: everything the server does not have yet,
+ * and what it has had for less than a week or a screen still reads (`prunable`).
+ */
 export function useOutboxRecords(): readonly OutboxRecord[] {
   return useOutboxSnapshot().records;
 }

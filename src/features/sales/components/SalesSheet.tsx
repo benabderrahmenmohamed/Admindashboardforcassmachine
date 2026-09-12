@@ -73,8 +73,9 @@ function SalesSheetBody({
 }: Omit<SalesSheetProps, 'open' | 'onOpenChange'>) {
   const [view, setView] = useState<View>({ name: 'list' });
   const salesQuery = useSales({ terminalId: terminal.terminalId, limit: RECENT_SALES_LIMIT });
-  // Whatever the server answered, plus everything this device wrote that it has not taken yet: the
-  // list is complete offline, because a document is on this device from the moment it is written.
+  // Whatever the server answered, plus what this device wrote that the answer does not list. Offline
+  // that is every document of this session and of the last week: a document is on this device from
+  // the moment it is written until the server has had it for a week (see `prunable`).
   const rows = mergeSales(terminal, salesQuery.data ?? [], records);
   const offline = salesQuery.data === undefined;
   // Offline, TanStack pauses this query instead of failing it: it stays pending with no error, so
@@ -83,7 +84,7 @@ function SalesSheetBody({
   const pausedError = paused
     ? new AppError(
         'NETWORK_ERROR',
-        'The server cannot be reached, so sales recorded elsewhere are not shown. Everything this device wrote is here.',
+        'The server cannot be reached, so only what this device recorded in this session and in the last week is shown.',
       )
     : null;
 

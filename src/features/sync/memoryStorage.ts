@@ -72,5 +72,20 @@ export function createMemoryOutboxStorage(): OutboxStorage {
       }
       return Promise.resolve(count);
     },
+
+    prune(select) {
+      // In an executor, so a `select` that throws rejects the promise, and deletes nothing.
+      return new Promise((resolve) => {
+        const chosen = new Set(select(inOrder().map((record) => structuredClone(record))));
+        let count = 0;
+        for (const id of chosen) {
+          if (records.get(id)?.status === 'acked') {
+            records.delete(id);
+            count += 1;
+          }
+        }
+        resolve(count);
+      });
+    },
   };
 }

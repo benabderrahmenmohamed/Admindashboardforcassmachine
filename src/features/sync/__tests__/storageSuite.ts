@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { isAppError, type AppError, type ErrorCode } from '@/lib/errors';
+import { AppError, isAppError, type ErrorCode } from '@/lib/errors';
 import type { OutboxMeta, OutboxRecord, OutboxStorage } from '../types';
 import {
   meta,
@@ -302,6 +302,75 @@ export function describeOutboxStorage(label: string, open: () => Promise<Storage
       await expect(storage.resetSending()).resolves.toBe(1);
 
       await expect(storage.get(record.id)).resolves.toEqual({ ...record, status: 'pending' });
+    });
+
+    it('deletes the records a prune picks that the server has taken, and no others', async () => {
+      await storage.writeMeta(registered);
+      const taken = await storedSale(registration, 1, 1, { status: 'acked', ackedAt: 0 });
+      const onlyHere = [
+        await storedOrder('order_item_add', 2),
+        await storedOrder('order_send', 3, { status: 'sending' }),
+        await storedSale(registration, 4, 2, { status: 'conflict' }),
+        await storedSale(registration, 5, 3, { status: 'voided', ackedAt: 0 }),
+        await storedOrder('order_cancel', 6, {
+          status: 'discarded',
+          discard: {
+            reason: 'The guests left',
+            discardedBy: null,
+            discardedByName: null,
+            discardedAt: 0,
+          },
+        }),
+      ];
+      for (const record of [taken, ...onlyHere]) {
+        await append(record);
+      }
+
+      // Everything, and an id it does not hold: only the acked record goes.
+      await expect(
+        storage.prune((records) => [...records.map((record) => record.id), 'nothing-like-this']),
+      ).resolves.toBe(1);
+
+      await expect(storage.get(taken.id)).resolves.toBeUndefined();
+      await expect(storage.list()).resolves.toEqual(onlyHere);
+    });
+
+    it('hands a prune every record in ordinal order, and keeps the counters', async () => {
+      await storage.writeMeta(registered);
+      // Their ids sort the other way round, so an order by key would show.
+      await append(await storedOrder('order_send', 1, { status: 'acked', ackedAt: 0 }));
+      await append(await storedSale(registration, 2, 1, { status: 'acked', ackedAt: 0 }));
+      const counters = await storage.readMeta();
+      let seen: number[] = [];
+
+      await expect(
+        storage.prune((records) => {
+          seen = records.map((record) => record.ordinal);
+          return records.map((record) => record.id);
+        }),
+      ).resolves.toBe(2);
+
+      expect(seen).toEqual([1, 2]);
+      await expect(storage.list()).resolves.toEqual([]);
+      // The next record takes the next ordinal and receipt number, never one a deleted record had.
+      await expect(storage.readMeta()).resolves.toEqual(counters);
+    });
+
+    it('deletes nothing when a prune picks nothing, or fails while picking', async () => {
+      await storage.writeMeta(registered);
+      const record = await storedSale(registration, 1, 1, { status: 'acked', ackedAt: 0 });
+      await append(record);
+
+      await expect(storage.prune(() => [])).resolves.toBe(0);
+      await failureOf(
+        () =>
+          storage.prune(() => {
+            throw new AppError('UNKNOWN', 'The policy could not run');
+          }),
+        'UNKNOWN',
+      );
+
+      await expect(storage.list()).resolves.toEqual([record]);
     });
 
     it('hands out copies of its records, so a caller cannot change what is stored', async () => {

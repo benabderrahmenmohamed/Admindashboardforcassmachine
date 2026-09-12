@@ -25,10 +25,11 @@ exactly as it was written and hashed.
 may reach the ledger out of order, because a later record carries a later receipt number (ADR 0004).
 
 **One drainer at a time.** `drain()` collapses concurrent calls within the tab, then runs the pass under
-`deps.lock.runExclusive('outbox:' + meta.code, pass)`. `createWebLocksDrainLock` uses
-`navigator.locks.request(name, { ifAvailable: true })`: a tab that finds the lock held returns `busy` and
-skips this pass rather than queueing behind it, and every tab keeps its own triggers so draining continues if
-that tab closes. Under the lock, `resetSending()` puts back anything a pass that died left marked `sending`.
+`deps.lock.runExclusive(DRAIN_LOCK_NAME, pass)`, one name for the whole device (see What was revised).
+`createWebLocksDrainLock` uses `navigator.locks.request(name, { ifAvailable: true })`: a tab that finds the
+lock held returns `busy` and skips this pass rather than queueing behind it, and every tab keeps its own
+triggers so draining continues if that tab closes. Under the lock, `resetSending()` puts back anything a pass
+that died left marked `sending`.
 
 **What a failure does is decided by its class** (`errorClass`, [contracts/errors.md](../../contracts/errors.md)):
 
@@ -64,6 +65,24 @@ its original id, hash and receipt number, and `lastSeq` is raised to that number
 only after the server answered, so the record holds a number the counter has not reached. A record without a
 registration is dropped, because its terminal and epoch are unknown. Both keys are then removed;
 `clearOfflineState` removes them too, as `LEGACY_STORAGE_KEYS`.
+
+**One queue per device, not per terminal (café model).** A waiter's phone writes order records and is never
+registered, so the meta row became `OutboxMeta { nextOrdinal, terminal: TerminalMeta | null }` and the drain
+lock is the one name `DRAIN_LOCK_NAME = 'outbox'`. Sales, refunds and session records still need the
+registration; order records do not.
+
+**Records the server has had for a week are deleted.** Every tap of a busy café is a record and every screen
+reads the whole queue on each change, so a queue that only grew would slow a cheap phone down within weeks.
+`prunable` in `src/features/sync/retention.ts` picks the records acked at least `RETENTION_MS` (7 days) ago,
+and keeps these however old they are: the last record acked, so the sync chip can still say when the device
+last sent; every record of the session the till is still in, which its own Z-report is counted from; and a
+record a kept one is described by — the add of an item a removal or prepare names, the sale a refund takes
+back. Nothing that is not acked is ever deleted: pending, sending and conflicting records are data only the
+device has, a voided one is a spent receipt number, a discarded one is the dead-letter list. `storage.prune`
+reads and deletes in one transaction and refuses to delete anything but an acked record whatever it is asked;
+the counters stay, so no ordinal or receipt number is reused. The runtime prunes once at start and every
+`PRUNE_INTERVAL_MS` (an hour); a failed prune is logged and retried the next hour, and never changes the
+queue's state.
 
 ## Consequences
 

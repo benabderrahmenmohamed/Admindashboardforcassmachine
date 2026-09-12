@@ -1,6 +1,7 @@
 import { AppError, errorClass, toAppError } from '@/lib/errors';
 import type { CloseSessionRecord, OpenSessionRecord, SaleRecord } from '@/ports';
 import { EMPTY_META } from './meta';
+import { prunable } from './retention';
 import {
   isOrderRecord,
   type DrainOutcome,
@@ -361,6 +362,19 @@ export function createOutbox(deps: OutboxDeps) {
         },
       });
       notify();
+    },
+
+    /**
+     * Deletes the records this device no longer needs (`prunable`): what the server has had for a
+     * week, less what a screen still reads. Returns how many went.
+     */
+    async prune(): Promise<number> {
+      const now = deps.clock.now();
+      const count = await deps.storage.prune((records) => prunable(records, now));
+      if (count > 0) {
+        notify();
+      }
+      return count;
     },
 
     async summary(): Promise<OutboxSummary> {
