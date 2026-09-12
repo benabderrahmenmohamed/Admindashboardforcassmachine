@@ -1,15 +1,12 @@
 {
+  "//": "The root tsconfig covers src and vite.config.ts; the end-to-end suite runs in Node against a browser, so it needs its own. Matches the root's settings apart from the Node types Playwright's config reads.",
   "compilerOptions": {
     "target": "ES2022",
     "lib": ["ES2022", "DOM", "DOM.Iterable"],
     "module": "ESNext",
     "moduleResolution": "bundler",
     "moduleDetection": "force",
-    "jsx": "react-jsx",
-    "types": ["vite/client"],
-    "paths": {
-      "@/*": ["./src/*"]
-    },
+    "types": ["node"],
     "strict": true,
     "noEmit": true,
     "isolatedModules": true,
@@ -18,5 +15,5 @@
     "noUnusedParameters": true,
     "noFallthroughCasesInSwitch": true
   },
-  "include": ["src", "vite.config.ts", "vitest.config.ts", "playwright.config.ts"]
+  "include": ["**/*.ts", "../playwright.config.ts"]
 }

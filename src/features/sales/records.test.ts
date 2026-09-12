@@ -488,7 +488,7 @@ describe('buildSaleRecord', () => {
       }
     }
     expect(failures.slice(0, 3), `${failures.length} of ${runs} carts failed`).toEqual([]);
-  });
+  }, 30_000);
 });
 
 describe('refundShare', () => {

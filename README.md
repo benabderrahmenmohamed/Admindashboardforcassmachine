@@ -2,7 +2,7 @@
 
 Point-of-sale screen and back-office dashboard for a cash register in a Tunisian shop. Cashiers sell from the POS screen; admins manage products, categories, register settings and the terminals.
 
-> **Status:** this codebase started as a Figma Make export and is being restructured into an offline-first register. Money is exact to the millime, the UI talks to the backend only through ports, and sales go into an append-only ledger with per-terminal receipt numbers, cash sessions and Z-reports. Recording still needs the network in this version; the offline outbox comes next — see [Known issues](#known-issues).
+> **Status:** this started as a Figma Make export and is now an offline-first register. Money is exact to the millime, the UI reaches its backend only through ports, sales go into an append-only ledger with per-terminal receipt numbers, cash sessions and Z-reports, and the register keeps selling with no network: records queue on the device and reach the server exactly once. Backends are swappable — an in-browser demo, Supabase, and a REST adapter written against [contracts/openapi.yaml](contracts/openapi.yaml) for the service that will implement it.
 
 ## Screenshots
 
@@ -18,6 +18,7 @@ Point-of-sale screen and back-office dashboard for a cash register in a Tunisian
 - Terminals: an admin registers each device as a terminal (`T1`, `T2`, …) in Settings.
 - Cash sessions: the cashier opens a session with an opening float, sells, and closes it with the counted cash. Closing shows the Z-report: sales, refunds, net, totals per payment method, expected cash and the variance.
 - Receipts numbered per terminal without gaps (`T1-1`, `T1-2`, …). A lost answer is retried with the same record, so it never costs a number and never records twice.
+- Selling continues with no network. Every sale, refund and session change is queued on the device before any request is made, the receipt appears at once, and the queue drains in order when the connection returns. A sync chip shows what is still waiting, and a Conflicts screen shows anything the server refused.
 - Refunds are new documents that point at the sale, per line and quantity, never above what is left. Sales and their lines can never be edited or deleted.
 - Every amount is shown in Tunisian dinars with three decimals, for example `12,500 DT`.
 - A credential-free demo backend that runs entirely in the browser.
@@ -47,7 +48,7 @@ Open http://localhost:5173. The backend lives in the browser and starts empty ag
 1. **Continue as Admin**, open **Settings** and register this device as terminal `T1`. Log out.
 2. **Continue as Cashier**, open a session with an opening float, sell, refund from **Sales**, and close the session to see the Z-report.
 
-A reload empties the backend but keeps this device's terminal registration, which lives in local storage. Repeat step 1 to register `T1` again before selling; otherwise the POS offers to open a session and the backend refuses it, because it no longer knows this terminal.
+A reload starts the whole device over: the backend, the queue and this device's terminal registration all go, because the demo clears them at boot rather than replay records into a shop that no longer exists. Repeat step 1 to register `T1` before selling again.
 
 ### Local Supabase
 
@@ -82,9 +83,10 @@ Never run migrations against a hosted project from a script in this repo. To mov
 
 | Variable                 | Required        | Description                                                                               |
 | ------------------------ | --------------- | ----------------------------------------------------------------------------------------- |
-| `VITE_BACKEND`           | No              | Backend adapter: `memory` or `supabase` (default). `rest` is not available yet.           |
+| `VITE_BACKEND`           | No              | Backend adapter: `memory`, `supabase` (default) or `rest`.                                |
 | `VITE_SUPABASE_URL`      | With `supabase` | Supabase project URL, for example `https://<project-ref>.supabase.co`.                    |
 | `VITE_SUPABASE_ANON_KEY` | With `supabase` | Supabase anon key. It is embedded in the browser bundle by design, so it is not a secret. |
+| `VITE_API_BASE_URL`      | With `rest`     | Where the API of [contracts/openapi.yaml](contracts/openapi.yaml) is served.              |
 
 Vite inlines these values at build time, so a change needs a rebuild. `.env.demo` sets `VITE_BACKEND=memory` for `npm run dev:demo`.
 
@@ -139,9 +141,56 @@ returning user_id;
 
 A role change applies to the member's next request; the app shows it after they log out and back in.
 
+## Delivery
+
+### Run it in a container
+
+A multi-stage build compiles the app with Node and hands `dist/` to nginx, so the image carries no Node runtime and no source. It listens on 8080 as an unprivileged user and answers `/healthz`.
+
+```bash
+docker compose up --build
+```
+
+Open http://localhost:8080. Compose publishes to `127.0.0.1:8080` and nothing else: the register needs a secure context for the Web Crypto API, Web Locks and the service worker, and `localhost` is one. To reach it from another device on the shop network, put it behind TLS rather than publishing plain HTTP.
+
+The image defaults to the credential-free demo. Vite inlines its configuration at build time, so another backend is another image:
+
+```bash
+docker build \
+  --build-arg VITE_BACKEND=supabase \
+  --build-arg VITE_SUPABASE_URL=https://<project-ref>.supabase.co \
+  --build-arg VITE_SUPABASE_ANON_KEY=<anon-key> \
+  -t pos-admin-dashboard .
+```
+
+Nothing comes from `.env`: `.dockerignore` keeps it out of the build context, along with the host's `node_modules`, which are built for the wrong platform.
+
+`index.html` and `sw.js` are served with `no-cache`, so a release is picked up on the next visit and a browser never holds an old service worker. `/assets/` is immutable, because those file names change whenever their contents do. Every other path falls back to the app shell.
+
+`.github/workflows/ci.yml` runs lint, typecheck, the Vitest suite and a build on every push, the Playwright offline-selling spec after it, and — only on pull requests to `main` — the pgTAP tests and the port contract suite against a local Supabase stack.
+
+### Deploy it to a static host
+
+`netlify.toml` deploys the public demo to **Netlify**. The build command, the publish directory, the single-page fallback and the same cache and security headers as nginx are all in that one committed file, so nothing about the deployment is hidden in a dashboard. It holds no secrets: the site it builds is the in-browser backend.
+
+The app is static files, so any host that can serve `dist/` works. Whatever you use needs the three rules above: the fallback to `index.html`, long caching for `/assets/` only, and revalidation for `index.html` and `sw.js`.
+
+### The two demos
+
+| Demo          | Who can open it             | What is behind it                                                       |
+| ------------- | --------------------------- | ----------------------------------------------------------------------- |
+| Public demo   | Anyone, with no credentials | The in-memory backend, in the visitor's own browser. Nothing is shared. |
+| Supabase demo | Whoever has the demo login  | A real shop in a hosted project, reset every night.                     |
+
+The **public demo** is what `VITE_BACKEND=memory` builds, and what the container image and the Netlify site serve by default. Each visitor gets their own backend, starting empty; a reload empties it again. There is no account to create, no server to reach and nothing anyone can break for anyone else.
+
+The **Supabase demo** is a real shop in a hosted project, published with a cashier and an admin login so the ledger, the Z-reports and the sync behaviour can be seen against a real database. Because the sales ledger is append-only — nobody, not even the service role, can update or delete a row — a demo shop needs a way back to its starting state. `private.reset_demo_shop` is it: it removes the trading history of the shop's closed sessions and recomputes stock from the movements that are left. It keeps the open session and everything in it, any sale a kept refund points at, and the terminals' `last_seq`, so receipt numbering never repeats. It is the only path allowed to delete ledger rows, and it refuses any shop not listed in `private.demo_shops`.
+
+To schedule it, run `supabase/scripts/schedule_demo_reset.sql` once in the SQL editor of the demo project, with the demo shop's id filled in. It needs the `pg_cron` extension, and it belongs on a demo project only — never on a shop's real project. `supabase/tests/database/03_demo_reset.test.sql` covers what the reset keeps, what it removes, and that the same deletes are still refused outside it.
+
 ## Known issues
 
-- **Recording needs the network.** A sale, refund or session change is sent immediately. If the answer is lost, the register keeps the record and retries it unchanged, but it cannot sell offline yet. The offline outbox is the next step.
+- **A record the server refuses stops this device's queue.** Later records wait behind it until a person retries it or voids it on the Conflicts screen. That is deliberate — nothing may reach the ledger out of order — but it needs someone to look.
 - **A hosted project may still run the original edge function.** Its code is gone from this repo, but a deployed copy keeps its service role access, which bypasses row-level security, until you delete it ([runbook](docs/runbooks/kv-import.md), step 7).
 
 ## Credits

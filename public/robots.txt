@@ -1,0 +1,7 @@
+# The public demo is a credential-free copy of the app: there is no real shop behind it and
+# nothing private to hide. The sign-in page may be indexed; the screens behind it are an
+# application, not pages, and every one of them serves the same shell to a crawler.
+User-agent: *
+Allow: /
+Disallow: /dashboard
+Disallow: /pos

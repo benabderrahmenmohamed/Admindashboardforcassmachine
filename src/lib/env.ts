@@ -36,3 +36,13 @@ export function supabaseEnv(): { url: string; anonKey: string } {
     anonKey: required('VITE_SUPABASE_ANON_KEY', import.meta.env.VITE_SUPABASE_ANON_KEY),
   };
 }
+
+/**
+ * Where the REST API lives, without the `/api/v1` prefix the adapter adds: an absolute origin, e.g.
+ * `http://localhost:8080`, since the app has no page to resolve a relative one against.
+ */
+export function restEnv(): { baseUrl: string } {
+  return {
+    baseUrl: required('VITE_API_BASE_URL', import.meta.env.VITE_API_BASE_URL).replace(/\/+$/, ''),
+  };
+}

@@ -1,0 +1,946 @@
+openapi: 3.1.0
+info:
+  title: POS Admin Dashboard API
+  version: 1.0.0
+  summary: The backend contract for the register and back office.
+  description: |
+    This is the contract the web app's REST adapter speaks and the Spring Boot service will implement.
+    The Supabase backend implements the same operations as RPCs with the same semantics.
+
+    - Money is always an integer number of millimes (1 TND = 1000 millimes) in fields ending in `_millimes`.
+    - Records a terminal writes (sales, refunds, session opens and closes) carry an id chosen by the device and a
+      `payload_hash`. Sending the same record again returns its stored outcome with HTTP 200; a first write returns 201.
+    - Errors use one envelope and the codes in `contracts/errors.md`, including the order in which checks run.
+servers:
+  - url: http://localhost:8080
+    description: Local Spring Boot service
+security:
+  - bearerAuth: []
+tags:
+  - name: Auth
+  - name: Catalog
+  - name: Settings
+  - name: Terminals
+  - name: Cash sessions
+  - name: Sales
+
+paths:
+  /api/v1/auth/token:
+    post:
+      tags: [Auth]
+      operationId: createToken
+      summary: Sign in with email and password.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/Credentials' }
+      responses:
+        '200':
+          description: Signed in.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Token' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+
+  /api/v1/me:
+    get:
+      tags: [Auth]
+      operationId: getMe
+      summary: The signed-in member and their shop role.
+      responses:
+        '200':
+          description: The member.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Member' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /api/v1/products:
+    get:
+      tags: [Catalog]
+      operationId: listProducts
+      summary: Products that are not archived, in creation order.
+      responses:
+        '200':
+          description: Products.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/Product' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+    post:
+      tags: [Catalog]
+      operationId: createProduct
+      summary: Create a product. Admin only.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ProductCreate' }
+      responses:
+        '201':
+          description: Created.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Product' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+
+  /api/v1/products/{productId}:
+    parameters:
+      - $ref: '#/components/parameters/ProductId'
+    put:
+      tags: [Catalog]
+      operationId: updateProduct
+      summary: Update a product. Stock changes only by `stock_delta`. Admin only.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ProductUpdate' }
+      responses:
+        '200':
+          description: Updated.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Product' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+    delete:
+      tags: [Catalog]
+      operationId: archiveProduct
+      summary: Archive a product. Sales that mention it keep pointing at it. Admin only.
+      responses:
+        '204': { description: Archived. }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /api/v1/categories:
+    get:
+      tags: [Catalog]
+      operationId: listCategories
+      responses:
+        '200':
+          description: Categories.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/Category' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+    post:
+      tags: [Catalog]
+      operationId: createCategory
+      summary: Create a category. Admin only.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CategoryCreate' }
+      responses:
+        '201':
+          description: Created.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Category' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+
+  /api/v1/categories/{categoryId}:
+    parameters:
+      - name: categoryId
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    delete:
+      tags: [Catalog]
+      operationId: deleteCategory
+      summary: Delete a category; its products become uncategorised. Admin only.
+      responses:
+        '204': { description: Deleted. }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /api/v1/shop-settings:
+    get:
+      tags: [Settings]
+      operationId: getShopSettings
+      responses:
+        '200':
+          description: Settings.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ShopSettings' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+    put:
+      tags: [Settings]
+      operationId: updateShopSettings
+      summary: Admin only.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ShopSettings' }
+      responses:
+        '200':
+          description: Saved.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ShopSettings' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+
+  /api/v1/terminals/{terminalCode}/registrations:
+    parameters:
+      - name: terminalCode
+        in: path
+        required: true
+        schema: { $ref: '#/components/schemas/TerminalCode' }
+    post:
+      tags: [Terminals]
+      operationId: registerTerminal
+      summary: Register this device as the terminal. Admin only.
+      description: Creates the terminal on first use and bumps its epoch every time, so records from a previously registered device fail with TERMINAL_SUPERSEDED.
+      responses:
+        '201':
+          description: Registered.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TerminalRegistration' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+
+  /api/v1/cash-sessions:
+    get:
+      tags: [Cash sessions]
+      operationId: listCashSessions
+      summary: Sessions of a terminal, newest first. `status=open` returns at most one.
+      parameters:
+        - name: terminal_id
+          in: query
+          required: true
+          schema: { type: string, format: uuid }
+        - name: status
+          in: query
+          required: false
+          schema: { type: string, enum: [open, closed] }
+      responses:
+        '200':
+          description: Sessions.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/CashSession' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+    post:
+      tags: [Cash sessions]
+      operationId: openCashSession
+      summary: Open a session with the terminal-written record. Idempotent by record id.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/OpenSessionRecord' }
+      responses:
+        '201':
+          description: Opened.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OpenSessionResult' }
+        '200':
+          description: Already opened by this same record (replayed).
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OpenSessionResult' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+
+  /api/v1/cash-sessions/{sessionId}/closures:
+    parameters:
+      - $ref: '#/components/parameters/SessionId'
+    post:
+      tags: [Cash sessions]
+      operationId: closeCashSession
+      summary: Close a session with the terminal-written record. Only the terminal that owns it can close it.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CloseSessionRecord' }
+      responses:
+        '201':
+          description: Closed; the server's Z-report.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CloseSessionResult' }
+        '200':
+          description: Already closed by this same record (replayed); the Z-report stored at close time.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CloseSessionResult' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+
+  /api/v1/cash-sessions/{sessionId}/z-report:
+    parameters:
+      - $ref: '#/components/parameters/SessionId'
+    get:
+      tags: [Cash sessions]
+      operationId: getZReport
+      summary: The stored report of a closed session, or the running report of an open one.
+      responses:
+        '200':
+          description: Z-report.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ZReport' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /api/v1/sales:
+    get:
+      tags: [Sales]
+      operationId: listSales
+      summary: Sales and refunds, newest first.
+      parameters:
+        - name: terminal_id
+          in: query
+          schema: { type: string, format: uuid }
+        - name: session_id
+          in: query
+          schema: { type: string, format: uuid }
+        - name: limit
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 200, default: 50 }
+      responses:
+        '200':
+          description: Sales.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/Sale' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+    post:
+      tags: [Sales]
+      operationId: recordSale
+      summary: Record a sale or refund written by a terminal. Idempotent by record id.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SaleRecord' }
+      responses:
+        '201':
+          description: Recorded.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RecordSaleResult' }
+        '200':
+          description: This record was already recorded (status replayed) or voided by an admin (status voided).
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RecordSaleResult' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+
+  /api/v1/sales/{saleId}:
+    parameters:
+      - name: saleId
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    get:
+      tags: [Sales]
+      operationId: getSale
+      responses:
+        '200':
+          description: The sale, with how much of each line has been refunded.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Sale' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /api/v1/receipt-voids:
+    post:
+      tags: [Sales]
+      operationId: voidReceipt
+      summary: Void a numbered record that can never be accepted, keeping the terminal's numbering gapless. Admin only.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/VoidReceiptRequest' }
+      responses:
+        '201':
+          description: Voided.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/VoidReceiptResult' }
+        '200':
+          description: Already voided (replayed), or the record reached the ledger after all (recorded).
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/VoidReceiptResult' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  parameters:
+    ProductId:
+      name: productId
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    SessionId:
+      name: sessionId
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+
+  responses:
+    Unauthenticated:
+      description: No session, or it expired (UNAUTHENTICATED).
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+    Forbidden:
+      description: Not allowed for this member, shop, terminal or session (FORBIDDEN).
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+    NotFound:
+      description: The resource does not exist in the caller's shop (NOT_FOUND).
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+    Conflict:
+      description: IDEMPOTENCY_CONFLICT, SEQUENCE_GAP, SESSION_CLOSED, SESSION_ALREADY_OPEN or TERMINAL_SUPERSEDED.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+    ValidationError:
+      description: A malformed payload or a broken business rule (VALIDATION_ERROR).
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+
+  schemas:
+    Millimes:
+      type: integer
+      format: int64
+      description: An amount in millimes. 12.500 TND is 12500.
+
+    Uuid:
+      type: string
+      format: uuid
+
+    Timestamp:
+      type: string
+      format: date-time
+
+    PayloadHash:
+      type: string
+      pattern: '^[0-9a-f]{64}$'
+      description: SHA-256, lowercase hex, of the canonical JSON of the record as the terminal built it, without this field. Stored and compared, never recomputed.
+
+    TerminalCode:
+      type: string
+      pattern: '^[A-Z0-9]{1,8}$'
+
+    ErrorCode:
+      type: string
+      enum:
+        - UNAUTHENTICATED
+        - FORBIDDEN
+        - NOT_FOUND
+        - VALIDATION_ERROR
+        - IDEMPOTENCY_CONFLICT
+        - SEQUENCE_GAP
+        - SESSION_CLOSED
+        - SESSION_ALREADY_OPEN
+        - TERMINAL_SUPERSEDED
+        - RATE_LIMITED
+        - SERVER_ERROR
+
+    ErrorEnvelope:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, message]
+          properties:
+            code: { $ref: '#/components/schemas/ErrorCode' }
+            message:
+              type: string
+              description: A sentence for people. Never parse it.
+            details:
+              type: object
+              additionalProperties: true
+              description: 'Machine-readable context, e.g. { "expected_seq": 42, "received_seq": 43 } for SEQUENCE_GAP.'
+
+    Credentials:
+      type: object
+      required: [email, password]
+      properties:
+        email: { type: string, format: email }
+        password: { type: string, minLength: 1 }
+
+    Token:
+      type: object
+      required: [access_token, token_type, expires_in, member]
+      properties:
+        access_token: { type: string }
+        token_type: { type: string, enum: [bearer] }
+        expires_in: { type: integer, description: Seconds. }
+        member: { $ref: '#/components/schemas/Member' }
+
+    Member:
+      type: object
+      required: [user_id, shop_id, role, display_name, email]
+      properties:
+        user_id: { $ref: '#/components/schemas/Uuid' }
+        shop_id: { $ref: '#/components/schemas/Uuid' }
+        role: { type: string, enum: [admin, cashier] }
+        display_name: { type: string }
+        email: { type: string }
+
+    Category:
+      type: object
+      required: [id, name, color, created_at]
+      properties:
+        id: { $ref: '#/components/schemas/Uuid' }
+        name: { type: string }
+        color: { type: string, pattern: '^#[0-9a-fA-F]{6}$' }
+        created_at: { $ref: '#/components/schemas/Timestamp' }
+
+    CategoryCreate:
+      type: object
+      required: [name, color]
+      properties:
+        name: { type: string, minLength: 1 }
+        color: { type: string, pattern: '^#[0-9a-fA-F]{6}$' }
+
+    Product:
+      type: object
+      required:
+        [
+          id,
+          name,
+          price_millimes,
+          category_id,
+          category_name,
+          barcode,
+          description,
+          image_url,
+          stock,
+          available,
+          created_at,
+          updated_at,
+        ]
+      properties:
+        id: { $ref: '#/components/schemas/Uuid' }
+        name: { type: string }
+        price_millimes: { $ref: '#/components/schemas/Millimes' }
+        category_id: { oneOf: [{ $ref: '#/components/schemas/Uuid' }, { type: 'null' }] }
+        category_name: { type: [string, 'null'] }
+        barcode: { type: string, description: Empty when the product has none. }
+        description: { type: string }
+        image_url: { type: string }
+        stock:
+          { type: integer, description: The sum of the product's stock movements; may be negative. }
+        available: { type: boolean }
+        created_at: { $ref: '#/components/schemas/Timestamp' }
+        updated_at: { $ref: '#/components/schemas/Timestamp' }
+
+    ProductFields:
+      type: object
+      required: [name, price_millimes, category_id, barcode, description, image_url]
+      properties:
+        name: { type: string, minLength: 1 }
+        price_millimes: { type: integer, format: int64, minimum: 0 }
+        category_id: { oneOf: [{ $ref: '#/components/schemas/Uuid' }, { type: 'null' }] }
+        barcode: { type: string }
+        description: { type: string }
+        image_url: { type: string }
+
+    ProductCreate:
+      allOf:
+        - $ref: '#/components/schemas/ProductFields'
+        - type: object
+          required: [opening_stock]
+          properties:
+            opening_stock: { type: integer, minimum: 0 }
+
+    ProductUpdate:
+      allOf:
+        - $ref: '#/components/schemas/ProductFields'
+        - type: object
+          required: [stock_delta]
+          properties:
+            stock_delta:
+              type: integer
+              description: Counted minus the stock shown when the edit started; written as an adjustment movement.
+
+    ShopSettings:
+      type: object
+      required: [receipt_footer]
+      properties:
+        receipt_footer: { type: string, maxLength: 500 }
+
+    TerminalRegistration:
+      type: object
+      required: [terminal_id, code, last_seq, epoch, open_session]
+      properties:
+        terminal_id: { $ref: '#/components/schemas/Uuid' }
+        code: { $ref: '#/components/schemas/TerminalCode' }
+        last_seq:
+          {
+            type: integer,
+            format: int64,
+            minimum: 0,
+            description: The receipt counter the device adopts.,
+          }
+        epoch: { type: integer, minimum: 0 }
+        open_session:
+          oneOf:
+            - $ref: '#/components/schemas/CashSession'
+            - type: 'null'
+
+    MethodTotals:
+      type: object
+      required: [sales_millimes, refunds_millimes, net_millimes]
+      properties:
+        sales_millimes: { $ref: '#/components/schemas/Millimes' }
+        refunds_millimes: { $ref: '#/components/schemas/Millimes' }
+        net_millimes: { $ref: '#/components/schemas/Millimes' }
+
+    ZReport:
+      type: object
+      description: |
+        gross = sum of sale totals; refunds = sum of refund totals as a positive amount; net = gross - refunds;
+        expected_cash = opening_float + cash sales - cash refunds; variance = counted - expected (null while open).
+      required:
+        - session_id
+        - opening_float_millimes
+        - sales_count
+        - refunds_count
+        - gross_millimes
+        - refunds_millimes
+        - net_millimes
+        - by_method
+        - expected_cash_millimes
+        - counted_cash_millimes
+        - variance_millimes
+        - voids_count
+      properties:
+        session_id: { $ref: '#/components/schemas/Uuid' }
+        opening_float_millimes: { $ref: '#/components/schemas/Millimes' }
+        sales_count: { type: integer, minimum: 0 }
+        refunds_count: { type: integer, minimum: 0 }
+        gross_millimes: { $ref: '#/components/schemas/Millimes' }
+        refunds_millimes: { $ref: '#/components/schemas/Millimes' }
+        net_millimes: { $ref: '#/components/schemas/Millimes' }
+        by_method:
+          type: object
+          required: [cash, card]
+          properties:
+            cash: { $ref: '#/components/schemas/MethodTotals' }
+            card: { $ref: '#/components/schemas/MethodTotals' }
+        expected_cash_millimes: { $ref: '#/components/schemas/Millimes' }
+        counted_cash_millimes: { type: [integer, 'null'], format: int64 }
+        variance_millimes: { type: [integer, 'null'], format: int64 }
+        voids_count: { type: integer, minimum: 0 }
+
+    CashSession:
+      type: object
+      required:
+        [
+          id,
+          terminal_id,
+          terminal_code,
+          opened_by,
+          opened_at,
+          opening_float_millimes,
+          closed_at,
+          closed_by,
+          closing_counted_millimes,
+          force_close_reason,
+          z_report,
+        ]
+      properties:
+        id: { $ref: '#/components/schemas/Uuid' }
+        terminal_id: { $ref: '#/components/schemas/Uuid' }
+        terminal_code: { $ref: '#/components/schemas/TerminalCode' }
+        opened_by: { $ref: '#/components/schemas/Uuid' }
+        opened_at: { $ref: '#/components/schemas/Timestamp' }
+        opening_float_millimes: { $ref: '#/components/schemas/Millimes' }
+        closed_at: { type: [string, 'null'], format: date-time }
+        closed_by: { oneOf: [{ $ref: '#/components/schemas/Uuid' }, { type: 'null' }] }
+        closing_counted_millimes: { type: [integer, 'null'], format: int64 }
+        force_close_reason: { type: [string, 'null'] }
+        z_report:
+          oneOf:
+            - $ref: '#/components/schemas/ZReport'
+            - type: 'null'
+
+    OpenSessionRecord:
+      type: object
+      required:
+        [id, terminal_code, epoch, actor_user_id, opened_at, opening_float_millimes, payload_hash]
+      properties:
+        id: { $ref: '#/components/schemas/Uuid' }
+        terminal_code: { $ref: '#/components/schemas/TerminalCode' }
+        epoch: { type: integer, minimum: 0 }
+        actor_user_id:
+          $ref: '#/components/schemas/Uuid'
+        opened_at: { $ref: '#/components/schemas/Timestamp' }
+        opening_float_millimes: { type: integer, format: int64, minimum: 0 }
+        payload_hash: { $ref: '#/components/schemas/PayloadHash' }
+
+    CloseSessionRecord:
+      type: object
+      required:
+        [
+          id,
+          session_id,
+          terminal_code,
+          epoch,
+          actor_user_id,
+          closed_at,
+          closing_counted_millimes,
+          client_z_report,
+          payload_hash,
+        ]
+      properties:
+        id:
+          $ref: '#/components/schemas/Uuid'
+        session_id: { $ref: '#/components/schemas/Uuid' }
+        terminal_code: { $ref: '#/components/schemas/TerminalCode' }
+        epoch: { type: integer, minimum: 0 }
+        actor_user_id: { $ref: '#/components/schemas/Uuid' }
+        closed_at: { $ref: '#/components/schemas/Timestamp' }
+        closing_counted_millimes: { type: integer, format: int64, minimum: 0 }
+        client_z_report:
+          oneOf:
+            - $ref: '#/components/schemas/ZReport'
+            - type: 'null'
+        payload_hash: { $ref: '#/components/schemas/PayloadHash' }
+
+    WriteStatus:
+      type: string
+      enum: [created, replayed]
+
+    OpenSessionResult:
+      type: object
+      required: [session_id, status, session]
+      properties:
+        session_id: { $ref: '#/components/schemas/Uuid' }
+        status: { $ref: '#/components/schemas/WriteStatus' }
+        session: { $ref: '#/components/schemas/CashSession' }
+
+    CloseSessionResult:
+      type: object
+      required: [session_id, status, z_report]
+      properties:
+        session_id: { $ref: '#/components/schemas/Uuid' }
+        status: { $ref: '#/components/schemas/WriteStatus' }
+        z_report: { $ref: '#/components/schemas/ZReport' }
+
+    SaleLine:
+      type: object
+      description: |
+        Sale line: qty >= 1, line_total = qty * unit_price - line_discount - cart_discount_share.
+        Refund line: qty <= -1, refunds_line_no set, no discounts, line_total <= 0.
+      required:
+        [
+          line_no,
+          product_id,
+          product_name,
+          qty,
+          unit_price_millimes,
+          line_discount_millimes,
+          cart_discount_share_millimes,
+          line_total_millimes,
+          refunds_line_no,
+        ]
+      properties:
+        line_no: { type: integer, minimum: 1 }
+        product_id: { $ref: '#/components/schemas/Uuid' }
+        product_name: { type: string }
+        qty: { type: integer, not: { const: 0 } }
+        unit_price_millimes: { type: integer, format: int64, minimum: 0 }
+        line_discount_millimes: { type: integer, format: int64, minimum: 0 }
+        cart_discount_share_millimes: { type: integer, format: int64, minimum: 0 }
+        line_total_millimes: { $ref: '#/components/schemas/Millimes' }
+        refunds_line_no: { type: [integer, 'null'], minimum: 1 }
+
+    Payment:
+      type: object
+      description: Cash sale - tendered >= total, change = tendered - total. Card sale and every refund - tendered = total, change = 0.
+      required: [method, tendered_millimes, change_millimes]
+      properties:
+        method: { type: string, enum: [cash, card] }
+        tendered_millimes: { $ref: '#/components/schemas/Millimes' }
+        change_millimes: { type: integer, format: int64, minimum: 0 }
+
+    SaleRecord:
+      type: object
+      required:
+        [
+          id,
+          kind,
+          terminal_code,
+          epoch,
+          seq,
+          session_id,
+          created_at,
+          lines,
+          subtotal_millimes,
+          discount_millimes,
+          total_millimes,
+          payment,
+          refunds_sale_id,
+          payload_hash,
+        ]
+      properties:
+        id: { $ref: '#/components/schemas/Uuid' }
+        kind: { type: string, enum: [sale, refund] }
+        terminal_code: { $ref: '#/components/schemas/TerminalCode' }
+        epoch: { type: integer, minimum: 0 }
+        seq:
+          {
+            type: integer,
+            format: int64,
+            minimum: 1,
+            description: "Must be the terminal's last_seq + 1.",
+          }
+        session_id: { $ref: '#/components/schemas/Uuid' }
+        created_at:
+          $ref: '#/components/schemas/Timestamp'
+        lines:
+          type: array
+          minItems: 1
+          items: { $ref: '#/components/schemas/SaleLine' }
+        subtotal_millimes: { $ref: '#/components/schemas/Millimes' }
+        discount_millimes: { type: integer, format: int64, minimum: 0 }
+        total_millimes: { $ref: '#/components/schemas/Millimes' }
+        payment: { $ref: '#/components/schemas/Payment' }
+        refunds_sale_id: { oneOf: [{ $ref: '#/components/schemas/Uuid' }, { type: 'null' }] }
+        payload_hash: { $ref: '#/components/schemas/PayloadHash' }
+
+    RecordSaleResult:
+      type: object
+      required: [sale_id, receipt_number, status]
+      properties:
+        sale_id: { $ref: '#/components/schemas/Uuid' }
+        receipt_number: { type: string, examples: ['T1-42'] }
+        status: { type: string, enum: [created, replayed, voided] }
+
+    SaleLineView:
+      allOf:
+        - $ref: '#/components/schemas/SaleLine'
+        - type: object
+          required: [refunded_qty, refunded_millimes]
+          properties:
+            refunded_qty: { type: integer, minimum: 0 }
+            refunded_millimes: { $ref: '#/components/schemas/Millimes' }
+
+    Sale:
+      type: object
+      required:
+        [
+          id,
+          kind,
+          receipt_number,
+          seq,
+          terminal_id,
+          terminal_code,
+          session_id,
+          refunds_sale_id,
+          payment_method,
+          subtotal_millimes,
+          discount_millimes,
+          total_millimes,
+          tendered_millimes,
+          change_millimes,
+          created_at,
+          received_at,
+          lines,
+        ]
+      properties:
+        id: { $ref: '#/components/schemas/Uuid' }
+        kind: { type: string, enum: [sale, refund] }
+        receipt_number: { type: string }
+        seq: { type: integer, format: int64, minimum: 1 }
+        terminal_id: { $ref: '#/components/schemas/Uuid' }
+        terminal_code: { $ref: '#/components/schemas/TerminalCode' }
+        session_id: { $ref: '#/components/schemas/Uuid' }
+        refunds_sale_id: { oneOf: [{ $ref: '#/components/schemas/Uuid' }, { type: 'null' }] }
+        payment_method: { type: string, enum: [cash, card] }
+        subtotal_millimes: { $ref: '#/components/schemas/Millimes' }
+        discount_millimes: { $ref: '#/components/schemas/Millimes' }
+        total_millimes: { $ref: '#/components/schemas/Millimes' }
+        tendered_millimes: { $ref: '#/components/schemas/Millimes' }
+        change_millimes: { $ref: '#/components/schemas/Millimes' }
+        created_at:
+          $ref: '#/components/schemas/Timestamp'
+        received_at: { $ref: '#/components/schemas/Timestamp' }
+        lines:
+          type: array
+          items: { $ref: '#/components/schemas/SaleLineView' }
+
+    VoidReceiptRequest:
+      type: object
+      required: [record, error_code, reason]
+      properties:
+        record: { $ref: '#/components/schemas/SaleRecord' }
+        error_code: { $ref: '#/components/schemas/ErrorCode' }
+        reason: { type: string, minLength: 1 }
+
+    VoidReceiptResult:
+      type: object
+      required: [sale_id, receipt_number, status]
+      properties:
+        sale_id: { $ref: '#/components/schemas/Uuid' }
+        receipt_number: { type: string }
+        status: { type: string, enum: [voided, replayed, recorded] }

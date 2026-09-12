@@ -1,6 +1,5 @@
 import { clearOfflineState } from '@/features/sync/runtime';
 import type { Backend } from '@/ports';
-import { AppError } from './errors';
 import { backendKind } from './env';
 
 /**
@@ -22,7 +21,9 @@ export async function createBackend(): Promise<Backend> {
       const { createSupabaseBackend } = await import('@/adapters/supabase');
       return createSupabaseBackend();
     }
-    case 'rest':
-      throw new AppError('CONFIG_ERROR', 'The REST backend is not available yet.');
+    case 'rest': {
+      const { createRestBackend } = await import('@/adapters/rest');
+      return createRestBackend();
+    }
   }
 }

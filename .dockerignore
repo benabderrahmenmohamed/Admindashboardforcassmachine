@@ -1,0 +1,45 @@
+# What `COPY . .` must not carry into the build stage.
+#
+# Two of these matter beyond image size. `node_modules` is installed inside the image, for Linux,
+# before the source is copied: the host's copy would replace it and the build would run the wrong
+# platform's esbuild and rollup binaries. `.env` holds whatever the developer points at locally, and
+# a file copied into a layer stays readable to anyone who has the image. The image takes its
+# configuration from build arguments instead.
+
+# Local environment values, including .env.demo: the build never runs in demo mode.
+.env
+.env.*
+
+# Installed in the build stage before the source is copied.
+node_modules
+
+# Build, test and tool output.
+dist
+coverage
+playwright-report
+test-results
+*.log
+
+# Version control and CI.
+.git
+.gitattributes
+.gitignore
+.github
+
+# Not read by a static build: the delivery files themselves, the database, the specs and the docs.
+Dockerfile
+.dockerignore
+docker
+docker-compose.yml
+netlify.toml
+supabase
+e2e
+docs
+contracts
+*.md
+
+# Editor and operating system files.
+.vscode
+.idea
+.DS_Store
+Thumbs.db

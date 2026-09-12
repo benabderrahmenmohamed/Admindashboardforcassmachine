@@ -1,0 +1,15 @@
+# Runs the production build locally at http://localhost:8080.
+# The register needs a secure context (crypto.subtle, Web Locks, service worker): localhost is one.
+# To serve other devices on the shop network, put this behind TLS instead of publishing plain HTTP.
+services:
+  web:
+    build:
+      context: .
+      args:
+        VITE_BACKEND: ${VITE_BACKEND:-memory}
+        VITE_SUPABASE_URL: ${VITE_SUPABASE_URL:-}
+        VITE_SUPABASE_ANON_KEY: ${VITE_SUPABASE_ANON_KEY:-}
+        VITE_API_BASE_URL: ${VITE_API_BASE_URL:-}
+    ports:
+      - '127.0.0.1:8080:8080'
+    restart: unless-stopped

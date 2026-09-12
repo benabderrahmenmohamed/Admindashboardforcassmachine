@@ -1,0 +1,54 @@
+# Static hosting for the public demo. Netlify rather than Vercel because this one committed file is
+# the whole deployment — build command, publish directory, SPA rewrite, cache rules and security
+# headers — with nothing set in a dashboard that a reader of this repo cannot see; and because
+# Netlify's default for everything it serves is `public, max-age=0, must-revalidate`, so a rule we
+# forget to write can never pin a stale service worker. Only the explicit /assets/* rule below opts
+# anything into long caching. The same rules are in docker/nginx.conf for the container image.
+
+[build]
+  command = "npm run build"
+  publish = "dist"
+
+[build.environment]
+  NODE_VERSION = "22"
+  # The only lifecycle script is the Supabase CLI download, which a static build never needs.
+  NPM_FLAGS = "--ignore-scripts"
+  # The public demo is the credential-free in-browser backend, so no keys are configured here.
+  VITE_BACKEND = "memory"
+
+# Netlify applies every matching [[headers]] block and joins repeated header names, so Cache-Control
+# is set in exactly one rule per path: the three below do not overlap, and /* carries none.
+
+# Hashed build output. The name changes whenever the bytes do.
+[[headers]]
+  for = "/assets/*"
+  [headers.values]
+    Cache-Control = "public, max-age=31536000, immutable"
+
+# The service worker is unhashed and its bytes change on every release, so it is always revalidated:
+# a browser installs a new worker only when the script it fetches differs from the one it holds.
+[[headers]]
+  for = "/sw.js"
+  [headers.values]
+    Cache-Control = "no-cache"
+
+# The app shell, which the worker precaches and serves when the register is offline.
+[[headers]]
+  for = "/index.html"
+  [headers.values]
+    Cache-Control = "no-cache"
+
+[[headers]]
+  for = "/*"
+  [headers.values]
+    X-Content-Type-Options = "nosniff"
+    Referrer-Policy = "strict-origin-when-cross-origin"
+    X-Frame-Options = "DENY"
+    Permissions-Policy = "camera=(), microphone=(), geolocation=()"
+
+# Single-page app: every path that is not a file on disk is the app shell. Without `force`, this
+# never shadows /sw.js or /assets/*, which are real files.
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200
