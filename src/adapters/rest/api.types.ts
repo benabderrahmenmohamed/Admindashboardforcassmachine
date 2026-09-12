@@ -4,1153 +4,1142 @@
  */
 
 export interface paths {
-  '/api/v1/auth/token': {
-    parameters: {
-      query?: never;
-      header?: never;
-      path?: never;
-      cookie?: never;
+    "/api/v1/auth/token": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Sign in with email and password. */
+        post: operations["createToken"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
     };
-    get?: never;
-    put?: never;
-    /** Sign in with email and password. */
-    post: operations['createToken'];
-    delete?: never;
-    options?: never;
-    head?: never;
-    patch?: never;
-    trace?: never;
-  };
-  '/api/v1/me': {
-    parameters: {
-      query?: never;
-      header?: never;
-      path?: never;
-      cookie?: never;
+    "/api/v1/me": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The signed-in member and their shop role. */
+        get: operations["getMe"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
     };
-    /** The signed-in member and their shop role. */
-    get: operations['getMe'];
-    put?: never;
-    post?: never;
-    delete?: never;
-    options?: never;
-    head?: never;
-    patch?: never;
-    trace?: never;
-  };
-  '/api/v1/products': {
-    parameters: {
-      query?: never;
-      header?: never;
-      path?: never;
-      cookie?: never;
+    "/api/v1/products": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Products that are not archived, in creation order. */
+        get: operations["listProducts"];
+        put?: never;
+        /** Create a product. Admin only. */
+        post: operations["createProduct"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
     };
-    /** Products that are not archived, in creation order. */
-    get: operations['listProducts'];
-    put?: never;
-    /** Create a product. Admin only. */
-    post: operations['createProduct'];
-    delete?: never;
-    options?: never;
-    head?: never;
-    patch?: never;
-    trace?: never;
-  };
-  '/api/v1/products/{productId}': {
-    parameters: {
-      query?: never;
-      header?: never;
-      path: {
-        productId: components['parameters']['ProductId'];
-      };
-      cookie?: never;
+    "/api/v1/products/{productId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                productId: components["parameters"]["ProductId"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        /** Update a product. Stock changes only by `stock_delta`. Admin only. */
+        put: operations["updateProduct"];
+        post?: never;
+        /** Archive a product. Sales that mention it keep pointing at it. Admin only. */
+        delete: operations["archiveProduct"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
     };
-    get?: never;
-    /** Update a product. Stock changes only by `stock_delta`. Admin only. */
-    put: operations['updateProduct'];
-    post?: never;
-    /** Archive a product. Sales that mention it keep pointing at it. Admin only. */
-    delete: operations['archiveProduct'];
-    options?: never;
-    head?: never;
-    patch?: never;
-    trace?: never;
-  };
-  '/api/v1/categories': {
-    parameters: {
-      query?: never;
-      header?: never;
-      path?: never;
-      cookie?: never;
+    "/api/v1/categories": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["listCategories"];
+        put?: never;
+        /** Create a category. Admin only. */
+        post: operations["createCategory"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
     };
-    get: operations['listCategories'];
-    put?: never;
-    /** Create a category. Admin only. */
-    post: operations['createCategory'];
-    delete?: never;
-    options?: never;
-    head?: never;
-    patch?: never;
-    trace?: never;
-  };
-  '/api/v1/categories/{categoryId}': {
-    parameters: {
-      query?: never;
-      header?: never;
-      path: {
-        categoryId: string;
-      };
-      cookie?: never;
+    "/api/v1/categories/{categoryId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                categoryId: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Delete a category; its products become uncategorised. Admin only. */
+        delete: operations["deleteCategory"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
     };
-    get?: never;
-    put?: never;
-    post?: never;
-    /** Delete a category; its products become uncategorised. Admin only. */
-    delete: operations['deleteCategory'];
-    options?: never;
-    head?: never;
-    patch?: never;
-    trace?: never;
-  };
-  '/api/v1/shop-settings': {
-    parameters: {
-      query?: never;
-      header?: never;
-      path?: never;
-      cookie?: never;
+    "/api/v1/shop-settings": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["getShopSettings"];
+        /** Admin only. */
+        put: operations["updateShopSettings"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
     };
-    get: operations['getShopSettings'];
-    /** Admin only. */
-    put: operations['updateShopSettings'];
-    post?: never;
-    delete?: never;
-    options?: never;
-    head?: never;
-    patch?: never;
-    trace?: never;
-  };
-  '/api/v1/terminals/{terminalCode}/registrations': {
-    parameters: {
-      query?: never;
-      header?: never;
-      path: {
-        terminalCode: components['schemas']['TerminalCode'];
-      };
-      cookie?: never;
+    "/api/v1/terminals/{terminalCode}/registrations": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                terminalCode: components["schemas"]["TerminalCode"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Register this device as the terminal. Admin only.
+         * @description Creates the terminal on first use and bumps its epoch every time, so records from a previously registered device fail with TERMINAL_SUPERSEDED.
+         */
+        post: operations["registerTerminal"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
     };
-    get?: never;
-    put?: never;
-    /**
-     * Register this device as the terminal. Admin only.
-     * @description Creates the terminal on first use and bumps its epoch every time, so records from a previously registered device fail with TERMINAL_SUPERSEDED.
-     */
-    post: operations['registerTerminal'];
-    delete?: never;
-    options?: never;
-    head?: never;
-    patch?: never;
-    trace?: never;
-  };
-  '/api/v1/cash-sessions': {
-    parameters: {
-      query?: never;
-      header?: never;
-      path?: never;
-      cookie?: never;
+    "/api/v1/cash-sessions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Sessions of a terminal, newest first. `status=open` returns at most one. */
+        get: operations["listCashSessions"];
+        put?: never;
+        /** Open a session with the terminal-written record. Idempotent by record id. */
+        post: operations["openCashSession"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
     };
-    /** Sessions of a terminal, newest first. `status=open` returns at most one. */
-    get: operations['listCashSessions'];
-    put?: never;
-    /** Open a session with the terminal-written record. Idempotent by record id. */
-    post: operations['openCashSession'];
-    delete?: never;
-    options?: never;
-    head?: never;
-    patch?: never;
-    trace?: never;
-  };
-  '/api/v1/cash-sessions/{sessionId}/closures': {
-    parameters: {
-      query?: never;
-      header?: never;
-      path: {
-        sessionId: components['parameters']['SessionId'];
-      };
-      cookie?: never;
+    "/api/v1/cash-sessions/{sessionId}/closures": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                sessionId: components["parameters"]["SessionId"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Close a session with the terminal-written record. Only the terminal that owns it can close it. */
+        post: operations["closeCashSession"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
     };
-    get?: never;
-    put?: never;
-    /** Close a session with the terminal-written record. Only the terminal that owns it can close it. */
-    post: operations['closeCashSession'];
-    delete?: never;
-    options?: never;
-    head?: never;
-    patch?: never;
-    trace?: never;
-  };
-  '/api/v1/cash-sessions/{sessionId}/z-report': {
-    parameters: {
-      query?: never;
-      header?: never;
-      path: {
-        sessionId: components['parameters']['SessionId'];
-      };
-      cookie?: never;
+    "/api/v1/cash-sessions/{sessionId}/z-report": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                sessionId: components["parameters"]["SessionId"];
+            };
+            cookie?: never;
+        };
+        /** The stored report of a closed session, or the running report of an open one. */
+        get: operations["getZReport"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
     };
-    /** The stored report of a closed session, or the running report of an open one. */
-    get: operations['getZReport'];
-    put?: never;
-    post?: never;
-    delete?: never;
-    options?: never;
-    head?: never;
-    patch?: never;
-    trace?: never;
-  };
-  '/api/v1/sales': {
-    parameters: {
-      query?: never;
-      header?: never;
-      path?: never;
-      cookie?: never;
+    "/api/v1/sales": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Sales and refunds, newest first. */
+        get: operations["listSales"];
+        put?: never;
+        /** Record a sale or refund written by a terminal. Idempotent by record id. */
+        post: operations["recordSale"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
     };
-    /** Sales and refunds, newest first. */
-    get: operations['listSales'];
-    put?: never;
-    /** Record a sale or refund written by a terminal. Idempotent by record id. */
-    post: operations['recordSale'];
-    delete?: never;
-    options?: never;
-    head?: never;
-    patch?: never;
-    trace?: never;
-  };
-  '/api/v1/sales/{saleId}': {
-    parameters: {
-      query?: never;
-      header?: never;
-      path: {
-        saleId: string;
-      };
-      cookie?: never;
+    "/api/v1/sales/{saleId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                saleId: string;
+            };
+            cookie?: never;
+        };
+        get: operations["getSale"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
     };
-    get: operations['getSale'];
-    put?: never;
-    post?: never;
-    delete?: never;
-    options?: never;
-    head?: never;
-    patch?: never;
-    trace?: never;
-  };
-  '/api/v1/receipt-voids': {
-    parameters: {
-      query?: never;
-      header?: never;
-      path?: never;
-      cookie?: never;
+    "/api/v1/receipt-voids": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Void a numbered record that can never be accepted, keeping the terminal's numbering gapless. Admin only. */
+        post: operations["voidReceipt"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
     };
-    get?: never;
-    put?: never;
-    /** Void a numbered record that can never be accepted, keeping the terminal's numbering gapless. Admin only. */
-    post: operations['voidReceipt'];
-    delete?: never;
-    options?: never;
-    head?: never;
-    patch?: never;
-    trace?: never;
-  };
 }
 export type webhooks = Record<string, never>;
 export interface components {
-  schemas: {
-    /**
-     * Format: int64
-     * @description An amount in millimes. 12.500 TND is 12500.
-     */
-    Millimes: number;
-    /** Format: uuid */
-    Uuid: string;
-    /** Format: date-time */
-    Timestamp: string;
-    /** @description SHA-256, lowercase hex, of the canonical JSON of the record as the terminal built it, without this field. Stored and compared, never recomputed. */
-    PayloadHash: string;
-    TerminalCode: string;
-    /** @enum {string} */
-    ErrorCode:
-      | 'UNAUTHENTICATED'
-      | 'FORBIDDEN'
-      | 'NOT_FOUND'
-      | 'VALIDATION_ERROR'
-      | 'IDEMPOTENCY_CONFLICT'
-      | 'SEQUENCE_GAP'
-      | 'SESSION_CLOSED'
-      | 'SESSION_ALREADY_OPEN'
-      | 'TERMINAL_SUPERSEDED'
-      | 'RATE_LIMITED'
-      | 'SERVER_ERROR';
-    ErrorEnvelope: {
-      error: {
-        code: components['schemas']['ErrorCode'];
-        /** @description A sentence for people. Never parse it. */
-        message: string;
-        /** @description Machine-readable context, e.g. { "expected_seq": 42, "received_seq": 43 } for SEQUENCE_GAP. */
-        details?: {
-          [key: string]: unknown;
+    schemas: {
+        /**
+         * Format: int64
+         * @description An amount in millimes. 12.500 TND is 12500.
+         */
+        Millimes: number;
+        /** Format: uuid */
+        Uuid: string;
+        /** Format: date-time */
+        Timestamp: string;
+        /** @description SHA-256, lowercase hex, of the canonical JSON of the record as the terminal built it, without this field. Stored and compared, never recomputed. */
+        PayloadHash: string;
+        TerminalCode: string;
+        /** @enum {string} */
+        ErrorCode: "UNAUTHENTICATED" | "FORBIDDEN" | "NOT_FOUND" | "VALIDATION_ERROR" | "IDEMPOTENCY_CONFLICT" | "SEQUENCE_GAP" | "SESSION_CLOSED" | "SESSION_ALREADY_OPEN" | "TERMINAL_SUPERSEDED" | "RATE_LIMITED" | "SERVER_ERROR";
+        ErrorEnvelope: {
+            error: {
+                code: components["schemas"]["ErrorCode"];
+                /** @description A sentence for people. Never parse it. */
+                message: string;
+                /** @description Machine-readable context, e.g. { "expected_seq": 42, "received_seq": 43 } for SEQUENCE_GAP. */
+                details?: {
+                    [key: string]: unknown;
+                };
+            };
         };
-      };
+        Credentials: {
+            /** Format: email */
+            email: string;
+            password: string;
+        };
+        Token: {
+            access_token: string;
+            /** @enum {string} */
+            token_type: "bearer";
+            /** @description Seconds. */
+            expires_in: number;
+            member: components["schemas"]["Member"];
+        };
+        Member: {
+            user_id: components["schemas"]["Uuid"];
+            shop_id: components["schemas"]["Uuid"];
+            /** @enum {string} */
+            role: "admin" | "cashier";
+            display_name: string;
+            email: string;
+        };
+        Category: {
+            id: components["schemas"]["Uuid"];
+            name: string;
+            color: string;
+            created_at: components["schemas"]["Timestamp"];
+        };
+        CategoryCreate: {
+            name: string;
+            color: string;
+        };
+        Product: {
+            id: components["schemas"]["Uuid"];
+            name: string;
+            price_millimes: components["schemas"]["Millimes"];
+            category_id: components["schemas"]["Uuid"] | null;
+            category_name: string | null;
+            /** @description Empty when the product has none. */
+            barcode: string;
+            description: string;
+            image_url: string;
+            /** @description The sum of the product's stock movements; may be negative. */
+            stock: number;
+            available: boolean;
+            created_at: components["schemas"]["Timestamp"];
+            updated_at: components["schemas"]["Timestamp"];
+        };
+        ProductFields: {
+            name: string;
+            /** Format: int64 */
+            price_millimes: number;
+            category_id: components["schemas"]["Uuid"] | null;
+            barcode: string;
+            description: string;
+            image_url: string;
+        };
+        ProductCreate: components["schemas"]["ProductFields"] & {
+            opening_stock: number;
+        };
+        ProductUpdate: components["schemas"]["ProductFields"] & {
+            /** @description Counted minus the stock shown when the edit started; written as an adjustment movement. */
+            stock_delta: number;
+        };
+        ShopSettings: {
+            receipt_footer: string;
+        };
+        TerminalRegistration: {
+            terminal_id: components["schemas"]["Uuid"];
+            code: components["schemas"]["TerminalCode"];
+            /**
+             * Format: int64
+             * @description The receipt counter the device adopts.
+             */
+            last_seq: number;
+            epoch: number;
+            open_session: components["schemas"]["CashSession"] | null;
+        };
+        MethodTotals: {
+            sales_millimes: components["schemas"]["Millimes"];
+            refunds_millimes: components["schemas"]["Millimes"];
+            net_millimes: components["schemas"]["Millimes"];
+        };
+        /**
+         * @description gross = sum of sale totals; refunds = sum of refund totals as a positive amount; net = gross - refunds;
+         *     expected_cash = opening_float + cash sales - cash refunds; variance = counted - expected (null while open).
+         */
+        ZReport: {
+            session_id: components["schemas"]["Uuid"];
+            opening_float_millimes: components["schemas"]["Millimes"];
+            sales_count: number;
+            refunds_count: number;
+            gross_millimes: components["schemas"]["Millimes"];
+            refunds_millimes: components["schemas"]["Millimes"];
+            net_millimes: components["schemas"]["Millimes"];
+            by_method: {
+                cash: components["schemas"]["MethodTotals"];
+                card: components["schemas"]["MethodTotals"];
+            };
+            expected_cash_millimes: components["schemas"]["Millimes"];
+            /** Format: int64 */
+            counted_cash_millimes: number | null;
+            /** Format: int64 */
+            variance_millimes: number | null;
+            voids_count: number;
+        };
+        CashSession: {
+            id: components["schemas"]["Uuid"];
+            terminal_id: components["schemas"]["Uuid"];
+            terminal_code: components["schemas"]["TerminalCode"];
+            opened_by: components["schemas"]["Uuid"];
+            opened_at: components["schemas"]["Timestamp"];
+            opening_float_millimes: components["schemas"]["Millimes"];
+            /** Format: date-time */
+            closed_at: string | null;
+            closed_by: components["schemas"]["Uuid"] | null;
+            /** Format: int64 */
+            closing_counted_millimes: number | null;
+            force_close_reason: string | null;
+            z_report: components["schemas"]["ZReport"] | null;
+        };
+        OpenSessionRecord: {
+            id: components["schemas"]["Uuid"];
+            terminal_code: components["schemas"]["TerminalCode"];
+            epoch: number;
+            actor_user_id: components["schemas"]["Uuid"];
+            opened_at: components["schemas"]["Timestamp"];
+            /** Format: int64 */
+            opening_float_millimes: number;
+            payload_hash: components["schemas"]["PayloadHash"];
+        };
+        CloseSessionRecord: {
+            id: components["schemas"]["Uuid"];
+            session_id: components["schemas"]["Uuid"];
+            terminal_code: components["schemas"]["TerminalCode"];
+            epoch: number;
+            actor_user_id: components["schemas"]["Uuid"];
+            closed_at: components["schemas"]["Timestamp"];
+            /** Format: int64 */
+            closing_counted_millimes: number;
+            client_z_report: components["schemas"]["ZReport"] | null;
+            payload_hash: components["schemas"]["PayloadHash"];
+        };
+        /** @enum {string} */
+        WriteStatus: "created" | "replayed";
+        OpenSessionResult: {
+            session_id: components["schemas"]["Uuid"];
+            status: components["schemas"]["WriteStatus"];
+            session: components["schemas"]["CashSession"];
+        };
+        CloseSessionResult: {
+            session_id: components["schemas"]["Uuid"];
+            status: components["schemas"]["WriteStatus"];
+            z_report: components["schemas"]["ZReport"];
+        };
+        /**
+         * @description Sale line: qty >= 1, line_total = qty * unit_price - line_discount - cart_discount_share.
+         *     Refund line: qty <= -1, refunds_line_no set, no discounts, line_total <= 0.
+         */
+        SaleLine: {
+            line_no: number;
+            product_id: components["schemas"]["Uuid"];
+            product_name: string;
+            qty: number;
+            /** Format: int64 */
+            unit_price_millimes: number;
+            /** Format: int64 */
+            line_discount_millimes: number;
+            /** Format: int64 */
+            cart_discount_share_millimes: number;
+            line_total_millimes: components["schemas"]["Millimes"];
+            refunds_line_no: number | null;
+        };
+        /** @description Cash sale - tendered >= total, change = tendered - total. Card sale and every refund - tendered = total, change = 0. */
+        Payment: {
+            /** @enum {string} */
+            method: "cash" | "card";
+            tendered_millimes: components["schemas"]["Millimes"];
+            /** Format: int64 */
+            change_millimes: number;
+        };
+        SaleRecord: {
+            id: components["schemas"]["Uuid"];
+            /** @enum {string} */
+            kind: "sale" | "refund";
+            terminal_code: components["schemas"]["TerminalCode"];
+            epoch: number;
+            /**
+             * Format: int64
+             * @description Must be the terminal's last_seq + 1.
+             */
+            seq: number;
+            session_id: components["schemas"]["Uuid"];
+            created_at: components["schemas"]["Timestamp"];
+            lines: components["schemas"]["SaleLine"][];
+            subtotal_millimes: components["schemas"]["Millimes"];
+            /** Format: int64 */
+            discount_millimes: number;
+            total_millimes: components["schemas"]["Millimes"];
+            payment: components["schemas"]["Payment"];
+            refunds_sale_id: components["schemas"]["Uuid"] | null;
+            payload_hash: components["schemas"]["PayloadHash"];
+        };
+        RecordSaleResult: {
+            sale_id: components["schemas"]["Uuid"];
+            /** @example T1-42 */
+            receipt_number: string;
+            /** @enum {string} */
+            status: "created" | "replayed" | "voided";
+        };
+        SaleLineView: components["schemas"]["SaleLine"] & {
+            refunded_qty: number;
+            refunded_millimes: components["schemas"]["Millimes"];
+        };
+        Sale: {
+            id: components["schemas"]["Uuid"];
+            /** @enum {string} */
+            kind: "sale" | "refund";
+            receipt_number: string;
+            /** Format: int64 */
+            seq: number;
+            terminal_id: components["schemas"]["Uuid"];
+            terminal_code: components["schemas"]["TerminalCode"];
+            session_id: components["schemas"]["Uuid"];
+            refunds_sale_id: components["schemas"]["Uuid"] | null;
+            /** @enum {string} */
+            payment_method: "cash" | "card";
+            subtotal_millimes: components["schemas"]["Millimes"];
+            discount_millimes: components["schemas"]["Millimes"];
+            total_millimes: components["schemas"]["Millimes"];
+            tendered_millimes: components["schemas"]["Millimes"];
+            change_millimes: components["schemas"]["Millimes"];
+            created_at: components["schemas"]["Timestamp"];
+            received_at: components["schemas"]["Timestamp"];
+            lines: components["schemas"]["SaleLineView"][];
+        };
+        VoidReceiptRequest: {
+            record: components["schemas"]["SaleRecord"];
+            error_code: components["schemas"]["ErrorCode"];
+            reason: string;
+        };
+        VoidReceiptResult: {
+            sale_id: components["schemas"]["Uuid"];
+            receipt_number: string;
+            /** @enum {string} */
+            status: "voided" | "replayed" | "recorded";
+        };
     };
-    Credentials: {
-      /** Format: email */
-      email: string;
-      password: string;
+    responses: {
+        /** @description No session, or it expired (UNAUTHENTICATED). */
+        Unauthenticated: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": components["schemas"]["ErrorEnvelope"];
+            };
+        };
+        /** @description Not allowed for this member, shop, terminal or session (FORBIDDEN). */
+        Forbidden: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": components["schemas"]["ErrorEnvelope"];
+            };
+        };
+        /** @description The resource does not exist in the caller's shop (NOT_FOUND). */
+        NotFound: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": components["schemas"]["ErrorEnvelope"];
+            };
+        };
+        /** @description IDEMPOTENCY_CONFLICT, SEQUENCE_GAP, SESSION_CLOSED, SESSION_ALREADY_OPEN or TERMINAL_SUPERSEDED. */
+        Conflict: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": components["schemas"]["ErrorEnvelope"];
+            };
+        };
+        /** @description A malformed payload or a broken business rule (VALIDATION_ERROR). */
+        ValidationError: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": components["schemas"]["ErrorEnvelope"];
+            };
+        };
     };
-    Token: {
-      access_token: string;
-      /** @enum {string} */
-      token_type: 'bearer';
-      /** @description Seconds. */
-      expires_in: number;
-      member: components['schemas']['Member'];
+    parameters: {
+        ProductId: string;
+        SessionId: string;
     };
-    Member: {
-      user_id: components['schemas']['Uuid'];
-      shop_id: components['schemas']['Uuid'];
-      /** @enum {string} */
-      role: 'admin' | 'cashier';
-      display_name: string;
-      email: string;
-    };
-    Category: {
-      id: components['schemas']['Uuid'];
-      name: string;
-      color: string;
-      created_at: components['schemas']['Timestamp'];
-    };
-    CategoryCreate: {
-      name: string;
-      color: string;
-    };
-    Product: {
-      id: components['schemas']['Uuid'];
-      name: string;
-      price_millimes: components['schemas']['Millimes'];
-      category_id: components['schemas']['Uuid'] | null;
-      category_name: string | null;
-      /** @description Empty when the product has none. */
-      barcode: string;
-      description: string;
-      image_url: string;
-      /** @description The sum of the product's stock movements; may be negative. */
-      stock: number;
-      available: boolean;
-      created_at: components['schemas']['Timestamp'];
-      updated_at: components['schemas']['Timestamp'];
-    };
-    ProductFields: {
-      name: string;
-      /** Format: int64 */
-      price_millimes: number;
-      category_id: components['schemas']['Uuid'] | null;
-      barcode: string;
-      description: string;
-      image_url: string;
-    };
-    ProductCreate: components['schemas']['ProductFields'] & {
-      opening_stock: number;
-    };
-    ProductUpdate: components['schemas']['ProductFields'] & {
-      /** @description Counted minus the stock shown when the edit started; written as an adjustment movement. */
-      stock_delta: number;
-    };
-    ShopSettings: {
-      receipt_footer: string;
-    };
-    TerminalRegistration: {
-      terminal_id: components['schemas']['Uuid'];
-      code: components['schemas']['TerminalCode'];
-      /**
-       * Format: int64
-       * @description The receipt counter the device adopts.
-       */
-      last_seq: number;
-      epoch: number;
-      open_session: components['schemas']['CashSession'] | null;
-    };
-    MethodTotals: {
-      sales_millimes: components['schemas']['Millimes'];
-      refunds_millimes: components['schemas']['Millimes'];
-      net_millimes: components['schemas']['Millimes'];
-    };
-    /**
-     * @description gross = sum of sale totals; refunds = sum of refund totals as a positive amount; net = gross - refunds;
-     *     expected_cash = opening_float + cash sales - cash refunds; variance = counted - expected (null while open).
-     */
-    ZReport: {
-      session_id: components['schemas']['Uuid'];
-      opening_float_millimes: components['schemas']['Millimes'];
-      sales_count: number;
-      refunds_count: number;
-      gross_millimes: components['schemas']['Millimes'];
-      refunds_millimes: components['schemas']['Millimes'];
-      net_millimes: components['schemas']['Millimes'];
-      by_method: {
-        cash: components['schemas']['MethodTotals'];
-        card: components['schemas']['MethodTotals'];
-      };
-      expected_cash_millimes: components['schemas']['Millimes'];
-      /** Format: int64 */
-      counted_cash_millimes: number | null;
-      /** Format: int64 */
-      variance_millimes: number | null;
-      voids_count: number;
-    };
-    CashSession: {
-      id: components['schemas']['Uuid'];
-      terminal_id: components['schemas']['Uuid'];
-      terminal_code: components['schemas']['TerminalCode'];
-      opened_by: components['schemas']['Uuid'];
-      opened_at: components['schemas']['Timestamp'];
-      opening_float_millimes: components['schemas']['Millimes'];
-      /** Format: date-time */
-      closed_at: string | null;
-      closed_by: components['schemas']['Uuid'] | null;
-      /** Format: int64 */
-      closing_counted_millimes: number | null;
-      force_close_reason: string | null;
-      z_report: components['schemas']['ZReport'] | null;
-    };
-    OpenSessionRecord: {
-      id: components['schemas']['Uuid'];
-      terminal_code: components['schemas']['TerminalCode'];
-      epoch: number;
-      actor_user_id: components['schemas']['Uuid'];
-      opened_at: components['schemas']['Timestamp'];
-      /** Format: int64 */
-      opening_float_millimes: number;
-      payload_hash: components['schemas']['PayloadHash'];
-    };
-    CloseSessionRecord: {
-      id: components['schemas']['Uuid'];
-      session_id: components['schemas']['Uuid'];
-      terminal_code: components['schemas']['TerminalCode'];
-      epoch: number;
-      actor_user_id: components['schemas']['Uuid'];
-      closed_at: components['schemas']['Timestamp'];
-      /** Format: int64 */
-      closing_counted_millimes: number;
-      client_z_report: components['schemas']['ZReport'] | null;
-      payload_hash: components['schemas']['PayloadHash'];
-    };
-    /** @enum {string} */
-    WriteStatus: 'created' | 'replayed';
-    OpenSessionResult: {
-      session_id: components['schemas']['Uuid'];
-      status: components['schemas']['WriteStatus'];
-      session: components['schemas']['CashSession'];
-    };
-    CloseSessionResult: {
-      session_id: components['schemas']['Uuid'];
-      status: components['schemas']['WriteStatus'];
-      z_report: components['schemas']['ZReport'];
-    };
-    /**
-     * @description Sale line: qty >= 1, line_total = qty * unit_price - line_discount - cart_discount_share.
-     *     Refund line: qty <= -1, refunds_line_no set, no discounts, line_total <= 0.
-     */
-    SaleLine: {
-      line_no: number;
-      product_id: components['schemas']['Uuid'];
-      product_name: string;
-      qty: number;
-      /** Format: int64 */
-      unit_price_millimes: number;
-      /** Format: int64 */
-      line_discount_millimes: number;
-      /** Format: int64 */
-      cart_discount_share_millimes: number;
-      line_total_millimes: components['schemas']['Millimes'];
-      refunds_line_no: number | null;
-    };
-    /** @description Cash sale - tendered >= total, change = tendered - total. Card sale and every refund - tendered = total, change = 0. */
-    Payment: {
-      /** @enum {string} */
-      method: 'cash' | 'card';
-      tendered_millimes: components['schemas']['Millimes'];
-      /** Format: int64 */
-      change_millimes: number;
-    };
-    SaleRecord: {
-      id: components['schemas']['Uuid'];
-      /** @enum {string} */
-      kind: 'sale' | 'refund';
-      terminal_code: components['schemas']['TerminalCode'];
-      epoch: number;
-      /**
-       * Format: int64
-       * @description Must be the terminal's last_seq + 1.
-       */
-      seq: number;
-      session_id: components['schemas']['Uuid'];
-      created_at: components['schemas']['Timestamp'];
-      lines: components['schemas']['SaleLine'][];
-      subtotal_millimes: components['schemas']['Millimes'];
-      /** Format: int64 */
-      discount_millimes: number;
-      total_millimes: components['schemas']['Millimes'];
-      payment: components['schemas']['Payment'];
-      refunds_sale_id: components['schemas']['Uuid'] | null;
-      payload_hash: components['schemas']['PayloadHash'];
-    };
-    RecordSaleResult: {
-      sale_id: components['schemas']['Uuid'];
-      /** @example T1-42 */
-      receipt_number: string;
-      /** @enum {string} */
-      status: 'created' | 'replayed' | 'voided';
-    };
-    SaleLineView: components['schemas']['SaleLine'] & {
-      refunded_qty: number;
-      refunded_millimes: components['schemas']['Millimes'];
-    };
-    Sale: {
-      id: components['schemas']['Uuid'];
-      /** @enum {string} */
-      kind: 'sale' | 'refund';
-      receipt_number: string;
-      /** Format: int64 */
-      seq: number;
-      terminal_id: components['schemas']['Uuid'];
-      terminal_code: components['schemas']['TerminalCode'];
-      session_id: components['schemas']['Uuid'];
-      refunds_sale_id: components['schemas']['Uuid'] | null;
-      /** @enum {string} */
-      payment_method: 'cash' | 'card';
-      subtotal_millimes: components['schemas']['Millimes'];
-      discount_millimes: components['schemas']['Millimes'];
-      total_millimes: components['schemas']['Millimes'];
-      tendered_millimes: components['schemas']['Millimes'];
-      change_millimes: components['schemas']['Millimes'];
-      created_at: components['schemas']['Timestamp'];
-      received_at: components['schemas']['Timestamp'];
-      lines: components['schemas']['SaleLineView'][];
-    };
-    VoidReceiptRequest: {
-      record: components['schemas']['SaleRecord'];
-      error_code: components['schemas']['ErrorCode'];
-      reason: string;
-    };
-    VoidReceiptResult: {
-      sale_id: components['schemas']['Uuid'];
-      receipt_number: string;
-      /** @enum {string} */
-      status: 'voided' | 'replayed' | 'recorded';
-    };
-  };
-  responses: {
-    /** @description No session, or it expired (UNAUTHENTICATED). */
-    Unauthenticated: {
-      headers: {
-        [name: string]: unknown;
-      };
-      content: {
-        'application/json': components['schemas']['ErrorEnvelope'];
-      };
-    };
-    /** @description Not allowed for this member, shop, terminal or session (FORBIDDEN). */
-    Forbidden: {
-      headers: {
-        [name: string]: unknown;
-      };
-      content: {
-        'application/json': components['schemas']['ErrorEnvelope'];
-      };
-    };
-    /** @description The resource does not exist in the caller's shop (NOT_FOUND). */
-    NotFound: {
-      headers: {
-        [name: string]: unknown;
-      };
-      content: {
-        'application/json': components['schemas']['ErrorEnvelope'];
-      };
-    };
-    /** @description IDEMPOTENCY_CONFLICT, SEQUENCE_GAP, SESSION_CLOSED, SESSION_ALREADY_OPEN or TERMINAL_SUPERSEDED. */
-    Conflict: {
-      headers: {
-        [name: string]: unknown;
-      };
-      content: {
-        'application/json': components['schemas']['ErrorEnvelope'];
-      };
-    };
-    /** @description A malformed payload or a broken business rule (VALIDATION_ERROR). */
-    ValidationError: {
-      headers: {
-        [name: string]: unknown;
-      };
-      content: {
-        'application/json': components['schemas']['ErrorEnvelope'];
-      };
-    };
-  };
-  parameters: {
-    ProductId: string;
-    SessionId: string;
-  };
-  requestBodies: never;
-  headers: never;
-  pathItems: never;
+    requestBodies: never;
+    headers: never;
+    pathItems: never;
 }
 export type $defs = Record<string, never>;
 export interface operations {
-  createToken: {
-    parameters: {
-      query?: never;
-      header?: never;
-      path?: never;
-      cookie?: never;
-    };
-    requestBody: {
-      content: {
-        'application/json': components['schemas']['Credentials'];
-      };
-    };
-    responses: {
-      /** @description Signed in. */
-      200: {
-        headers: {
-          [name: string]: unknown;
+    createToken: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
         };
-        content: {
-          'application/json': components['schemas']['Token'];
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["Credentials"];
+            };
         };
-      };
-      401: components['responses']['Unauthenticated'];
-      403: components['responses']['Forbidden'];
-      422: components['responses']['ValidationError'];
-    };
-  };
-  getMe: {
-    parameters: {
-      query?: never;
-      header?: never;
-      path?: never;
-      cookie?: never;
-    };
-    requestBody?: never;
-    responses: {
-      /** @description The member. */
-      200: {
-        headers: {
-          [name: string]: unknown;
+        responses: {
+            /** @description Signed in. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Token"];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            422: components["responses"]["ValidationError"];
         };
-        content: {
-          'application/json': components['schemas']['Member'];
+    };
+    getMe: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
         };
-      };
-      401: components['responses']['Unauthenticated'];
-      403: components['responses']['Forbidden'];
-    };
-  };
-  listProducts: {
-    parameters: {
-      query?: never;
-      header?: never;
-      path?: never;
-      cookie?: never;
-    };
-    requestBody?: never;
-    responses: {
-      /** @description Products. */
-      200: {
-        headers: {
-          [name: string]: unknown;
+        requestBody?: never;
+        responses: {
+            /** @description The member. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Member"];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
         };
-        content: {
-          'application/json': components['schemas']['Product'][];
+    };
+    listProducts: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
         };
-      };
-      401: components['responses']['Unauthenticated'];
-      403: components['responses']['Forbidden'];
-    };
-  };
-  createProduct: {
-    parameters: {
-      query?: never;
-      header?: never;
-      path?: never;
-      cookie?: never;
-    };
-    requestBody: {
-      content: {
-        'application/json': components['schemas']['ProductCreate'];
-      };
-    };
-    responses: {
-      /** @description Created. */
-      201: {
-        headers: {
-          [name: string]: unknown;
+        requestBody?: never;
+        responses: {
+            /** @description Products. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Product"][];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
         };
-        content: {
-          'application/json': components['schemas']['Product'];
+    };
+    createProduct: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
         };
-      };
-      401: components['responses']['Unauthenticated'];
-      403: components['responses']['Forbidden'];
-      422: components['responses']['ValidationError'];
-    };
-  };
-  updateProduct: {
-    parameters: {
-      query?: never;
-      header?: never;
-      path: {
-        productId: components['parameters']['ProductId'];
-      };
-      cookie?: never;
-    };
-    requestBody: {
-      content: {
-        'application/json': components['schemas']['ProductUpdate'];
-      };
-    };
-    responses: {
-      /** @description Updated. */
-      200: {
-        headers: {
-          [name: string]: unknown;
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ProductCreate"];
+            };
         };
-        content: {
-          'application/json': components['schemas']['Product'];
+        responses: {
+            /** @description Created. */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Product"];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            422: components["responses"]["ValidationError"];
         };
-      };
-      401: components['responses']['Unauthenticated'];
-      403: components['responses']['Forbidden'];
-      404: components['responses']['NotFound'];
-      422: components['responses']['ValidationError'];
     };
-  };
-  archiveProduct: {
-    parameters: {
-      query?: never;
-      header?: never;
-      path: {
-        productId: components['parameters']['ProductId'];
-      };
-      cookie?: never;
-    };
-    requestBody?: never;
-    responses: {
-      /** @description Archived. */
-      204: {
-        headers: {
-          [name: string]: unknown;
+    updateProduct: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                productId: components["parameters"]["ProductId"];
+            };
+            cookie?: never;
         };
-        content?: never;
-      };
-      401: components['responses']['Unauthenticated'];
-      403: components['responses']['Forbidden'];
-      404: components['responses']['NotFound'];
-    };
-  };
-  listCategories: {
-    parameters: {
-      query?: never;
-      header?: never;
-      path?: never;
-      cookie?: never;
-    };
-    requestBody?: never;
-    responses: {
-      /** @description Categories. */
-      200: {
-        headers: {
-          [name: string]: unknown;
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ProductUpdate"];
+            };
         };
-        content: {
-          'application/json': components['schemas']['Category'][];
+        responses: {
+            /** @description Updated. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Product"];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            422: components["responses"]["ValidationError"];
         };
-      };
-      401: components['responses']['Unauthenticated'];
-      403: components['responses']['Forbidden'];
     };
-  };
-  createCategory: {
-    parameters: {
-      query?: never;
-      header?: never;
-      path?: never;
-      cookie?: never;
+    archiveProduct: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                productId: components["parameters"]["ProductId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Archived. */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+        };
     };
-    requestBody: {
-      content: {
-        'application/json': components['schemas']['CategoryCreate'];
-      };
+    listCategories: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Categories. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Category"][];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+        };
     };
-    responses: {
-      /** @description Created. */
-      201: {
-        headers: {
-          [name: string]: unknown;
+    createCategory: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
         };
-        content: {
-          'application/json': components['schemas']['Category'];
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CategoryCreate"];
+            };
         };
-      };
-      401: components['responses']['Unauthenticated'];
-      403: components['responses']['Forbidden'];
-      422: components['responses']['ValidationError'];
+        responses: {
+            /** @description Created. */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Category"];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            422: components["responses"]["ValidationError"];
+        };
     };
-  };
-  deleteCategory: {
-    parameters: {
-      query?: never;
-      header?: never;
-      path: {
-        categoryId: string;
-      };
-      cookie?: never;
+    deleteCategory: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                categoryId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Deleted. */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+        };
     };
-    requestBody?: never;
-    responses: {
-      /** @description Deleted. */
-      204: {
-        headers: {
-          [name: string]: unknown;
+    getShopSettings: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
         };
-        content?: never;
-      };
-      401: components['responses']['Unauthenticated'];
-      403: components['responses']['Forbidden'];
-      404: components['responses']['NotFound'];
+        requestBody?: never;
+        responses: {
+            /** @description Settings. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ShopSettings"];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+        };
     };
-  };
-  getShopSettings: {
-    parameters: {
-      query?: never;
-      header?: never;
-      path?: never;
-      cookie?: never;
+    updateShopSettings: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ShopSettings"];
+            };
+        };
+        responses: {
+            /** @description Saved. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ShopSettings"];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            422: components["responses"]["ValidationError"];
+        };
     };
-    requestBody?: never;
-    responses: {
-      /** @description Settings. */
-      200: {
-        headers: {
-          [name: string]: unknown;
+    registerTerminal: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                terminalCode: components["schemas"]["TerminalCode"];
+            };
+            cookie?: never;
         };
-        content: {
-          'application/json': components['schemas']['ShopSettings'];
+        requestBody?: never;
+        responses: {
+            /** @description Registered. */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TerminalRegistration"];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            422: components["responses"]["ValidationError"];
         };
-      };
-      401: components['responses']['Unauthenticated'];
-      403: components['responses']['Forbidden'];
     };
-  };
-  updateShopSettings: {
-    parameters: {
-      query?: never;
-      header?: never;
-      path?: never;
-      cookie?: never;
+    listCashSessions: {
+        parameters: {
+            query: {
+                terminal_id: string;
+                status?: "open" | "closed";
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Sessions. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CashSession"][];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+        };
     };
-    requestBody: {
-      content: {
-        'application/json': components['schemas']['ShopSettings'];
-      };
+    openCashSession: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["OpenSessionRecord"];
+            };
+        };
+        responses: {
+            /** @description Already opened by this same record (replayed). */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OpenSessionResult"];
+                };
+            };
+            /** @description Opened. */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OpenSessionResult"];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            409: components["responses"]["Conflict"];
+            422: components["responses"]["ValidationError"];
+        };
     };
-    responses: {
-      /** @description Saved. */
-      200: {
-        headers: {
-          [name: string]: unknown;
+    closeCashSession: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                sessionId: components["parameters"]["SessionId"];
+            };
+            cookie?: never;
         };
-        content: {
-          'application/json': components['schemas']['ShopSettings'];
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CloseSessionRecord"];
+            };
         };
-      };
-      401: components['responses']['Unauthenticated'];
-      403: components['responses']['Forbidden'];
-      422: components['responses']['ValidationError'];
+        responses: {
+            /** @description Already closed by this same record (replayed); the Z-report stored at close time. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CloseSessionResult"];
+                };
+            };
+            /** @description Closed; the server's Z-report. */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CloseSessionResult"];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            422: components["responses"]["ValidationError"];
+        };
     };
-  };
-  registerTerminal: {
-    parameters: {
-      query?: never;
-      header?: never;
-      path: {
-        terminalCode: components['schemas']['TerminalCode'];
-      };
-      cookie?: never;
+    getZReport: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                sessionId: components["parameters"]["SessionId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Z-report. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ZReport"];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+        };
     };
-    requestBody?: never;
-    responses: {
-      /** @description Registered. */
-      201: {
-        headers: {
-          [name: string]: unknown;
+    listSales: {
+        parameters: {
+            query?: {
+                terminal_id?: string;
+                session_id?: string;
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
         };
-        content: {
-          'application/json': components['schemas']['TerminalRegistration'];
+        requestBody?: never;
+        responses: {
+            /** @description Sales. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Sale"][];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
         };
-      };
-      401: components['responses']['Unauthenticated'];
-      403: components['responses']['Forbidden'];
-      422: components['responses']['ValidationError'];
     };
-  };
-  listCashSessions: {
-    parameters: {
-      query: {
-        terminal_id: string;
-        status?: 'open' | 'closed';
-      };
-      header?: never;
-      path?: never;
-      cookie?: never;
+    recordSale: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SaleRecord"];
+            };
+        };
+        responses: {
+            /** @description This record was already recorded (status replayed) or voided by an admin (status voided). */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RecordSaleResult"];
+                };
+            };
+            /** @description Recorded. */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RecordSaleResult"];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            409: components["responses"]["Conflict"];
+            422: components["responses"]["ValidationError"];
+        };
     };
-    requestBody?: never;
-    responses: {
-      /** @description Sessions. */
-      200: {
-        headers: {
-          [name: string]: unknown;
+    getSale: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                saleId: string;
+            };
+            cookie?: never;
         };
-        content: {
-          'application/json': components['schemas']['CashSession'][];
+        requestBody?: never;
+        responses: {
+            /** @description The sale, with how much of each line has been refunded. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Sale"];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
         };
-      };
-      401: components['responses']['Unauthenticated'];
-      403: components['responses']['Forbidden'];
     };
-  };
-  openCashSession: {
-    parameters: {
-      query?: never;
-      header?: never;
-      path?: never;
-      cookie?: never;
+    voidReceipt: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["VoidReceiptRequest"];
+            };
+        };
+        responses: {
+            /** @description Already voided (replayed), or the record reached the ledger after all (recorded). */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["VoidReceiptResult"];
+                };
+            };
+            /** @description Voided. */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["VoidReceiptResult"];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            409: components["responses"]["Conflict"];
+            422: components["responses"]["ValidationError"];
+        };
     };
-    requestBody: {
-      content: {
-        'application/json': components['schemas']['OpenSessionRecord'];
-      };
-    };
-    responses: {
-      /** @description Already opened by this same record (replayed). */
-      200: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['OpenSessionResult'];
-        };
-      };
-      /** @description Opened. */
-      201: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['OpenSessionResult'];
-        };
-      };
-      401: components['responses']['Unauthenticated'];
-      403: components['responses']['Forbidden'];
-      409: components['responses']['Conflict'];
-      422: components['responses']['ValidationError'];
-    };
-  };
-  closeCashSession: {
-    parameters: {
-      query?: never;
-      header?: never;
-      path: {
-        sessionId: components['parameters']['SessionId'];
-      };
-      cookie?: never;
-    };
-    requestBody: {
-      content: {
-        'application/json': components['schemas']['CloseSessionRecord'];
-      };
-    };
-    responses: {
-      /** @description Already closed by this same record (replayed); the Z-report stored at close time. */
-      200: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['CloseSessionResult'];
-        };
-      };
-      /** @description Closed; the server's Z-report. */
-      201: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['CloseSessionResult'];
-        };
-      };
-      401: components['responses']['Unauthenticated'];
-      403: components['responses']['Forbidden'];
-      404: components['responses']['NotFound'];
-      409: components['responses']['Conflict'];
-      422: components['responses']['ValidationError'];
-    };
-  };
-  getZReport: {
-    parameters: {
-      query?: never;
-      header?: never;
-      path: {
-        sessionId: components['parameters']['SessionId'];
-      };
-      cookie?: never;
-    };
-    requestBody?: never;
-    responses: {
-      /** @description Z-report. */
-      200: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ZReport'];
-        };
-      };
-      401: components['responses']['Unauthenticated'];
-      403: components['responses']['Forbidden'];
-      404: components['responses']['NotFound'];
-    };
-  };
-  listSales: {
-    parameters: {
-      query?: {
-        terminal_id?: string;
-        session_id?: string;
-        limit?: number;
-      };
-      header?: never;
-      path?: never;
-      cookie?: never;
-    };
-    requestBody?: never;
-    responses: {
-      /** @description Sales. */
-      200: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['Sale'][];
-        };
-      };
-      401: components['responses']['Unauthenticated'];
-      403: components['responses']['Forbidden'];
-    };
-  };
-  recordSale: {
-    parameters: {
-      query?: never;
-      header?: never;
-      path?: never;
-      cookie?: never;
-    };
-    requestBody: {
-      content: {
-        'application/json': components['schemas']['SaleRecord'];
-      };
-    };
-    responses: {
-      /** @description This record was already recorded (status replayed) or voided by an admin (status voided). */
-      200: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['RecordSaleResult'];
-        };
-      };
-      /** @description Recorded. */
-      201: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['RecordSaleResult'];
-        };
-      };
-      401: components['responses']['Unauthenticated'];
-      403: components['responses']['Forbidden'];
-      409: components['responses']['Conflict'];
-      422: components['responses']['ValidationError'];
-    };
-  };
-  getSale: {
-    parameters: {
-      query?: never;
-      header?: never;
-      path: {
-        saleId: string;
-      };
-      cookie?: never;
-    };
-    requestBody?: never;
-    responses: {
-      /** @description The sale, with how much of each line has been refunded. */
-      200: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['Sale'];
-        };
-      };
-      401: components['responses']['Unauthenticated'];
-      403: components['responses']['Forbidden'];
-      404: components['responses']['NotFound'];
-    };
-  };
-  voidReceipt: {
-    parameters: {
-      query?: never;
-      header?: never;
-      path?: never;
-      cookie?: never;
-    };
-    requestBody: {
-      content: {
-        'application/json': components['schemas']['VoidReceiptRequest'];
-      };
-    };
-    responses: {
-      /** @description Already voided (replayed), or the record reached the ledger after all (recorded). */
-      200: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['VoidReceiptResult'];
-        };
-      };
-      /** @description Voided. */
-      201: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['VoidReceiptResult'];
-        };
-      };
-      401: components['responses']['Unauthenticated'];
-      403: components['responses']['Forbidden'];
-      409: components['responses']['Conflict'];
-      422: components['responses']['ValidationError'];
-    };
-  };
 }

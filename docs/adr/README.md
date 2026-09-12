@@ -1,0 +1,21 @@
+# Architecture decision records
+
+Why this codebase is shaped the way it is. Each record says what was decided, what it costs, and what was
+rejected; the code is the authority, and a record that disagrees with it is a bug in the record.
+
+| #                                             | Decision                                                                                                                                                                 | Phase |
+| --------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ----- |
+| [0001](0001-feature-folders.md)               | Feature folders with ports, adapters, lib and routes, instead of the export's pages and contexts.                                                                        | 2     |
+| [0002](0002-money-in-millimes.md)             | Money is integer millimes: a branded type, rounding in one place, shares that add up, parsing that rejects.                                                              | 2     |
+| [0003](0003-ports-and-adapters.md)            | The UI reaches a backend only through ports; three adapters, one composition root, one contract suite, lint boundaries.                                                  | 2–5   |
+| [0004](0004-per-terminal-receipt-sequence.md) | The device allocates `seq` with the record, the server enforces `last_seq + 1`, the epoch fences a replaced device, and a hopeless record is voided rather than skipped. | 3–4   |
+| [0005](0005-offline-outbox.md)                | Records queue before any network call and drain in ordinal order under a Web Lock, retrying without limit and stopping at a conflict.                                    | 4     |
+| [0006](0006-append-only-ledger.md)            | Sales, lines and stock movements are never updated or deleted; refunds are new documents, and the nightly demo reset is the only audited exception.                      | 3, 5  |
+
+## When to add one
+
+Add a record when a decision constrains code that will be written later and the reason will not be obvious
+from reading that code — a boundary somebody could cross by accident, an invariant several files depend on, or
+a trade-off that was argued and settled. A decision that is visible in one file belongs in a comment in that
+file, not here. Number the next record in sequence, do not renumber or delete the ones before it, and when a
+decision changes, amend its record and say what was revised and why.

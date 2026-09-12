@@ -12,7 +12,10 @@ export interface CartLine {
 
 export interface Cart {
   readonly lines: readonly CartLine[];
-  /** Cart-wide discount in basis points (100 = 1 %), applied once to the subtotal. */
+  /**
+   * Cart-wide discount in basis points (100 = 1 %). It is rounded once on the subtotal and then
+   * shared across the lines by `totals`, so the line totals add up to the cart total exactly.
+   */
   readonly discountBasisPoints: number;
 }
 

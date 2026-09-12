@@ -30,7 +30,62 @@ Point-of-sale screen and back-office dashboard for a cash register in a Tunisian
 - React Router 7, TanStack Query, react-hook-form with Zod
 - Ports and adapters: an in-memory backend for tests and the demo, and a Supabase backend over tables with row-level security and transactional RPCs
 - Supabase CLI for the local stack, pgTAP for database tests
-- ESLint (typescript-eslint, react-hooks), Prettier, Vitest
+- ESLint (typescript-eslint, react-hooks), Prettier, Vitest with Testing Library, MSW for the REST contract tests, Playwright for the offline end-to-end spec
+
+## Architecture
+
+The screens never speak to a backend. They call hooks, the hooks call ports, and one composition
+root decides which adapter is behind them — so the same register runs on an in-browser demo, on
+Supabase, or on a REST service, and the contract suite holds all three to the same answers.
+
+Anything a terminal writes — a sale, a refund, opening or closing a session — goes into the outbox
+on the device first, and only then towards a server.
+
+```mermaid
+flowchart TB
+  subgraph register["Register, in the browser"]
+    screens["Screens: POS, sales, sessions, products, settings"]
+    hooks["Hooks and TanStack Query"]
+    outbox["Outbox in IndexedDB: queued before any request, drained in order"]
+    ports["Ports: auth, catalog, sales, sessions, terminals, settings"]
+  end
+
+  subgraph adapters["Adapters"]
+    memory["memory: the demo and the tests"]
+    supabase["supabase: tables and transactional RPCs"]
+    rest["rest: contracts/openapi.yaml"]
+  end
+
+  postgres[("Postgres: append-only ledger, row-level security")]
+  service["Spring Boot service, planned"]
+
+  screens --> hooks
+  hooks --> ports
+  screens --> outbox
+  outbox --> ports
+  ports --> memory
+  ports --> supabase
+  ports --> rest
+  supabase --> postgres
+  rest -.-> service
+```
+
+A sale is written, numbered and shown from the device; the queue sends it once the network allows,
+and the server accepts it exactly once. Receipt numbers stay gapless because the device allocates
+them in the same transaction that queues the record and the server enforces the next one.
+
+## Design decisions
+
+The decisions worth arguing about, each with what it costs, are in [docs/adr](docs/adr):
+
+| ADR                                                    | Decision                                                       |
+| ------------------------------------------------------ | -------------------------------------------------------------- |
+| [0001](docs/adr/0001-feature-folders.md)               | Feature folders, with ports, adapters and routes beside them   |
+| [0002](docs/adr/0002-money-in-millimes.md)             | Money is an integer number of millimes, never a float          |
+| [0003](docs/adr/0003-ports-and-adapters.md)            | The UI reaches a backend only through ports                    |
+| [0004](docs/adr/0004-per-terminal-receipt-sequence.md) | Receipt numbers are allocated per terminal and stay gapless    |
+| [0005](docs/adr/0005-offline-outbox.md)                | Records are queued on the device before any network call       |
+| [0006](docs/adr/0006-append-only-ledger.md)            | Sales are never updated or deleted; a refund is a new document |
 
 ## Getting started
 
@@ -187,6 +242,35 @@ The **public demo** is what `VITE_BACKEND=memory` builds, and what the container
 The **Supabase demo** is a real shop in a hosted project, published with a cashier and an admin login so the ledger, the Z-reports and the sync behaviour can be seen against a real database. Because the sales ledger is append-only — nobody, not even the service role, can update or delete a row — a demo shop needs a way back to its starting state. `private.reset_demo_shop` is it: it removes the trading history of the shop's closed sessions and recomputes stock from the movements that are left. It keeps the open session and everything in it, any sale a kept refund points at, and the terminals' `last_seq`, so receipt numbering never repeats. It is the only path allowed to delete ledger rows, and it refuses any shop not listed in `private.demo_shops`.
 
 To schedule it, run `supabase/scripts/schedule_demo_reset.sql` once in the SQL editor of the demo project, with the demo shop's id filled in. It needs the `pg_cron` extension, and it belongs on a demo project only — never on a shop's real project. `supabase/tests/database/03_demo_reset.test.sql` covers what the reset keeps, what it removes, and that the same deletes are still refused outside it.
+
+## Before and after
+
+Measured against the Figma Make export this started from (`d3cdb2c`, recorded in
+[docs/baseline.md](docs/baseline.md)):
+
+|                          | Export                                                   | Now                                                                   |
+| ------------------------ | -------------------------------------------------------- | --------------------------------------------------------------------- |
+| Direct dependencies      | 55                                                       | 19                                                                    |
+| Dev dependencies         | 4                                                        | 22                                                                    |
+| Largest JavaScript chunk | 634 kB, one chunk                                        | 143 kB, six chunks                                                    |
+| Tests                    | none                                                     | 1136 unit and page tests, 2 Playwright specs, 130 database assertions |
+| Lint and types           | neither; `typescript` not installed                      | ESLint with no warnings allowed, `tsc` strict                         |
+| Money                    | floats, shown as `$12.50`                                | integer millimes, shown as `12,500 DT`                                |
+| Recording a sale         | two requests against a key-value store anyone could edit | one transactional RPC into an append-only ledger                      |
+| Selling offline          | not possible                                             | queued on the device, sent exactly once                               |
+| Lighthouse failures      | favicon 404, no meta description, no robots.txt          | all three fixed                                                       |
+
+Two numbers went the other way, on purpose. `node_modules` grew from 188 MB to 376 MB, and dev
+dependencies from 4 to 22: that is the test and delivery tooling — Vitest, Testing Library, MSW,
+Playwright, the Supabase CLI — none of which ships to a browser. What does ship got smaller.
+
+## Roadmap
+
+- **A Spring Boot service implementing [contracts/openapi.yaml](contracts/openapi.yaml).** The REST
+  adapter and its contract tests already exist, so the service can be built against them and the
+  register switched over with one environment variable.
+- **ESC/POS receipt printing**, so a receipt leaves the register on paper rather than a screen.
+- **Barcode-wedge input**, so a scanner that types can drive the POS without touching the search box.
 
 ## Known issues
 

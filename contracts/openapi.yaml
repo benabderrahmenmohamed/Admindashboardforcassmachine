@@ -597,7 +597,7 @@ components:
       required: [name, price_millimes, category_id, barcode, description, image_url]
       properties:
         name: { type: string, minLength: 1 }
-        price_millimes: { type: integer, format: int64, minimum: 0 }
+        price_millimes: { type: integer, format: int64, minimum: 0, maximum: 1000000000000 }
         category_id: { oneOf: [{ $ref: '#/components/schemas/Uuid' }, { type: 'null' }] }
         barcode: { type: string }
         description: { type: string }
@@ -808,7 +808,7 @@ components:
         product_id: { $ref: '#/components/schemas/Uuid' }
         product_name: { type: string }
         qty: { type: integer, not: { const: 0 } }
-        unit_price_millimes: { type: integer, format: int64, minimum: 0 }
+        unit_price_millimes: { type: integer, format: int64, minimum: 0, maximum: 1000000000000 }
         line_discount_millimes: { type: integer, format: int64, minimum: 0 }
         cart_discount_share_millimes: { type: integer, format: int64, minimum: 0 }
         line_total_millimes: { $ref: '#/components/schemas/Millimes' }
