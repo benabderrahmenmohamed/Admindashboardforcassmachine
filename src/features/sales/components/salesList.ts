@@ -31,15 +31,19 @@ export function localSaleView(meta: OutboxMeta, record: NumberedRecord): Sale {
     terminalId: meta.terminalId,
     terminalCode: payload.terminalCode,
     sessionId: payload.sessionId,
+    tableId: payload.tableId,
+    // The table's name is the server's to give; the device knows only which table it was.
+    tableName: null,
     refundsSaleId: payload.refundsSaleId,
     paymentMethod: payload.payment.method,
-    subtotalMillimes: payload.subtotalMillimes,
-    discountMillimes: payload.discountMillimes,
+    cartDiscountMillimes: payload.cartDiscountMillimes,
     totalMillimes: payload.totalMillimes,
     tenderedMillimes: payload.payment.tenderedMillimes,
     changeMillimes: payload.payment.changeMillimes,
     createdAt: payload.createdAt,
     receivedAt: payload.createdAt,
+    // A line already carries the row id the device gave it, so a refund written here before the
+    // sale is acked names exactly the line the server will store.
     lines: payload.lines.map((line): SaleLineView => ({
       ...line,
       refundedQty: 0,
@@ -62,14 +66,14 @@ export function withLocalRefunds(sale: Sale, refunds: readonly NumberedRecord[])
     ...sale,
     lines: sale.lines.map((line): SaleLineView => {
       const taken = against.flatMap((record) =>
-        record.payload.lines.filter((refundLine) => refundLine.refundsLineNo === line.lineNo),
+        record.payload.lines.filter((refundLine) => refundLine.refundsSaleLineId === line.id),
       );
       return {
         ...line,
         refundedQty: taken.reduce((qty, refundLine) => qty - refundLine.qty, line.refundedQty),
         refundedMillimes: add(
           line.refundedMillimes,
-          ...taken.map((refundLine) => neg(refundLine.lineTotalMillimes)),
+          ...taken.map((refundLine) => neg(refundLine.netMillimes)),
         ),
       };
     }),

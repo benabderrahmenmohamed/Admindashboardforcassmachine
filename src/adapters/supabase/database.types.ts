@@ -5,6 +5,10 @@
  * stack needs Docker, which this machine does not have. Once it runs, regenerate this file with that
  * script (it replaces the whole file, this note included). These types feed the Supabase adapter
  * only; the ports never import them.
+ *
+ * `dining_tables`, `open_orders`, `open_order_items`, `profiles.roles` and the `order_*` functions
+ * are written from docs/spec.md ahead of their migration, so they are what the café model asks for
+ * rather than what the database already has. Check them against the migration when it lands.
  */
 
 export type Json = string | number | boolean | null | { [key: string]: Json | undefined } | Json[];
@@ -121,6 +125,41 @@ export type Database = {
           },
         ];
       };
+      dining_tables: {
+        Row: {
+          created_at: string;
+          id: string;
+          is_active: boolean;
+          name: string;
+          shop_id: string;
+          sort_order: number;
+        };
+        Insert: {
+          created_at?: string;
+          id?: string;
+          is_active?: boolean;
+          name: string;
+          shop_id: string;
+          sort_order?: number;
+        };
+        Update: {
+          created_at?: string;
+          id?: string;
+          is_active?: boolean;
+          name?: string;
+          shop_id?: string;
+          sort_order?: number;
+        };
+        Relationships: [
+          {
+            foreignKeyName: 'dining_tables_shop_id_fkey';
+            columns: ['shop_id'];
+            isOneToOne: false;
+            referencedRelation: 'shops';
+            referencedColumns: ['id'];
+          },
+        ];
+      };
       kv_store_81f0b18a: {
         Row: {
           key: string;
@@ -168,10 +207,135 @@ export type Database = {
           },
         ];
       };
+      open_order_items: {
+        Row: {
+          added_at: string;
+          added_by: string;
+          id: string;
+          name_snapshot: string;
+          note: string;
+          order_id: string;
+          paid_sale_id: string | null;
+          prepared_at: string | null;
+          product_id: string;
+          qty: number;
+          removed_at: string | null;
+          removed_by: string | null;
+          removed_reason: string | null;
+          sent_at: string | null;
+          shop_id: string;
+          unit_price_millimes: number;
+        };
+        Insert: {
+          added_at: string;
+          added_by: string;
+          id?: string;
+          name_snapshot: string;
+          note?: string;
+          order_id: string;
+          paid_sale_id?: string | null;
+          prepared_at?: string | null;
+          product_id: string;
+          qty: number;
+          removed_at?: string | null;
+          removed_by?: string | null;
+          removed_reason?: string | null;
+          sent_at?: string | null;
+          shop_id: string;
+          unit_price_millimes: number;
+        };
+        Update: {
+          added_at?: string;
+          added_by?: string;
+          id?: string;
+          name_snapshot?: string;
+          note?: string;
+          order_id?: string;
+          paid_sale_id?: string | null;
+          prepared_at?: string | null;
+          product_id?: string;
+          qty?: number;
+          removed_at?: string | null;
+          removed_by?: string | null;
+          removed_reason?: string | null;
+          sent_at?: string | null;
+          shop_id?: string;
+          unit_price_millimes?: number;
+        };
+        Relationships: [
+          {
+            foreignKeyName: 'open_order_items_order_id_shop_id_fkey';
+            columns: ['order_id', 'shop_id'];
+            isOneToOne: false;
+            referencedRelation: 'open_orders';
+            referencedColumns: ['id', 'shop_id'];
+          },
+          {
+            foreignKeyName: 'open_order_items_paid_sale_id_fkey';
+            columns: ['paid_sale_id'];
+            isOneToOne: false;
+            referencedRelation: 'sales';
+            referencedColumns: ['id'];
+          },
+          {
+            foreignKeyName: 'open_order_items_product_id_shop_id_fkey';
+            columns: ['product_id', 'shop_id'];
+            isOneToOne: false;
+            referencedRelation: 'products';
+            referencedColumns: ['id', 'shop_id'];
+          },
+        ];
+      };
+      open_orders: {
+        Row: {
+          closed_at: string | null;
+          closed_reason: string | null;
+          id: string;
+          opened_at: string;
+          shop_id: string;
+          status: string;
+          table_id: string;
+        };
+        Insert: {
+          closed_at?: string | null;
+          closed_reason?: string | null;
+          id?: string;
+          opened_at: string;
+          shop_id: string;
+          status?: string;
+          table_id: string;
+        };
+        Update: {
+          closed_at?: string | null;
+          closed_reason?: string | null;
+          id?: string;
+          opened_at?: string;
+          shop_id?: string;
+          status?: string;
+          table_id?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: 'open_orders_shop_id_fkey';
+            columns: ['shop_id'];
+            isOneToOne: false;
+            referencedRelation: 'shops';
+            referencedColumns: ['id'];
+          },
+          {
+            foreignKeyName: 'open_orders_table_id_shop_id_fkey';
+            columns: ['table_id', 'shop_id'];
+            isOneToOne: false;
+            referencedRelation: 'dining_tables';
+            referencedColumns: ['id', 'shop_id'];
+          },
+        ];
+      };
       products: {
         Row: {
           archived_at: string | null;
-          available: boolean;
+          is_available: boolean;
+          track_stock: boolean;
           barcode: string | null;
           category_id: string | null;
           created_at: string;
@@ -182,12 +346,13 @@ export type Database = {
           name: string;
           price_millimes: number;
           shop_id: string;
-          stock: number;
+          stock_qty: number;
           updated_at: string;
         };
         Insert: {
           archived_at?: string | null;
-          available?: boolean;
+          is_available?: boolean;
+          track_stock?: boolean;
           barcode?: string | null;
           category_id?: string | null;
           created_at?: string;
@@ -198,12 +363,13 @@ export type Database = {
           name: string;
           price_millimes: number;
           shop_id: string;
-          stock?: number;
+          stock_qty?: number;
           updated_at?: string;
         };
         Update: {
           archived_at?: string | null;
-          available?: boolean;
+          is_available?: boolean;
+          track_stock?: boolean;
           barcode?: string | null;
           category_id?: string | null;
           created_at?: string;
@@ -214,7 +380,7 @@ export type Database = {
           name?: string;
           price_millimes?: number;
           shop_id?: string;
-          stock?: number;
+          stock_qty?: number;
           updated_at?: string;
         };
         Relationships: [
@@ -238,21 +404,22 @@ export type Database = {
         Row: {
           created_at: string;
           display_name: string;
-          role: string;
+          /** One member often holds several: the owner is an admin who also works the counter. */
+          roles: string[];
           shop_id: string;
           user_id: string;
         };
         Insert: {
           created_at?: string;
           display_name?: string;
-          role: string;
+          roles: string[];
           shop_id: string;
           user_id: string;
         };
         Update: {
           created_at?: string;
           display_name?: string;
-          role?: string;
+          roles?: string[];
           shop_id?: string;
           user_id?: string;
         };
@@ -328,40 +495,49 @@ export type Database = {
       };
       sale_lines: {
         Row: {
-          cart_discount_share_millimes: number;
+          allocated_discount_millimes: number;
           line_discount_millimes: number;
           line_no: number;
+          id: string;
+          line_discount_reason: string | null;
           line_total_millimes: number;
+          open_order_item_id: string | null;
           product_id: string;
           product_name: string;
           qty: number;
-          refunds_line_no: number | null;
+          refunds_sale_line_id: string | null;
           sale_id: string;
           shop_id: string;
           unit_price_millimes: number;
         };
         Insert: {
-          cart_discount_share_millimes: number;
+          allocated_discount_millimes: number;
           line_discount_millimes: number;
           line_no: number;
+          id: string;
+          line_discount_reason: string | null;
           line_total_millimes: number;
+          open_order_item_id: string | null;
           product_id: string;
           product_name: string;
           qty: number;
-          refunds_line_no?: number | null;
+          refunds_sale_line_id?: string | null;
           sale_id: string;
           shop_id: string;
           unit_price_millimes: number;
         };
         Update: {
-          cart_discount_share_millimes?: number;
+          allocated_discount_millimes?: number;
           line_discount_millimes?: number;
           line_no?: number;
+          id?: string;
+          line_discount_reason?: string | null;
           line_total_millimes?: number;
+          open_order_item_id?: string | null;
           product_id?: string;
           product_name?: string;
           qty?: number;
-          refunds_line_no?: number | null;
+          refunds_sale_line_id?: string | null;
           sale_id?: string;
           shop_id?: string;
           unit_price_millimes?: number;
@@ -387,7 +563,8 @@ export type Database = {
         Row: {
           change_millimes: number;
           created_at: string;
-          discount_millimes: number;
+          cart_discount_millimes: number;
+          table_id: string | null;
           epoch: number;
           id: string;
           kind: string;
@@ -408,7 +585,8 @@ export type Database = {
         Insert: {
           change_millimes: number;
           created_at: string;
-          discount_millimes: number;
+          cart_discount_millimes: number;
+          table_id: string | null;
           epoch: number;
           id: string;
           kind: string;
@@ -429,7 +607,8 @@ export type Database = {
         Update: {
           change_millimes?: number;
           created_at?: string;
-          discount_millimes?: number;
+          cart_discount_millimes?: number;
+          table_id?: string | null;
           epoch?: number;
           id?: string;
           kind?: string;
@@ -460,6 +639,13 @@ export type Database = {
             columns: ['session_id', 'shop_id'];
             isOneToOne: false;
             referencedRelation: 'cash_sessions';
+            referencedColumns: ['id', 'shop_id'];
+          },
+          {
+            foreignKeyName: 'sales_table_id_fkey';
+            columns: ['table_id', 'shop_id'];
+            isOneToOne: false;
+            referencedRelation: 'dining_tables';
             referencedColumns: ['id', 'shop_id'];
           },
           {
@@ -611,9 +797,21 @@ export type Database = {
       force_close_session: { Args: { p_reason: string; p_session_id: string }; Returns: Json };
       my_profile: { Args: never; Returns: Json };
       open_session: { Args: { p: Json }; Returns: Json };
+      order_cancel: { Args: { p: Json }; Returns: Json };
+      order_item_add: { Args: { p: Json }; Returns: Json };
+      order_item_prepare: { Args: { p: Json }; Returns: Json };
+      order_item_remove: { Args: { p: Json }; Returns: Json };
+      order_send: { Args: { p: Json }; Returns: Json };
+      adjust_stock: { Args: { p: Json }; Returns: Json };
       record_sale: { Args: { p: Json }; Returns: Json };
       register_terminal: { Args: { p_code: string }; Returns: Json };
+      removed_after_sent: { Args: { p_from: string; p_to: string }; Returns: Json };
+      save_dining_table: { Args: { p: Json }; Returns: Json };
       save_product: { Args: { p: Json }; Returns: Json };
+      set_product_availability: {
+        Args: { p_is_available: boolean; p_product_id: string };
+        Returns: Json;
+      };
       void_receipt: { Args: { p: Json }; Returns: Json };
       z_report: { Args: { p_session_id: string }; Returns: Json };
     };

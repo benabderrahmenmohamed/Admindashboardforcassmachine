@@ -9,7 +9,7 @@ import {
   TableRow,
 } from '@/components/ui/table';
 import type { SyncStatus } from '@/features/pos/queue';
-import { formatTND } from '@/lib/money';
+import { add, formatTND } from '@/lib/money';
 import type { PaymentMethod, RecordKind, Sale } from '../types';
 import { SyncBadge } from './SyncBadge';
 
@@ -74,7 +74,7 @@ export function SaleDetail({ sale, syncStatus, onOpenSale }: SaleDetailProps) {
               <TableCell className="whitespace-normal">{line.productName}</TableCell>
               <TableCell className="text-right">{line.qty}</TableCell>
               <TableCell className="text-right">{formatTND(line.unitPriceMillimes)}</TableCell>
-              <TableCell className="text-right">{formatTND(line.lineTotalMillimes)}</TableCell>
+              <TableCell className="text-right">{formatTND(line.netMillimes)}</TableCell>
               {!isRefund && (
                 <TableCell className="text-right">
                   {line.refundedQty === 0
@@ -88,10 +88,14 @@ export function SaleDetail({ sale, syncStatus, onOpenSale }: SaleDetailProps) {
       </Table>
 
       <dl className="space-y-1 text-sm">
-        {sale.discountMillimes !== 0 && (
+        {sale.cartDiscountMillimes !== 0 && (
           <>
-            <DetailRow label="Subtotal" value={formatTND(sale.subtotalMillimes)} />
-            <DetailRow label="Discount" value={formatTND(sale.discountMillimes)} />
+            {/* The subtotal is what the lines came to before the cart discount was shared out. */}
+            <DetailRow
+              label="Subtotal"
+              value={formatTND(add(sale.totalMillimes, sale.cartDiscountMillimes))}
+            />
+            <DetailRow label="Discount" value={formatTND(sale.cartDiscountMillimes)} />
           </>
         )}
         <DetailRow

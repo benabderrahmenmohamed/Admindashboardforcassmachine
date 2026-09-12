@@ -18,6 +18,7 @@ import type { NumberedRecord } from '@/features/pos/queue';
 import { voidQuestion } from '@/features/pos/recording';
 import { useVoidReceipt } from '@/features/sales/hooks/useSales';
 import { errorMessage } from '@/lib/errors';
+import { hasRole } from '@/ports';
 import { useOutbox, useOutboxRecords, useOutboxSummary } from '../hooks/useOutbox';
 import { conflictRows, type ConflictRow } from './conflictView';
 
@@ -102,7 +103,7 @@ export function ConflictsPage({ home }: { readonly home: string }) {
             key={row.id}
             row={row}
             isBusy={busyId !== null}
-            canVoid={user.role === 'admin'}
+            canVoid={hasRole(user, ['admin'])}
             onRetry={() => void retry(row)}
             onVoid={() => setVoiding(row.voidable)}
           />

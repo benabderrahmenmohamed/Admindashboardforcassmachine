@@ -2,11 +2,11 @@ import { describe, expect, it } from 'vitest';
 import {
   addItem,
   emptyCart,
+  offerLine,
   setCartDiscount,
-  setLineDiscount,
   type Cart,
   type CartProduct,
-} from '@/features/pos/cart';
+} from '@/features/caisse/cart';
 import {
   buildRefundRecord,
   buildSaleRecord,
@@ -76,6 +76,11 @@ const YAOURT = seeded('55555555-5555-4555-8555-555555555503');
 const HARISSA = seeded('55555555-5555-4555-8555-555555555504');
 /** The other shop's, 1,000 DT. */
 const OTHER_A = seeded('66666666-6666-4666-8666-666666666601');
+
+/** A line discount in these tests. A discount always says why, so every one here says the same. */
+function discountLine(cart: Cart, key: string, discount: Millimes): Cart {
+  return offerLine(cart, key, discount, 'offert');
+}
 
 function newId(): string {
   return crypto.randomUUID();
@@ -208,6 +213,7 @@ function saleOf(
       sessionId: till.sessionId,
       createdAt: CREATED_AT,
       terminal: till.terminal,
+      tableId: null,
       ...envelope,
     },
     cart,
@@ -223,7 +229,14 @@ function refundOf(
   method: PaymentMethod = 'card',
 ): Promise<SaleRecord> {
   return buildRefundRecord(
-    { id: newId(), seq, sessionId: till.sessionId, createdAt: CREATED_AT, terminal: till.terminal },
+    {
+      id: newId(),
+      seq,
+      sessionId: till.sessionId,
+      createdAt: CREATED_AT,
+      terminal: till.terminal,
+      tableId: null,
+    },
     sale,
     selections,
     method,
@@ -410,7 +423,6 @@ describe('sales', () => {
 
     const empty = await rewrite(await saleOf(current, 3, cart), {
       lines: [],
-      subtotalMillimes: ZERO,
       totalMillimes: ZERO,
       payment: { method: 'card', tenderedMillimes: ZERO, changeMillimes: ZERO },
     });
@@ -433,27 +445,29 @@ describe('sales', () => {
 
     const cases: [Partial<SaleRecord>, Record<string, unknown>][] = [
       [{ lines: [harissa, water] }, { field: 'lines' }],
-      [{ lines: [water, { ...harissa, refundsLineNo: 1 }] }, { lineNo: 2 }],
-      [{ lines: [water, { ...harissa, qty: -1, lineTotalMillimes: mm(-2_450) }] }, { lineNo: 2 }],
-      [{ lines: [{ ...water, lineTotalMillimes: mm(1_699) }, harissa] }, { lineNo: 1 }],
+      [{ lines: [water, { ...harissa, refundsSaleLineId: newId() }] }, { lineNo: 2 }],
+      [{ lines: [water, { ...harissa, qty: -1, netMillimes: mm(-2_450) }] }, { lineNo: 2 }],
+      [{ lines: [{ ...water, netMillimes: mm(1_699) }, harissa] }, { lineNo: 1 }],
+      // Money off a bill is somebody's decision, so it is never anonymous.
+      [
+        { lines: [{ ...water, lineDiscountMillimes: mm(100), netMillimes: mm(1_600) }, harissa] },
+        { lineNo: 1 },
+      ],
       [
         {
           lines: [
             {
               ...water,
               lineDiscountMillimes: mm(1_000),
-              cartDiscountShareMillimes: mm(701),
-              lineTotalMillimes: mm(-1),
+              allocatedDiscountMillimes: mm(701),
+              netMillimes: mm(-1),
             },
             harissa,
           ],
         },
         { lineNo: 1 },
       ],
-      [
-        { subtotalMillimes: mm(4_000) },
-        { subtotalMillimes: 4_150, discountMillimes: 0, totalMillimes: 4_150 },
-      ],
+      [{ cartDiscountMillimes: mm(150) }, { cartDiscountMillimes: 0, totalMillimes: 4_150 }],
       [{ refundsSaleId: newId() }, { field: 'refunds_sale_id' }],
       [{ createdAt: 'now' }, { field: 'created_at' }],
     ];
@@ -492,8 +506,7 @@ describe('sales', () => {
     const overCap = mm(MAX_PRICE_MILLIMES + 1);
     const above = await rewrite(atCap, {
       id: newId(),
-      lines: [{ ...atCap.lines[0], unitPriceMillimes: overCap, lineTotalMillimes: overCap }],
-      subtotalMillimes: overCap,
+      lines: [{ ...atCap.lines[0], unitPriceMillimes: overCap, netMillimes: overCap }],
       totalMillimes: overCap,
       payment: { method: 'card', tenderedMillimes: overCap, changeMillimes: ZERO },
     });
@@ -546,18 +559,22 @@ describe('sales', () => {
     }
 
     const cases: [Partial<SaleRecord>, Record<string, unknown>][] = [
-      [{ lines: [water, { ...harissa, refundsLineNo: null }] }, { field: 'refunds_line_no' }],
-      [{ lines: [water, { ...harissa, refundsLineNo: 1 }] }, { lineNo: 2 }],
-      [{ lines: [water, { ...harissa, refundsLineNo: 3 }] }, { lineNo: 2 }],
+      [
+        { lines: [water, { ...harissa, refundsSaleLineId: null }] },
+        { field: 'refunds_sale_line_id' },
+      ],
+      // The line water already gives back, and a line of no sale at all.
+      [
+        { lines: [water, { ...harissa, refundsSaleLineId: water.refundsSaleLineId }] },
+        { lineNo: 2 },
+      ],
+      [{ lines: [water, { ...harissa, refundsSaleLineId: newId() }] }, { lineNo: 2 }],
       [{ lines: [water, { ...harissa, productId: WATER.id }] }, { lineNo: 2 }],
       [{ lines: [water, { ...harissa, unitPriceMillimes: mm(2_000) }] }, { lineNo: 2 }],
       [{ lines: [water, { ...harissa, lineDiscountMillimes: mm(1) }] }, { lineNo: 2 }],
       [{ lines: [water, { ...harissa, qty: 1 }] }, { lineNo: 2 }],
-      [{ lines: [water, { ...harissa, lineTotalMillimes: mm(1) }] }, { lineNo: 2 }],
-      [
-        { discountMillimes: mm(1) },
-        { subtotalMillimes: -3_300, discountMillimes: 0, totalMillimes: -3_300 },
-      ],
+      [{ lines: [water, { ...harissa, netMillimes: mm(1) }] }, { lineNo: 2 }],
+      [{ cartDiscountMillimes: mm(1) }, { cartDiscountMillimes: 0, totalMillimes: -3_300 }],
     ];
     for (const [changes, details] of cases) {
       const error = await failure(
@@ -592,7 +609,7 @@ describe('sales', () => {
     await failure(
       cashier.sales.recordSale(
         await rewrite(valid, {
-          lines: [valid.lines[0], { ...valid.lines[1], lineTotalMillimes: mm(1) }],
+          lines: [valid.lines[0], { ...valid.lines[1], netMillimes: mm(1) }],
         }),
       ),
       'VALIDATION_ERROR',
@@ -675,7 +692,7 @@ describe('sales', () => {
     });
     const stock = (await cashier.catalog.listProducts())
       .filter((product) => product.id === YAOURT.id || product.id === HARISSA.id)
-      .map((product) => product.stock);
+      .map((product) => product.stockQty);
     expect(stock).toEqual([7, 39]);
   });
 
@@ -954,14 +971,14 @@ describe('the credential-free demo', () => {
     // Built as src/lib/backend.ts builds it, and signed in with the login page's demo buttons.
     const backend = createMemoryBackend();
     const [adminButton, cashierButton] = backend.demoAccounts;
-    expect([adminButton.label, cashierButton.label]).toEqual(['Admin', 'Cashier']);
+    expect([adminButton.label, cashierButton.label]).toEqual(['Owner', 'Cashier']);
 
     // Settings, as the admin: register this device as T1.
     const admin = await backend.auth.signIn({
       email: adminButton.email,
       password: adminButton.password,
     });
-    expect(admin).toMatchObject({ role: 'admin', shopId: DEMO_SHOP_ID });
+    expect(admin).toMatchObject({ roles: ['admin', 'cashier'], shopId: DEMO_SHOP_ID });
     const registration = await backend.terminals.register('T1');
     expect(registration).toMatchObject({ code: 'T1', lastSeq: 0, epoch: 0, openSession: null });
     // What the device keeps of the registration, and the counter it adopts from the server. Where
@@ -998,6 +1015,7 @@ describe('the credential-free demo', () => {
         sessionId: open.id,
         createdAt: new Date().toISOString(),
         terminal,
+        tableId: null,
       });
       await expect(backend.sales.recordSale(record)).resolves.toEqual({
         saleId: record.id,
@@ -1010,7 +1028,7 @@ describe('the credential-free demo', () => {
 
     // Cash: three yoghurts less 0,200 DT and a harissa, 5 % off the cart (0,398 DT, shared 275 and 123).
     const cart = setCartDiscount(
-      setLineDiscount(cartOf([YAOURT, 3], [HARISSA, 1]), YAOURT.id, mm(200)),
+      discountLine(cartOf([YAOURT, 3], [HARISSA, 1]), YAOURT.id, mm(200)),
       500,
     );
     const first = await recordNext((envelope) =>
@@ -1098,7 +1116,7 @@ describe('the credential-free demo', () => {
 
     const stock = (await backend.catalog.listProducts())
       .filter((product) => [WATER.id, YAOURT.id, HARISSA.id].includes(product.id))
-      .map((product) => [product.name, product.stock]);
+      .map((product) => [product.name, product.stockQty]);
     expect(stock).toEqual([
       [WATER.name, 118],
       [YAOURT.name, 8],

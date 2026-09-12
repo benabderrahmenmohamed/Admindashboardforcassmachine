@@ -134,8 +134,8 @@ describe('sessionDocuments', () => {
     ];
 
     expect(sessionDocuments(records, SESSION_ID)).toEqual([
-      { kind: 'sale', paymentMethod: 'card', totalMillimes: mm(1350) },
-      { kind: 'sale', paymentMethod: 'cash', totalMillimes: mm(1350) },
+      { kind: 'sale', paymentMethod: 'card', totalMillimes: mm(1900) },
+      { kind: 'sale', paymentMethod: 'cash', totalMillimes: mm(1900) },
     ]);
   });
 

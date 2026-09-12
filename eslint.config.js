@@ -113,7 +113,7 @@ export default defineConfig([
   },
   {
     // Pure domain modules: no React, no data layer, no backend, no clock, no randomness, no I/O.
-    files: ['src/lib/money.ts', 'src/features/pos/cart.ts'],
+    files: ['src/lib/money.ts', 'src/features/caisse/cart.ts', 'src/features/pos/cart.ts'],
     rules: {
       'no-restricted-imports': [
         'error',

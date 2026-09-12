@@ -64,7 +64,7 @@ select is((select outcome || ':' || reason from applied where kv_key = 'category
 
 select is((select price_millimes from public.products where legacy_kv_key = 'product:p1'), 850::bigint, 'a float price in dinars becomes exact millimes');
 select is((select price_millimes from public.products where legacy_kv_key = 'product:p2'), 3950::bigint, 'a text price becomes exact millimes');
-select is((select stock from public.products where legacy_kv_key = 'product:p2'), 35, 'a text stock is imported');
+select is((select stock_qty from public.products where legacy_kv_key = 'product:p2'), 35, 'a text stock is imported');
 select is((select barcode from public.products where legacy_kv_key = 'product:p2'), null, 'an empty barcode becomes none');
 select is((select outcome || ':' || reason from applied where kv_key = 'product:p3'), 'rejected:price_more_than_3_decimals', 'a float artefact is rejected, not rounded');
 select is((select outcome || ':' || reason from applied where kv_key = 'product:p4'), 'rejected:price_negative', 'a negative price is rejected');

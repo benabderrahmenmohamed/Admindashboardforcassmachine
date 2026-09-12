@@ -4,12 +4,13 @@ import { Navigate } from 'react-router';
 import { FullPageLoading } from '@/components/feedback';
 import { useAuth } from '@/features/auth/hooks/useAuth';
 import { homePathFor } from '@/features/auth/roles';
-import type { Role } from '@/ports';
+import { hasRole, type Role } from '@/ports';
+import { NoFace } from './NoFace';
 
 /**
- * Renders `children` only for a signed-in user whose role is in `allow`. Anyone else is sent to the
- * login page or to their own home page. `allowOffline` lets a user with a stored session in while
- * the backend is unreachable; only the register needs that.
+ * Renders `children` only for a signed-in user who holds one of `allow`. Anyone else is sent to the
+ * login page or to the first face their own roles allow. `allowOffline` lets a user with a stored
+ * session in while the backend is unreachable; only the counter needs that.
  */
 export function ProtectedRoute({
   allow,
@@ -28,8 +29,10 @@ export function ProtectedRoute({
   if (state.status === 'anonymous') {
     return <Navigate to="/" replace />;
   }
-  if (!allow.includes(state.user.role)) {
-    return <Navigate to={homePathFor(state.user.role)} replace />;
+  if (!hasRole(state.user, allow)) {
+    const home = homePathFor(state.user);
+    // A member of the shop whose roles open no face is told so, rather than bounced in a circle.
+    return home === null ? <NoFace user={state.user} /> : <Navigate to={home} replace />;
   }
   if (state.status === 'offline' && !allowOffline) {
     return (

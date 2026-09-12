@@ -3,7 +3,7 @@ import { credentialsSchema, type AuthPort, type AuthState, type AuthUser } from 
 import { parseInput, perform, type MemoryContext, type MemorySession } from './support';
 
 /**
- * Sign-in against the seed accounts. Role and shop come from the account's profile, as my_profile()
+ * Sign-in against the seed accounts. Roles and shop come from the account's profile, as my_profile()
  * gives them; an account without one is FORBIDDEN. The session lives only in this client, where
  * the other ports check it, so a reload signs everyone out; there is no network, so the state is
  * never `offline`.
@@ -51,7 +51,7 @@ export function createMemoryAuth(context: MemoryContext): AuthPort {
           id: account.id,
           email: account.email,
           name: profile.displayName,
-          role: profile.role,
+          roles: [...profile.roles],
           shopId: profile.shopId,
         };
         change({ status: 'authenticated', user });

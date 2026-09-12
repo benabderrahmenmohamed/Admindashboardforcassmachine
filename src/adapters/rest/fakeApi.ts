@@ -1,22 +1,35 @@
 import { http, HttpResponse, type JsonBodyType, type PathParams, type RequestHandler } from 'msw';
+import { z } from 'zod';
 import { createMemoryBackend, type MemoryBackend } from '@/adapters/memory';
-import { keysToCamel, keysToSnake } from '@/lib/caseConversion';
+import { camelToSnake, keysToCamel, keysToSnake } from '@/lib/caseConversion';
 import { AppError, toAppError, type ErrorCode } from '@/lib/errors';
 import { parseOrInvalid } from '@/lib/validation';
 import {
   categoryInputSchema,
   closeSessionRecordSchema,
   credentialsSchema,
+  diningTableInputSchema,
+  hasRole,
   listSalesQuerySchema,
   openSessionRecordSchema,
+  orderCancelRecordSchema,
+  orderItemAddRecordSchema,
+  orderItemPrepareRecordSchema,
+  orderItemRemoveRecordSchema,
+  orderSendRecordSchema,
   productCreateInputSchema,
   productUpdateInputSchema,
+  removedAfterSentQuerySchema,
   saleRecordSchema,
   shopSettingsSchema,
+  stockAdjustmentSchema,
   voidReceiptInputSchema,
   type AuthUser,
   type Backend,
   type DemoAccount,
+  type DiningTable,
+  type RealtimeTopic,
+  type Role,
 } from '@/ports';
 import { freshTerminalCode, type ContractFixture } from '@/ports/__contracts__';
 import { createRestBackend } from './index';
@@ -59,7 +72,17 @@ const WIRE_STATUS: Partial<Record<ErrorCode, number>> = {
   SESSION_CLOSED: 409,
   SESSION_ALREADY_OPEN: 409,
   TERMINAL_SUPERSEDED: 409,
+  ORDER_CHANGED: 409,
+  ORDER_CLOSED: 409,
+  ITEM_NOT_FOUND: 404,
+  TABLE_INACTIVE: 409,
 };
+
+/** The body of `PUT /products/{id}/availability`, which is the toggle and nothing else. */
+const availabilitySchema = z.object({ isAvailable: z.boolean() });
+
+/** A poll's cursor: how many changes this API had recorded when it handed the cursor out. */
+const cursorSchema = z.string().regex(/^\d+$/, 'That is not a cursor this API handed out');
 
 /**
  * A port value on the wire: snake_case keys at any depth, values untouched. The cast says what
@@ -116,10 +139,23 @@ function memberOf(user: AuthUser): object {
   return {
     userId: user.id,
     shopId: user.shopId,
-    role: user.role,
+    roles: user.roles,
     displayName: user.name,
     email: user.email,
   };
+}
+
+/**
+ * A record write whose path repeats an id its body carries. The two must agree: a service routing
+ * on the path and acting on the body would otherwise act on something the caller did not address.
+ */
+function requirePathMatches(params: PathParams, name: string, inBody: string): void {
+  if (param(params, name) !== inBody) {
+    throw new AppError('VALIDATION_ERROR', 'The record names another resource than the path.', {
+      // The field as the error envelope of contracts/errors.md names it: snake_case, like the body.
+      details: { field: camelToSnake(name) },
+    });
+  }
 }
 
 /** A record write's answer: 201 for the one this call stored, 200 for an outcome already stored. */
@@ -159,6 +195,8 @@ export function createFakeApi(options: FakeApiOptions = {}): FakeApi {
   const expiresIn = options.expiresIn ?? 3600;
   const api = `${baseUrl}/api/v1`;
   const clients = new Map<string, FakeClient>();
+  /** Every change a shop has seen since this API first answered a poll for it, in order. */
+  const changes = new Map<string, RealtimeTopic[]>();
 
   /** The member the request's bearer token belongs to. */
   function clientOf(request: Request): FakeClient {
@@ -169,6 +207,26 @@ export function createFakeApi(options: FakeApiOptions = {}): FakeApi {
       throw new AppError('UNAUTHENTICATED', 'This request carries no session.');
     }
     return client;
+  }
+
+  /**
+   * The shop's change log, watched from the first poll on. A real service would keep this in the
+   * database; here the memory backend's emitter is the publication, which is what a client polling
+   * `?since=` reads instead of holding a connection open. Watching only from the first poll is the
+   * behaviour the port asks for: a subscriber's first answer is a cursor, never a backlog.
+   */
+  function changesOf(shopId: string): RealtimeTopic[] {
+    const watched = changes.get(shopId);
+    if (watched) {
+      return watched;
+    }
+    const log: RealtimeTopic[] = [];
+    changes.set(shopId, log);
+    // Never unsubscribed: the emitter belongs to this API's backend and dies with it.
+    backend.realtime.subscribe(shopId, (topic) => {
+      log.push(topic);
+    });
+    return log;
   }
 
   const handlers: RequestHandler[] = [
@@ -242,6 +300,34 @@ export function createFakeApi(options: FakeApiOptions = {}): FakeApi {
       }),
     ),
 
+    http.put(`${api}/products/:productId/availability`, ({ request, params }) =>
+      serve(async () => {
+        const client = clientOf(request);
+        const { isAvailable } = parseOrInvalid(
+          availabilitySchema,
+          await jsonBody(request),
+          'the availability',
+        );
+        const product = await client.backend.catalog.setAvailability(
+          param(params, 'productId'),
+          isAvailable,
+        );
+        return json(product, HTTP_OK);
+      }),
+    ),
+
+    http.post(`${api}/stock-adjustments`, ({ request }) =>
+      serve(async () => {
+        const client = clientOf(request);
+        const record = parseOrInvalid(
+          stockAdjustmentSchema,
+          await jsonBody(request),
+          'the stock correction',
+        );
+        return written(await client.backend.catalog.adjustStock(record), 'created');
+      }),
+    ),
+
     http.get(`${api}/categories`, ({ request }) =>
       serve(async () => json(await clientOf(request).backend.catalog.listCategories(), HTTP_OK)),
     ),
@@ -259,6 +345,135 @@ export function createFakeApi(options: FakeApiOptions = {}): FakeApi {
         const client = clientOf(request);
         await client.backend.catalog.deleteCategory(param(params, 'categoryId'));
         return new HttpResponse(null, { status: HTTP_NO_CONTENT });
+      }),
+    ),
+
+    http.get(`${api}/dining-tables`, ({ request }) =>
+      serve(async () => json(await clientOf(request).backend.orders.listTables(), HTTP_OK)),
+    ),
+
+    http.post(`${api}/dining-tables`, ({ request }) =>
+      serve(async () => {
+        const client = clientOf(request);
+        const input = parseOrInvalid(diningTableInputSchema, await jsonBody(request), 'the table');
+        return json(await client.backend.orders.createTable(input), HTTP_CREATED);
+      }),
+    ),
+
+    http.put(`${api}/dining-tables/:tableId`, ({ request, params }) =>
+      serve(async () => {
+        const client = clientOf(request);
+        const input = parseOrInvalid(diningTableInputSchema, await jsonBody(request), 'the table');
+        const table = await client.backend.orders.updateTable(param(params, 'tableId'), input);
+        return json(table, HTTP_OK);
+      }),
+    ),
+
+    http.get(`${api}/table-board`, ({ request }) =>
+      serve(async () => json(await clientOf(request).backend.orders.board(), HTTP_OK)),
+    ),
+
+    http.get(`${api}/dining-tables/:tableId/open-order`, ({ request, params }) =>
+      serve(async () => {
+        const client = clientOf(request);
+        // A free table answers null rather than 404: having nothing on it is not an error.
+        const order = await client.backend.orders.openOrder(param(params, 'tableId'));
+        return json(order, HTTP_OK);
+      }),
+    ),
+
+    http.post(`${api}/order-items`, ({ request }) =>
+      serve(async () => {
+        const client = clientOf(request);
+        const record = parseOrInvalid(
+          orderItemAddRecordSchema,
+          await jsonBody(request),
+          'the add record',
+        );
+        return written(await client.backend.orders.addItem(record), 'created');
+      }),
+    ),
+
+    http.post(`${api}/order-items/:itemId/removals`, ({ request, params }) =>
+      serve(async () => {
+        const client = clientOf(request);
+        const record = parseOrInvalid(
+          orderItemRemoveRecordSchema,
+          await jsonBody(request),
+          'the removal record',
+        );
+        requirePathMatches(params, 'itemId', record.itemId);
+        return written(await client.backend.orders.removeItem(record), 'created');
+      }),
+    ),
+
+    http.post(`${api}/order-items/:itemId/preparations`, ({ request, params }) =>
+      serve(async () => {
+        const client = clientOf(request);
+        const record = parseOrInvalid(
+          orderItemPrepareRecordSchema,
+          await jsonBody(request),
+          'the prepare record',
+        );
+        requirePathMatches(params, 'itemId', record.itemId);
+        return written(await client.backend.orders.prepareItem(record), 'created');
+      }),
+    ),
+
+    http.post(`${api}/dining-tables/:tableId/sends`, ({ request, params }) =>
+      serve(async () => {
+        const client = clientOf(request);
+        const record = parseOrInvalid(
+          orderSendRecordSchema,
+          await jsonBody(request),
+          'the send record',
+        );
+        requirePathMatches(params, 'tableId', record.tableId);
+        return written(await client.backend.orders.send(record), 'created');
+      }),
+    ),
+
+    http.post(`${api}/dining-tables/:tableId/cancellations`, ({ request, params }) =>
+      serve(async () => {
+        const client = clientOf(request);
+        const record = parseOrInvalid(
+          orderCancelRecordSchema,
+          await jsonBody(request),
+          'the cancel record',
+        );
+        requirePathMatches(params, 'tableId', record.tableId);
+        return written(await client.backend.orders.cancelOrder(record), 'created');
+      }),
+    ),
+
+    http.get(`${api}/open-orders`, ({ request }) =>
+      serve(() => {
+        const client = clientOf(request);
+        const log = changesOf(client.user.shopId);
+        const since = new URL(request.url).searchParams.get('since');
+        // Without a cursor the caller is starting: it gets today's cursor and no backlog.
+        const read =
+          since === null ? log.length : Number(parseOrInvalid(cursorSchema, since, 'the cursor'));
+        // Each topic once, however many rows of it changed: the client re-reads, it does not apply.
+        const topics = [...new Set(log.slice(read))];
+        return Promise.resolve(json({ cursor: String(log.length), topics }, HTTP_OK));
+      }),
+    ),
+
+    http.get(`${api}/kitchen-tickets`, ({ request }) =>
+      serve(async () => json(await clientOf(request).backend.orders.kitchenTickets(), HTTP_OK)),
+    ),
+
+    http.get(`${api}/reports/removed-after-sent-items`, ({ request }) =>
+      serve(async () => {
+        const client = clientOf(request);
+        const search = new URL(request.url).searchParams;
+        const query = parseOrInvalid(
+          removedAfterSentQuerySchema,
+          { from: search.get('from') ?? '', to: search.get('to') ?? '' },
+          'the report period',
+        );
+        return json(await client.backend.orders.removedAfterSent(query), HTTP_OK);
       }),
     ),
 
@@ -354,6 +569,7 @@ export function createFakeApi(options: FakeApiOptions = {}): FakeApi {
           {
             terminalId: search.get('terminal_id') ?? undefined,
             sessionId: search.get('session_id') ?? undefined,
+            tableId: search.get('table_id') ?? undefined,
             limit: limit === null ? undefined : Number(limit),
           },
           'the sales query',
@@ -422,30 +638,75 @@ export interface FakeMember {
   readonly account: DemoAccount;
 }
 
+/** Where the tables this fixture adds sit in the room: after every table the shop was seeded with. */
+const CONTRACT_TABLE_SORT_ORDER = 100;
+
 /**
- * The fixture the port contract suite runs on: one shop, seen through a REST backend signed in as
- * its admin and another signed in as its cashier. The API's handlers must already be installed.
+ * Hands out a table of its own every time, added through the API as the admin, so no two tests of a
+ * run share a board. A retired one is created and then retired, which is what an admin does — a
+ * table is retired, never deleted, because old sales keep its name.
+ */
+function tableSource(admin: Backend): (isActive: boolean) => Promise<DiningTable> {
+  let added = 0;
+  return async function next(isActive: boolean): Promise<DiningTable> {
+    added += 1;
+    const input = {
+      name: `Contract table ${added}`,
+      sortOrder: CONTRACT_TABLE_SORT_ORDER + added,
+      isActive: true,
+    };
+    const table = await admin.orders.createTable(input);
+    return isActive ? table : admin.orders.updateTable(table.id, { ...input, isActive: false });
+  };
+}
+
+/**
+ * The fixture the port contract suite runs on: one shop, seen through one REST backend per role —
+ * one device each, with its own token, as four people on four phones. The API's handlers must
+ * already be installed.
  */
 export async function demoFixture(api: FakeApi): Promise<ContractFixture> {
   const members: FakeMember[] = [];
   for (const account of api.backend.demoAccounts) {
     members.push(await signInDemo(api, account));
   }
-  const admin = members.find((member) => member.user.role === 'admin');
-  const cashier = members.find(
-    (member) => member.user.role === 'cashier' && member.user.shopId === admin?.user.shopId,
-  );
-  if (!admin || !cashier) {
-    throw new AppError(
-      'CONFIG_ERROR',
-      'This API offers no demo admin and cashier of one shop to run the contract as.',
-    );
+  const admin = members.find((member) => hasRole(member.user, ['admin']));
+  if (!admin) {
+    throw new AppError('CONFIG_ERROR', 'This API offers no demo admin to run the contract as.');
   }
+  const shopId = admin.user.shopId;
+  /** The member of that shop who holds `role` and nothing else, so a refusal is unambiguous. */
+  function only(role: Role): FakeMember {
+    const member = members.find(
+      (candidate) =>
+        candidate.user.shopId === shopId &&
+        candidate.user.roles.length === 1 &&
+        hasRole(candidate.user, [role]),
+    );
+    if (!member) {
+      throw new AppError(
+        'CONFIG_ERROR',
+        `This API offers no demo member of one shop whose only role is ${role}.`,
+      );
+    }
+    return member;
+  }
+  const cashier = only('cashier');
+  const waiter = only('waiter');
+  const kitchen = only('kitchen');
+  const nextTable = tableSource(admin.backend);
+
   return {
     admin: admin.backend,
     cashier: cashier.backend,
+    waiter: waiter.backend,
+    kitchen: kitchen.backend,
     adminUser: admin.user,
     cashierUser: cashier.user,
+    waiterUser: waiter.user,
+    kitchenUser: kitchen.user,
     newTerminalCode: freshTerminalCode,
+    newTable: () => nextTable(true),
+    retiredTable: () => nextTable(false),
   };
 }

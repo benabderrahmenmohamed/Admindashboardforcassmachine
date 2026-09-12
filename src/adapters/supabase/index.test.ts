@@ -18,6 +18,8 @@ describe('createSupabaseBackend', () => {
       'auth',
       'catalog',
       'kind',
+      'orders',
+      'realtime',
       'sales',
       'sessions',
       'settings',

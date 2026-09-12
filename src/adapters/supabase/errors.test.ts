@@ -1,6 +1,6 @@
 import { AuthApiError, AuthRetryableFetchError } from '@supabase/supabase-js';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { AppError, type ErrorCode } from '@/lib/errors';
+import { AppError, ERROR_CODES, errorClass, type ErrorCode } from '@/lib/errors';
 import { defaultErrorMessage, toAuthAppError, toPostgrestAppError, unwrap } from './errors';
 import { failureOf, fakeSupabase, json, raised, text, unreachable } from './fakeSupabase';
 
@@ -80,6 +80,28 @@ describe('toPostgrestAppError', () => {
 
     expect(error).toMatchObject({ code: 'FORBIDDEN', message: 'No.', details: undefined });
     expect(warn).toHaveBeenCalledTimes(1);
+  });
+
+  // The café model: an order moved under a record, and the outbox decides from the code alone.
+  it.each<[ErrorCode, Record<string, unknown>, Record<string, unknown>]>([
+    ['ORDER_CHANGED', { table_id: 't-1', item_id: 'i-7' }, { tableId: 't-1', itemId: 'i-7' }],
+    ['ORDER_CLOSED', { table_id: 't-1', order_id: 'o-3' }, { tableId: 't-1', orderId: 'o-3' }],
+    ['ITEM_NOT_FOUND', { item_id: 'i-7' }, { itemId: 'i-7' }],
+    ['TABLE_INACTIVE', { table_id: 't-9' }, { tableId: 't-9' }],
+  ])('reads %s with its details in camelCase', (code, raisedDetails, details) => {
+    const error = toPostgrestAppError(
+      { message: code, details: JSON.stringify(raisedDetails), hint: '' },
+      409,
+    );
+
+    expect(error).toMatchObject({ code, message: defaultErrorMessage(code), details });
+    expect(errorClass(error.code)).toBe('conflict');
+  });
+
+  it('has a message for every code of contracts/errors.md', () => {
+    for (const code of ERROR_CODES) {
+      expect(defaultErrorMessage(code), code).not.toBe('');
+    }
   });
 
   it.each<[number, ErrorCode]>([

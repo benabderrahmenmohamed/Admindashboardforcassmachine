@@ -95,7 +95,7 @@ function ProductForm({
   const updateProduct = useUpdateProduct();
   // The stock when the form opened. An edit sends the change from it rather than a new total, so a
   // sale recorded while the form is open still counts; `product.stock` keeps following the list.
-  const [loadedStock] = useState(() => product?.stock ?? 0);
+  const [loadedStock] = useState(() => product?.stockQty ?? 0);
   const [schema] = useState(() =>
     product ? productEditFormSchema(loadedStock) : productFormSchema,
   );
@@ -219,12 +219,66 @@ function ProductForm({
               <Label htmlFor={currentStockId}>Current Stock</Label>
               <Input
                 id={currentStockId}
-                value={product.stock}
+                value={product.stockQty}
                 readOnly
                 className="bg-gray-50 text-gray-600"
               />
             </div>
           )}
+        </div>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <FormField
+            control={form.control}
+            name="isAvailable"
+            render={({ field }) => (
+              <FormItem className={FIELD_ITEM_CLASS}>
+                <div className="flex items-center gap-2">
+                  <FormControl>
+                    <input
+                      type="checkbox"
+                      className="w-5 h-5"
+                      checked={field.value}
+                      onChange={(event) => field.onChange(event.target.checked)}
+                      onBlur={field.onBlur}
+                      name={field.name}
+                      ref={field.ref}
+                    />
+                  </FormControl>
+                  <FormLabel>On the menu</FormLabel>
+                </div>
+                <FormDescription>
+                  Sold out for the day is a tap on the Menu screen; this is where it starts.
+                </FormDescription>
+                <FormMessage />
+              </FormItem>
+            )}
+          />
+          <FormField
+            control={form.control}
+            name="trackStock"
+            render={({ field }) => (
+              <FormItem className={FIELD_ITEM_CLASS}>
+                <div className="flex items-center gap-2">
+                  <FormControl>
+                    <input
+                      type="checkbox"
+                      className="w-5 h-5"
+                      checked={field.value}
+                      onChange={(event) => field.onChange(event.target.checked)}
+                      onBlur={field.onBlur}
+                      name={field.name}
+                      ref={field.ref}
+                    />
+                  </FormControl>
+                  <FormLabel>Count the stock</FormLabel>
+                </div>
+                <FormDescription>
+                  Most café items are made to order and are not counted. Stock never blocks a sale.
+                </FormDescription>
+                <FormMessage />
+              </FormItem>
+            )}
+          />
         </div>
         <FormField
           control={form.control}

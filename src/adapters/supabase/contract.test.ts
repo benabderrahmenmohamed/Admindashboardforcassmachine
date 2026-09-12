@@ -68,15 +68,30 @@ async function member(
   return { backend, user };
 }
 
+/** A table of the shop no other test has used, created by the admin as the room's owner. */
+function freshTableName(): string {
+  return `Contract ${crypto.randomUUID().slice(0, 8)}`;
+}
+
 async function makeFixture(): Promise<ContractFixture> {
   const admin = await member('admin@demo.local', 'demo-admin-2026');
   const cashier = await member('cashier@demo.local', 'demo-cashier-2026');
+  const waiter = await member('waiter@demo.local', 'demo-waiter-2026');
+  const kitchen = await member('kitchen@demo.local', 'demo-kitchen-2026');
+  const table = (isActive: boolean) =>
+    admin.backend.orders.createTable({ name: freshTableName(), sortOrder: 0, isActive });
   return {
     admin: admin.backend,
     cashier: cashier.backend,
+    waiter: waiter.backend,
+    kitchen: kitchen.backend,
     adminUser: admin.user,
     cashierUser: cashier.user,
+    waiterUser: waiter.user,
+    kitchenUser: kitchen.user,
     newTerminalCode: freshTerminalCode,
+    newTable: () => table(true),
+    retiredTable: () => table(false),
   };
 }
 

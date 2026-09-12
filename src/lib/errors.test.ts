@@ -28,6 +28,11 @@ const CLASSES: [ErrorCode, ErrorClass][] = [
   ['SESSION_CLOSED', 'conflict'],
   ['SESSION_ALREADY_OPEN', 'conflict'],
   ['TERMINAL_SUPERSEDED', 'conflict'],
+  // The café model: a table moved under the request, so the device re-reads it and asks again.
+  ['ORDER_CHANGED', 'conflict'],
+  ['ORDER_CLOSED', 'conflict'],
+  ['ITEM_NOT_FOUND', 'conflict'],
+  ['TABLE_INACTIVE', 'conflict'],
   ['CONFIG_ERROR', 'conflict'],
   ['UNKNOWN', 'conflict'],
 ];
@@ -49,7 +54,7 @@ describe('ERROR_CODES', () => {
   it('matches the Codes table in contracts/errors.md, code by code and class by class', () => {
     const rows = contractRows(errorsContract);
 
-    expect(rows).toHaveLength(14);
+    expect(rows).toHaveLength(CLASSES.length);
     expect(rows).toEqual(ERROR_CODES.map((code) => [code, errorClass(code)]));
   });
 });

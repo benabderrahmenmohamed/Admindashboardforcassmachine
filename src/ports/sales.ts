@@ -9,23 +9,41 @@ export const recordKindSchema = z.enum(['sale', 'refund']);
 export type RecordKind = z.infer<typeof recordKindSchema>;
 
 /**
- * Sale line: qty ≥ 1, lineTotal = qty × unitPrice − lineDiscount − cartDiscountShare.
- * Refund line: qty ≤ −1, names `refundsLineNo`, no discounts, lineTotal ≤ 0.
+ * Sale line: qty ≥ 1, `netMillimes` = qty × unitPrice − lineDiscount − allocatedDiscount.
+ * Refund line: qty ≤ −1, names the line it gives back through `refundsSaleLineId`, no discounts.
+ *
+ * `openOrderItemId` names the item on the table this line pays. It is null for a counter sale — a
+ * coffee taken away, which never sat on a table — and for every refund line.
  */
-export const saleLineSchema = z.object({
-  lineNo: z.number().int().min(1),
-  productId: z.string().min(1),
-  productName: z.string(),
-  qty: z
-    .number()
-    .int()
-    .refine((value) => value !== 0, 'Quantity cannot be zero'),
-  unitPriceMillimes: priceMillimesSchema,
-  lineDiscountMillimes: millimesSchema,
-  cartDiscountShareMillimes: millimesSchema,
-  lineTotalMillimes: millimesSchema,
-  refundsLineNo: z.number().int().min(1).nullable(),
-});
+export const saleLineSchema = z
+  .object({
+    /**
+     * The row id of this line, chosen by the device that wrote it — see `saleLineId`. A refund of a
+     * sale that has not reached a server yet has to name the lines it gives back, so the writer
+     * names its own rows, exactly as it names the record.
+     */
+    id: z.string().min(1),
+    lineNo: z.number().int().min(1),
+    openOrderItemId: z.string().min(1).nullable(),
+    productId: z.string().min(1),
+    productName: z.string(),
+    qty: z
+      .number()
+      .int()
+      .refine((value) => value !== 0, 'Quantity cannot be zero'),
+    unitPriceMillimes: priceMillimesSchema,
+    lineDiscountMillimes: millimesSchema,
+    /** Why this line was discounted or offered. A discount without a reason is not allowed. */
+    lineDiscountReason: z.string().nullable(),
+    /** This line's share of the cart discount, allocated by largest remainder so the parts sum exactly. */
+    allocatedDiscountMillimes: millimesSchema,
+    netMillimes: millimesSchema,
+    refundsSaleLineId: z.string().min(1).nullable(),
+  })
+  .refine(
+    (line) => line.lineDiscountMillimes === 0 || (line.lineDiscountReason ?? '').trim() !== '',
+    { error: 'A line discount needs a reason', path: ['lineDiscountReason'] },
+  );
 export type SaleLine = z.infer<typeof saleLineSchema>;
 
 /** Cash: tendered ≥ total and change = tendered − total. Card and refunds: tendered = total, change 0. */
@@ -44,10 +62,11 @@ export const saleRecordSchema = z.object({
   epoch: z.number().int().min(0),
   seq: z.number().int().min(1),
   sessionId: z.string().min(1),
+  /** The table being paid, or null for a counter sale and for a refund. */
+  tableId: z.string().min(1).nullable(),
   createdAt: timestampSchema,
   lines: z.array(saleLineSchema).min(1),
-  subtotalMillimes: millimesSchema,
-  discountMillimes: millimesSchema,
+  cartDiscountMillimes: millimesSchema,
   totalMillimes: millimesSchema,
   payment: paymentSchema,
   refundsSaleId: z.string().min(1).nullable(),
@@ -65,8 +84,23 @@ export const recordSaleResultSchema = z.object({
 });
 export type RecordSaleResult = z.infer<typeof recordSaleResultSchema>;
 
-/** A stored line, with how much of it later refunds have taken back (0 on refund lines). */
-export const saleLineViewSchema = saleLineSchema.extend({
+/**
+ * A stored line, with its own id — a refund points at it — and how much of it later refunds have
+ * taken back (0 on refund lines).
+ */
+export const saleLineViewSchema = z.object({
+  id: z.string().min(1),
+  lineNo: z.number().int().min(1),
+  openOrderItemId: z.string().nullable(),
+  productId: z.string().min(1),
+  productName: z.string(),
+  qty: z.number().int(),
+  unitPriceMillimes: priceMillimesSchema,
+  lineDiscountMillimes: millimesSchema,
+  lineDiscountReason: z.string().nullable(),
+  allocatedDiscountMillimes: millimesSchema,
+  netMillimes: millimesSchema,
+  refundsSaleLineId: z.string().nullable(),
   refundedQty: z.number().int().min(0),
   refundedMillimes: millimesSchema,
 });
@@ -80,10 +114,12 @@ export const saleSchema = z.object({
   terminalId: z.string().min(1),
   terminalCode: z.string().min(1),
   sessionId: z.string().min(1),
+  tableId: z.string().nullable(),
+  /** The table's name as it is now, for a receipt someone reads later; null for a counter sale. */
+  tableName: z.string().nullable(),
   refundsSaleId: z.string().nullable(),
   paymentMethod: paymentMethodSchema,
-  subtotalMillimes: millimesSchema,
-  discountMillimes: millimesSchema,
+  cartDiscountMillimes: millimesSchema,
   totalMillimes: millimesSchema,
   tenderedMillimes: millimesSchema,
   changeMillimes: millimesSchema,
@@ -96,6 +132,7 @@ export type Sale = z.infer<typeof saleSchema>;
 export const listSalesQuerySchema = z.object({
   terminalId: z.string().min(1).optional(),
   sessionId: z.string().min(1).optional(),
+  tableId: z.string().min(1).optional(),
   limit: z.number().int().min(1).max(200).optional(),
 });
 export type ListSalesQuery = z.infer<typeof listSalesQuerySchema>;

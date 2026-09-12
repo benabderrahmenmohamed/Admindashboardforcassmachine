@@ -31,7 +31,7 @@ describe('localSaleView', () => {
       terminalId: 'terminal-1',
       terminalCode: 'T1',
       paymentMethod: 'cash',
-      totalMillimes: mm(1350),
+      totalMillimes: mm(1900),
       lines: [{ lineNo: 1, qty: 2, refundedQty: 0, refundedMillimes: ZERO }],
     });
   });
@@ -91,7 +91,7 @@ describe('mergeSales', () => {
     expect(refunded?.sale.lines[0]).toMatchObject({
       qty: 2,
       refundedQty: 1,
-      refundedMillimes: mm(675),
+      refundedMillimes: mm(950),
     });
   });
 
@@ -119,14 +119,14 @@ describe('mergeSales', () => {
     const refund = refundRecord(sale, { seq: 42, ordinal: 2, qty: 1, status: 'acked' });
     const serverSale: Sale = {
       ...stored(sale),
-      lines: [{ ...stored(sale).lines[0], refundedQty: 1, refundedMillimes: mm(675) }],
+      lines: [{ ...stored(sale).lines[0], refundedQty: 1, refundedMillimes: mm(950) }],
     };
 
     const rows = mergeSales(terminal, [serverSale, stored(refund)], [sale, refund]);
 
     expect(rows.find((row) => row.sale.seq === 41)?.sale.lines[0]).toMatchObject({
       refundedQty: 1,
-      refundedMillimes: mm(675),
+      refundedMillimes: mm(950),
     });
   });
 });

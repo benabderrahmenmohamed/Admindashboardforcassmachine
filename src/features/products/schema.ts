@@ -69,6 +69,10 @@ function buildProductFormSchema(loadedStock: number | null) {
     description: z.string(),
     /** Empty or a full URL: the same rule the port applies. */
     imageUrl: productCreateInputSchema.shape.imageUrl,
+    /** On the menu right now. The Menu screen flips it during service; this sets where it starts. */
+    isAvailable: z.boolean(),
+    /** Whether stock is counted at all: most café items are made to order and are not. */
+    trackStock: z.boolean(),
   });
 }
 
@@ -103,6 +107,8 @@ function productFields(values: ProductFormValues) {
     barcode: values.barcode,
     description: values.description,
     imageUrl: values.imageUrl,
+    isAvailable: values.isAvailable,
+    trackStock: values.trackStock,
   };
 }
 
@@ -161,6 +167,9 @@ export function toProductFormValues(product?: Product): ProductFormValues {
       stock: '100',
       description: '',
       imageUrl: '',
+      // A café puts a new item on the menu and does not count it: that is the ordinary case.
+      isAvailable: true,
+      trackStock: false,
     };
   }
   return {
@@ -168,8 +177,10 @@ export function toProductFormValues(product?: Product): ProductFormValues {
     price: toDinarsString(product.priceMillimes),
     categoryId: product.categoryId ?? '',
     barcode: product.barcode,
-    stock: String(product.stock),
+    stock: String(product.stockQty),
     description: product.description,
     imageUrl: product.imageUrl,
+    isAvailable: product.isAvailable,
+    trackStock: product.trackStock,
   };
 }

@@ -19,6 +19,10 @@ const DEFAULT_MESSAGES: Readonly<Record<ErrorCode, string>> = {
   SESSION_CLOSED: 'The cash session is already closed.',
   SESSION_ALREADY_OPEN: 'This terminal already has an open cash session.',
   TERMINAL_SUPERSEDED: 'This terminal was registered again on another device.',
+  ORDER_CHANGED: 'The table changed while this was being sent. Read it again and try once more.',
+  ORDER_CLOSED: 'This table has no open order any more: it was paid or cancelled.',
+  ITEM_NOT_FOUND: 'That item is no longer on the table.',
+  TABLE_INACTIVE: 'This table is not in service, so nothing can be added to it.',
   CONFIG_ERROR: 'The app is not configured correctly.',
   UNKNOWN: 'The request failed.',
 };

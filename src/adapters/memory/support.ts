@@ -1,9 +1,9 @@
 import type { z } from 'zod';
 import { AppError, toAppError } from '@/lib/errors';
-import { roleSchema, type AuthState, type Role } from '@/ports';
+import { roleSchema, type AuthState, type RealtimeTopic, type Role } from '@/ports';
 import { droppedResponse, type FaultInjector, type MemoryOperation } from './faults';
 import type { MemoryProfile } from './seed';
-import type { MemoryStore } from './store';
+import type { MemoryStore, OrderRecordKind, OrderRecordRow } from './store';
 
 /** An auth state of the memory backend, which has no network and so is never offline. */
 export type MemorySession = Exclude<AuthState, { readonly status: 'offline' }>;
@@ -24,6 +24,12 @@ export interface MemoryContext {
   /** The data, shared by every client of the backend. */
   readonly store: MemoryStore;
   readonly client: MemoryClient;
+  /**
+   * Tells the shop's realtime listeners that `topic` changed, shared by every client: a waiter's
+   * add reaches the caisse and the kitchen the way the database's publication reaches them. Called
+   * once the write is in the store, so a listener that reads sees it.
+   */
+  readonly emit: (shopId: string, topic: RealtimeTopic) => void;
 }
 
 /**
@@ -64,9 +70,10 @@ export function perform<T>(
 
 /**
  * The caller's shop membership, as private.require_profile: nobody signed in is UNAUTHENTICATED;
- * an account without a profile, or with a role outside `allowed` (default: any role), is
- * FORBIDDEN. Every call on shop data makes this check first in its body: after connectivity and the
- * faults, as a request that never arrives cannot be refused, and before the input is parsed.
+ * an account without a profile, or holding none of `allowed` (default: any role), is FORBIDDEN.
+ * One person often holds several roles, so membership answers the question "any of these?", never
+ * "which one?". Every call on shop data makes this check first in its body: after connectivity and
+ * the faults, as a request that never arrives cannot be refused, and before the input is parsed.
  */
 export function requireProfile(
   context: MemoryContext,
@@ -80,9 +87,9 @@ export function requireProfile(
   if (!profile) {
     throw new AppError('FORBIDDEN', 'This account is not a member of any shop.');
   }
-  if (!allowed.includes(profile.role)) {
+  if (!profile.roles.some((role) => allowed.includes(role))) {
     throw new AppError('FORBIDDEN', 'Your role cannot do this.', {
-      details: { role: profile.role },
+      details: { roles: [...profile.roles] },
     });
   }
   return profile;
@@ -106,6 +113,46 @@ export function parseInput<Schema extends z.ZodType>(
 /** VALIDATION_ERROR with `{ field }`, as the database's typed payload readers raise it. */
 export function invalidField(field: string, message: string): AppError {
   return new AppError('VALIDATION_ERROR', message, { details: { field } });
+}
+
+/**
+ * The stored outcome of a record that already arrived, as private.order_replay: the same id with
+ * the same payload answers what it answered the first time, whatever has changed since; the same id
+ * with anything else is a conflict for a person to look at. Every kind shares the id space, because
+ * public.order_records is one table.
+ */
+export function replayOf(
+  store: MemoryStore,
+  profile: MemoryProfile,
+  kind: OrderRecordKind,
+  id: string,
+  payloadHash: string,
+): OrderRecordRow | undefined {
+  const stored = store.orderRecords.get(id);
+  if (!stored) {
+    return undefined;
+  }
+  if (stored.shopId !== profile.shopId) {
+    throw new AppError('FORBIDDEN', 'This record belongs to another shop.', { details: { id } });
+  }
+  if (stored.kind !== kind || stored.payloadHash !== payloadHash) {
+    throw new AppError(
+      'IDEMPOTENCY_CONFLICT',
+      'A different record was already stored under this id.',
+      {
+        details: { id },
+      },
+    );
+  }
+  return stored;
+}
+
+/** The product a stored stock correction moved. A record of that kind always names one. */
+export function storedProductId(stored: OrderRecordRow): string {
+  if (stored.productId === null) {
+    throw new AppError('UNKNOWN', `The stored correction ${stored.id} has no product`);
+  }
+  return stored.productId;
 }
 
 /** The text form of a uuid that the database returns: lowercase, 8-4-4-4-12 hex digits. */

@@ -8,8 +8,13 @@ info:
     The Supabase backend implements the same operations as RPCs with the same semantics.
 
     - Money is always an integer number of millimes (1 TND = 1000 millimes) in fields ending in `_millimes`.
-    - Records a terminal writes (sales, refunds, session opens and closes) carry an id chosen by the device and a
-      `payload_hash`. Sending the same record again returns its stored outcome with HTTP 200; a first write returns 201.
+    - Records a device writes (order events, sales, refunds, session opens and closes) carry an id chosen by the device
+      and a `payload_hash`. Sending the same record again returns its stored outcome with HTTP 200; a first write
+      returns 201.
+    - Open orders are working state, not the ledger: what is on a table right now. The ledger takes over at payment,
+      and `POST /api/v1/sales` marks the items it paid for and closes the order when nothing is owed.
+    - There is no "open an order" operation. An order is created by the server when the first item lands on a free
+      table, so two devices adding to the same table never race on creating it.
     - Errors use one envelope and the codes in `contracts/errors.md`, including the order in which checks run.
 servers:
   - url: http://localhost:8080
@@ -19,6 +24,10 @@ security:
 tags:
   - name: Auth
   - name: Catalog
+  - name: Tables
+  - name: Orders
+  - name: Kitchen
+  - name: Reports
   - name: Settings
   - name: Terminals
   - name: Cash sessions
@@ -126,6 +135,57 @@ paths:
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
 
+  /api/v1/products/{productId}/availability:
+    parameters:
+      - $ref: '#/components/parameters/ProductId'
+    put:
+      tags: [Catalog]
+      operationId: setProductAvailability
+      summary: Put a product on the menu or take it off for the day. Admin, cashier or waiter.
+      description: The daily sold-out toggle, which the floor may use. It touches nothing else about the product, and nothing already ordered.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ProductAvailability' }
+      responses:
+        '200':
+          description: The product as it now stands.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Product' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+
+  /api/v1/stock-adjustments:
+    post:
+      tags: [Catalog]
+      operationId: adjustStock
+      summary: Correct counted stock, leaving the movement behind as the reason. Idempotent by record id. Admin only.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/StockAdjustment' }
+      responses:
+        '201':
+          description: Counted.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/StockAdjustmentResult' }
+        '200':
+          description: This same correction was already counted (replayed); the stock as of then.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/StockAdjustmentResult' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+
   /api/v1/categories:
     get:
       tags: [Catalog]
@@ -174,6 +234,310 @@ paths:
         '401': { $ref: '#/components/responses/Unauthenticated' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
+
+  /api/v1/dining-tables:
+    get:
+      tags: [Tables]
+      operationId: listDiningTables
+      summary: Every table of the shop, in the admin's order, retired ones included.
+      responses:
+        '200':
+          description: Tables.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/DiningTable' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+    post:
+      tags: [Tables]
+      operationId: createDiningTable
+      summary: Add a table to the room. Admin only.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/DiningTableInput' }
+      responses:
+        '201':
+          description: Created.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DiningTable' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+
+  /api/v1/dining-tables/{tableId}:
+    parameters:
+      - $ref: '#/components/parameters/TableId'
+    put:
+      tags: [Tables]
+      operationId: updateDiningTable
+      summary: Rename a table, move it in the room, or retire it. Admin only.
+      description: Retiring leaves an order already open on the table open - the guests are still sitting there.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/DiningTableInput' }
+      responses:
+        '200':
+          description: Saved.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DiningTable' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+
+  /api/v1/table-board:
+    get:
+      tags: [Tables]
+      operationId: getTableBoard
+      summary: The grid - one entry per active table, free or with what it owes.
+      responses:
+        '200':
+          description: The board, in the admin's table order.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/TableBoardEntry' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /api/v1/dining-tables/{tableId}/open-order:
+    parameters:
+      - $ref: '#/components/parameters/TableId'
+    get:
+      tags: [Orders]
+      operationId: getOpenOrder
+      summary: The table's open order with its items, or null when the table is free.
+      responses:
+        '200':
+          description: The open order, or null.
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: '#/components/schemas/OpenOrder'
+                  - type: 'null'
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /api/v1/order-items:
+    post:
+      tags: [Orders]
+      operationId: addOrderItem
+      summary: Put an item on a table. Idempotent by record id. Admin, cashier or waiter.
+      description: The server finds the table's open order or opens one, so there is no operation that opens an order.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/OrderItemAddRecord' }
+      responses:
+        '201':
+          description: Added.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OrderItemAddResult' }
+        '200':
+          description: This same record already added it (replayed).
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OrderItemAddResult' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+
+  /api/v1/order-items/{itemId}/removals:
+    parameters:
+      - $ref: '#/components/parameters/OrderItemId'
+    post:
+      tags: [Orders]
+      operationId: removeOrderItem
+      summary: Take an item off a table, with a reason. Idempotent by record id. Admin, cashier or waiter.
+      description: The row stays, stamped with who removed it and why, because an item removed after the kitchen was told is what the fraud report is made of.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/OrderItemRemoveRecord' }
+      responses:
+        '201':
+          description: Removed. `affected` is 0 when the item was already off the table.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OrderWriteResult' }
+        '200':
+          description: This same record already removed it (replayed).
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OrderWriteResult' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+
+  /api/v1/order-items/{itemId}/preparations:
+    parameters:
+      - $ref: '#/components/parameters/OrderItemId'
+    post:
+      tags: [Kitchen]
+      operationId: prepareOrderItem
+      summary: Mark an item prepared. Idempotent by record id. Kitchen or admin.
+      description: Two cooks tapping the same line is not a conflict - the first stamp stands and the second write answers `affected` 0.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/OrderItemPrepareRecord' }
+      responses:
+        '201':
+          description: Prepared.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OrderWriteResult' }
+        '200':
+          description: This same record already prepared it (replayed).
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OrderWriteResult' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+
+  /api/v1/dining-tables/{tableId}/sends:
+    parameters:
+      - $ref: '#/components/parameters/TableId'
+    post:
+      tags: [Orders]
+      operationId: sendOrder
+      summary: Tell the kitchen about every unsent item of the table. Idempotent by record id. Admin, cashier or waiter.
+      description: One send is one ticket. Nothing left to send is not an error - `affected` is 0.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/OrderSendRecord' }
+      responses:
+        '201':
+          description: Sent.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OrderWriteResult' }
+        '200':
+          description: This same record already sent them (replayed).
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OrderWriteResult' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+
+  /api/v1/dining-tables/{tableId}/cancellations:
+    parameters:
+      - $ref: '#/components/parameters/TableId'
+    post:
+      tags: [Orders]
+      operationId: cancelOrder
+      summary: Cancel the table's open order, with a reason. Idempotent by record id. Cashier or admin.
+      description: ORDER_CHANGED when any item of the order is already paid - only a refund undoes that.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/OrderCancelRecord' }
+      responses:
+        '201':
+          description: Cancelled.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OrderWriteResult' }
+        '200':
+          description: This same record already cancelled it (replayed).
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OrderWriteResult' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+
+  /api/v1/open-orders:
+    get:
+      tags: [Orders]
+      operationId: pollOpenOrderChanges
+      summary: What has changed in the shop, for a client that polls instead of holding a live connection.
+      description: Without `since` the answer is a cursor and no topics - the starting point for polling, because what changed before a screen opened is already in what it read.
+      parameters:
+        - name: since
+          in: query
+          required: false
+          schema: { type: string }
+          description: The cursor of the previous answer.
+      responses:
+        '200':
+          description: The changes since `since`, and the cursor to send next time.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OpenOrderChanges' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+
+  /api/v1/kitchen-tickets:
+    get:
+      tags: [Kitchen]
+      operationId: listKitchenTickets
+      summary: Sent, unprepared items grouped by send, oldest ticket first.
+      description: A paid table keeps its ticket - the coffee still has to be made - and a cancelled one loses it.
+      responses:
+        '200':
+          description: Tickets.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/KitchenTicket' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /api/v1/reports/removed-after-sent-items:
+    get:
+      tags: [Reports]
+      operationId: listRemovedAfterSentItems
+      summary: What was taken off tables after the kitchen had been told, newest first. Admin only.
+      parameters:
+        - name: from
+          in: query
+          required: true
+          schema: { $ref: '#/components/schemas/Timestamp' }
+        - name: to
+          in: query
+          required: true
+          schema: { $ref: '#/components/schemas/Timestamp' }
+      responses:
+        '200':
+          description: The removed items of the period, both ends inclusive.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/RemovedAfterSentItem' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '422': { $ref: '#/components/responses/ValidationError' }
 
   /api/v1/shop-settings:
     get:
@@ -334,6 +698,10 @@ paths:
         - name: session_id
           in: query
           schema: { type: string, format: uuid }
+        - name: table_id
+          in: query
+          schema: { type: string, format: uuid }
+          description: What was paid at one table, for a receipt the caisse reads back.
         - name: limit
           in: query
           schema: { type: integer, minimum: 1, maximum: 200, default: 50 }
@@ -435,6 +803,16 @@ components:
       in: path
       required: true
       schema: { type: string, format: uuid }
+    TableId:
+      name: tableId
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    OrderItemId:
+      name: itemId
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
 
   responses:
     Unauthenticated:
@@ -448,12 +826,12 @@ components:
         application/json:
           schema: { $ref: '#/components/schemas/ErrorEnvelope' }
     NotFound:
-      description: The resource does not exist in the caller's shop (NOT_FOUND).
+      description: The resource does not exist in the caller's shop (NOT_FOUND, or ITEM_NOT_FOUND for an order item).
       content:
         application/json:
           schema: { $ref: '#/components/schemas/ErrorEnvelope' }
     Conflict:
-      description: IDEMPOTENCY_CONFLICT, SEQUENCE_GAP, SESSION_CLOSED, SESSION_ALREADY_OPEN or TERMINAL_SUPERSEDED.
+      description: IDEMPOTENCY_CONFLICT, SEQUENCE_GAP, SESSION_CLOSED, SESSION_ALREADY_OPEN, TERMINAL_SUPERSEDED, ORDER_CHANGED, ORDER_CLOSED or TABLE_INACTIVE.
       content:
         application/json:
           schema: { $ref: '#/components/schemas/ErrorEnvelope' }
@@ -498,6 +876,10 @@ components:
         - SESSION_CLOSED
         - SESSION_ALREADY_OPEN
         - TERMINAL_SUPERSEDED
+        - ORDER_CHANGED
+        - ORDER_CLOSED
+        - ITEM_NOT_FOUND
+        - TABLE_INACTIVE
         - RATE_LIMITED
         - SERVER_ERROR
 
@@ -534,13 +916,21 @@ components:
         expires_in: { type: integer, description: Seconds. }
         member: { $ref: '#/components/schemas/Member' }
 
+    Role:
+      type: string
+      enum: [admin, cashier, waiter, kitchen]
+
     Member:
       type: object
-      required: [user_id, shop_id, role, display_name, email]
+      required: [user_id, shop_id, roles, display_name, email]
       properties:
         user_id: { $ref: '#/components/schemas/Uuid' }
         shop_id: { $ref: '#/components/schemas/Uuid' }
-        role: { type: string, enum: [admin, cashier] }
+        roles:
+          type: array
+          minItems: 1
+          items: { $ref: '#/components/schemas/Role' }
+          description: What the member may do. One person often holds several - the owner is an admin who also works the counter.
         display_name: { type: string }
         email: { type: string }
 
@@ -572,8 +962,9 @@ components:
           barcode,
           description,
           image_url,
-          stock,
-          available,
+          is_available,
+          track_stock,
+          stock_qty,
           created_at,
           updated_at,
         ]
@@ -586,15 +977,36 @@ components:
         barcode: { type: string, description: Empty when the product has none. }
         description: { type: string }
         image_url: { type: string }
-        stock:
+        is_available:
+          type: boolean
+          description: On the menu right now. A café sells out of a dish and puts it back tomorrow, so this is a daily toggle rather than a change to the product.
+        track_stock:
+          type: boolean
+          description: Whether stock is counted for this product. Most café items are made to order and are not, so `stock_qty` only means something when this is true.
+        stock_qty:
           { type: integer, description: The sum of the product's stock movements; may be negative. }
-        available: { type: boolean }
         created_at: { $ref: '#/components/schemas/Timestamp' }
         updated_at: { $ref: '#/components/schemas/Timestamp' }
 
+    ProductAvailability:
+      type: object
+      required: [is_available]
+      properties:
+        is_available: { type: boolean }
+
     ProductFields:
       type: object
-      required: [name, price_millimes, category_id, barcode, description, image_url]
+      required:
+        [
+          name,
+          price_millimes,
+          category_id,
+          barcode,
+          description,
+          image_url,
+          is_available,
+          track_stock,
+        ]
       properties:
         name: { type: string, minLength: 1 }
         price_millimes: { type: integer, format: int64, minimum: 0, maximum: 1000000000000 }
@@ -602,6 +1014,8 @@ components:
         barcode: { type: string }
         description: { type: string }
         image_url: { type: string }
+        is_available: { type: boolean }
+        track_stock: { type: boolean }
 
     ProductCreate:
       allOf:
@@ -620,6 +1034,262 @@ components:
             stock_delta:
               type: integer
               description: Counted minus the stock shown when the edit started; written as an adjustment movement.
+
+    StockAdjustment:
+      type: object
+      description: An admin counting stock by hand, written as a record so a retry cannot count the same correction twice.
+      required: [id, product_id, qty_delta, reason, payload_hash]
+      properties:
+        id: { $ref: '#/components/schemas/Uuid' }
+        product_id: { $ref: '#/components/schemas/Uuid' }
+        qty_delta: { type: integer, not: { const: 0 } }
+        reason: { type: string, minLength: 1 }
+        payload_hash: { $ref: '#/components/schemas/PayloadHash' }
+
+    StockAdjustmentResult:
+      type: object
+      description: What the correction did, or what it did the first time it arrived - the stock as of then, not as of now.
+      required: [status, product_id, stock_qty]
+      properties:
+        status: { $ref: '#/components/schemas/WriteStatus' }
+        product_id: { $ref: '#/components/schemas/Uuid' }
+        stock_qty: { type: integer }
+
+    DiningTable:
+      type: object
+      required: [id, name, sort_order, is_active]
+      properties:
+        id: { $ref: '#/components/schemas/Uuid' }
+        name: { type: string, minLength: 1 }
+        sort_order: { type: integer }
+        is_active:
+          type: boolean
+          description: A table is retired, never deleted - old sales keep its name - and a retired one takes nothing new (TABLE_INACTIVE).
+
+    DiningTableInput:
+      type: object
+      required: [name, sort_order, is_active]
+      properties:
+        name: { type: string, minLength: 1 }
+        sort_order: { type: integer, minimum: 0 }
+        is_active: { type: boolean }
+
+    OpenOrderItem:
+      type: object
+      description: |
+        One line on a table. name_snapshot and unit_price_millimes are copied when the item is added,
+        so a later price change never moves what a guest already ordered. A removed item keeps its
+        row: the admin's report of items removed after they were sent is the point.
+      required:
+        [
+          id,
+          order_id,
+          product_id,
+          name_snapshot,
+          unit_price_millimes,
+          qty,
+          note,
+          added_by,
+          added_at,
+          sent_at,
+          prepared_at,
+          removed_at,
+          removed_by,
+          removed_reason,
+          paid_sale_id,
+        ]
+      properties:
+        id: { $ref: '#/components/schemas/Uuid' }
+        order_id: { $ref: '#/components/schemas/Uuid' }
+        product_id: { $ref: '#/components/schemas/Uuid' }
+        name_snapshot: { type: string }
+        unit_price_millimes: { type: integer, format: int64, minimum: 0, maximum: 1000000000000 }
+        qty: { type: integer, minimum: 1 }
+        note: { type: string }
+        added_by: { $ref: '#/components/schemas/Uuid' }
+        added_at: { $ref: '#/components/schemas/Timestamp' }
+        sent_at:
+          type: [string, 'null']
+          format: date-time
+          description: When the kitchen was told. Items sent together are one ticket.
+        prepared_at: { type: [string, 'null'], format: date-time }
+        removed_at: { type: [string, 'null'], format: date-time }
+        removed_by: { oneOf: [{ $ref: '#/components/schemas/Uuid' }, { type: 'null' }] }
+        removed_reason: { type: [string, 'null'] }
+        paid_sale_id:
+          oneOf: [{ $ref: '#/components/schemas/Uuid' }, { type: 'null' }]
+          description: The sale that paid this item, or null while it is unpaid.
+
+    OpenOrder:
+      type: object
+      required: [id, table_id, status, opened_at, closed_at, items]
+      properties:
+        id: { $ref: '#/components/schemas/Uuid' }
+        table_id: { $ref: '#/components/schemas/Uuid' }
+        status: { type: string, enum: [open, closed, cancelled] }
+        opened_at: { $ref: '#/components/schemas/Timestamp' }
+        closed_at: { type: [string, 'null'], format: date-time }
+        items:
+          type: array
+          description: Every line ever put on this order, removed and paid ones included, oldest first.
+          items: { $ref: '#/components/schemas/OpenOrderItem' }
+
+    TableBoardEntry:
+      type: object
+      description: One tile of the table grid the waiter and the caisse both read.
+      required: [table, order_id, opened_at, due_millimes, active_count, unsent_count, unpaid_count]
+      properties:
+        table: { $ref: '#/components/schemas/DiningTable' }
+        order_id:
+          oneOf: [{ $ref: '#/components/schemas/Uuid' }, { type: 'null' }]
+          description: The table's open order, or null when the table is free.
+        opened_at: { type: [string, 'null'], format: date-time }
+        due_millimes:
+          allOf: [{ $ref: '#/components/schemas/Millimes' }]
+          description: What the unpaid, active items come to - what is still owed on this table.
+        active_count: { type: integer, minimum: 0 }
+        unsent_count: { type: integer, minimum: 0 }
+        unpaid_count: { type: integer, minimum: 0 }
+
+    KitchenTicket:
+      type: object
+      description: One send - the items a waiter told the kitchen about at the same moment.
+      required: [order_id, table_id, table_name, sent_at, items]
+      properties:
+        order_id: { $ref: '#/components/schemas/Uuid' }
+        table_id: { $ref: '#/components/schemas/Uuid' }
+        table_name: { type: string }
+        sent_at: { $ref: '#/components/schemas/Timestamp' }
+        items:
+          type: array
+          minItems: 1
+          items: { $ref: '#/components/schemas/OpenOrderItem' }
+
+    RemovedAfterSentItem:
+      type: object
+      description: An item a waiter removed after the kitchen had already been told, for the admin's report.
+      required:
+        [
+          item_id,
+          table_name,
+          product_name,
+          qty,
+          unit_price_millimes,
+          sent_at,
+          removed_at,
+          removed_by,
+          removed_by_name,
+          removed_reason,
+        ]
+      properties:
+        item_id: { $ref: '#/components/schemas/Uuid' }
+        table_name: { type: string }
+        product_name: { type: string }
+        qty: { type: integer }
+        unit_price_millimes: { type: integer, format: int64, minimum: 0, maximum: 1000000000000 }
+        sent_at: { $ref: '#/components/schemas/Timestamp' }
+        removed_at: { $ref: '#/components/schemas/Timestamp' }
+        removed_by: { $ref: '#/components/schemas/Uuid' }
+        removed_by_name: { type: string }
+        removed_reason: { type: string }
+
+    OrderRecord:
+      type: object
+      description: What every order event carries - the device that wrote it, possibly offline, and how a replay is recognised.
+      required: [id, device_id, created_at, payload_hash]
+      properties:
+        id: { $ref: '#/components/schemas/Uuid' }
+        device_id: { type: string, minLength: 1 }
+        created_at: { $ref: '#/components/schemas/Timestamp' }
+        payload_hash: { $ref: '#/components/schemas/PayloadHash' }
+
+    OrderItemAddRecord:
+      allOf:
+        - $ref: '#/components/schemas/OrderRecord'
+        - type: object
+          description: |
+            Adding names the table, never an order, so two devices adding to the same free table cannot
+            race on creating one. An add for a table whose order was already paid opens a new order,
+            so a waiter's offline add is never lost; only TABLE_INACTIVE and FORBIDDEN refuse it.
+          required: [table_id, product_id, qty, note]
+          properties:
+            table_id: { $ref: '#/components/schemas/Uuid' }
+            product_id: { $ref: '#/components/schemas/Uuid' }
+            qty: { type: integer, minimum: 1 }
+            note: { type: string }
+
+    OrderItemRemoveRecord:
+      allOf:
+        - $ref: '#/components/schemas/OrderRecord'
+        - type: object
+          required: [item_id, reason]
+          properties:
+            item_id: { $ref: '#/components/schemas/Uuid' }
+            reason: { type: string, minLength: 1 }
+
+    OrderSendRecord:
+      allOf:
+        - $ref: '#/components/schemas/OrderRecord'
+        - type: object
+          required: [table_id]
+          properties:
+            table_id: { $ref: '#/components/schemas/Uuid' }
+
+    OrderItemPrepareRecord:
+      allOf:
+        - $ref: '#/components/schemas/OrderRecord'
+        - type: object
+          required: [item_id]
+          properties:
+            item_id: { $ref: '#/components/schemas/Uuid' }
+
+    OrderCancelRecord:
+      allOf:
+        - $ref: '#/components/schemas/OrderRecord'
+        - type: object
+          required: [table_id, reason]
+          properties:
+            table_id: { $ref: '#/components/schemas/Uuid' }
+            reason: { type: string, minLength: 1 }
+
+    OrderItemAddResult:
+      type: object
+      required: [status, order_id, item_id]
+      properties:
+        status: { $ref: '#/components/schemas/WriteStatus' }
+        order_id: { $ref: '#/components/schemas/Uuid' }
+        item_id: { $ref: '#/components/schemas/Uuid' }
+
+    OrderWriteResult:
+      type: object
+      required: [status, order_id, affected]
+      properties:
+        status: { $ref: '#/components/schemas/WriteStatus' }
+        order_id: { $ref: '#/components/schemas/Uuid' }
+        affected:
+          type: integer
+          minimum: 0
+          description: How many items the write touched - sent, prepared, removed or cancelled. A replay answers the stored count, not the work done again.
+
+    RealtimeTopic:
+      type: string
+      enum: [open_orders, open_order_items, dining_tables, products]
+
+    OpenOrderChanges:
+      type: object
+      description: |
+        What changed in the caller's shop since `since`, for a client with no live connection. The
+        answer carries no rows: the client re-reads the queries a topic covers, so a missed or a
+        repeated event costs a refetch and never a wrong screen.
+      required: [cursor, topics]
+      properties:
+        cursor:
+          type: string
+          description: Opaque. Send it back as `since` on the next poll.
+        topics:
+          type: array
+          description: Each topic that changed, named once. Empty when nothing did, and on the first poll.
+          items: { $ref: '#/components/schemas/RealtimeTopic' }
 
     ShopSettings:
       type: object
@@ -789,30 +1459,48 @@ components:
     SaleLine:
       type: object
       description: |
-        Sale line: qty >= 1, line_total = qty * unit_price - line_discount - cart_discount_share.
-        Refund line: qty <= -1, refunds_line_no set, no discounts, line_total <= 0.
+        Sale line: qty >= 1, net_millimes = qty * unit_price - line_discount - allocated_discount.
+        Refund line: qty <= -1, refunds_sale_line_id set, no discounts, net_millimes <= 0.
+        open_order_item_id names the item on the table this line pays; it is null for a counter sale,
+        which sat on no table, and for every refund line.
+
+        The row id is the writing device's to choose, not the server's: a register that sold offline
+        and is refunding the same receipt has to name the lines it gives back before either record
+        has been stored anywhere.
       required:
         [
+          id,
           line_no,
+          open_order_item_id,
           product_id,
           product_name,
           qty,
           unit_price_millimes,
           line_discount_millimes,
-          cart_discount_share_millimes,
-          line_total_millimes,
-          refunds_line_no,
+          line_discount_reason,
+          allocated_discount_millimes,
+          net_millimes,
+          refunds_sale_line_id,
         ]
       properties:
+        id: { $ref: '#/components/schemas/Uuid' }
         line_no: { type: integer, minimum: 1 }
+        open_order_item_id: { oneOf: [{ $ref: '#/components/schemas/Uuid' }, { type: 'null' }] }
         product_id: { $ref: '#/components/schemas/Uuid' }
         product_name: { type: string }
         qty: { type: integer, not: { const: 0 } }
         unit_price_millimes: { type: integer, format: int64, minimum: 0, maximum: 1000000000000 }
         line_discount_millimes: { type: integer, format: int64, minimum: 0 }
-        cart_discount_share_millimes: { type: integer, format: int64, minimum: 0 }
-        line_total_millimes: { $ref: '#/components/schemas/Millimes' }
-        refunds_line_no: { type: [integer, 'null'], minimum: 1 }
+        line_discount_reason:
+          type: [string, 'null']
+          description: Why this line was discounted or offered. A line discount without a reason is refused.
+        allocated_discount_millimes:
+          type: integer
+          format: int64
+          minimum: 0
+          description: This line's share of the cart discount, allocated by largest remainder so the parts sum exactly.
+        net_millimes: { $ref: '#/components/schemas/Millimes' }
+        refunds_sale_line_id: { oneOf: [{ $ref: '#/components/schemas/Uuid' }, { type: 'null' }] }
 
     Payment:
       type: object
@@ -833,10 +1521,10 @@ components:
           epoch,
           seq,
           session_id,
+          table_id,
           created_at,
           lines,
-          subtotal_millimes,
-          discount_millimes,
+          cart_discount_millimes,
           total_millimes,
           payment,
           refunds_sale_id,
@@ -855,14 +1543,16 @@ components:
             description: "Must be the terminal's last_seq + 1.",
           }
         session_id: { $ref: '#/components/schemas/Uuid' }
+        table_id:
+          oneOf: [{ $ref: '#/components/schemas/Uuid' }, { type: 'null' }]
+          description: The table being paid, or null for a counter sale and for a refund.
         created_at:
           $ref: '#/components/schemas/Timestamp'
         lines:
           type: array
           minItems: 1
           items: { $ref: '#/components/schemas/SaleLine' }
-        subtotal_millimes: { $ref: '#/components/schemas/Millimes' }
-        discount_millimes: { type: integer, format: int64, minimum: 0 }
+        cart_discount_millimes: { type: integer, format: int64, minimum: 0 }
         total_millimes: { $ref: '#/components/schemas/Millimes' }
         payment: { $ref: '#/components/schemas/Payment' }
         refunds_sale_id: { oneOf: [{ $ref: '#/components/schemas/Uuid' }, { type: 'null' }] }
@@ -896,10 +1586,11 @@ components:
           terminal_id,
           terminal_code,
           session_id,
+          table_id,
+          table_name,
           refunds_sale_id,
           payment_method,
-          subtotal_millimes,
-          discount_millimes,
+          cart_discount_millimes,
           total_millimes,
           tendered_millimes,
           change_millimes,
@@ -915,10 +1606,13 @@ components:
         terminal_id: { $ref: '#/components/schemas/Uuid' }
         terminal_code: { $ref: '#/components/schemas/TerminalCode' }
         session_id: { $ref: '#/components/schemas/Uuid' }
+        table_id: { oneOf: [{ $ref: '#/components/schemas/Uuid' }, { type: 'null' }] }
+        table_name:
+          type: [string, 'null']
+          description: The table's name as it is now, for a receipt someone reads later; null for a counter sale.
         refunds_sale_id: { oneOf: [{ $ref: '#/components/schemas/Uuid' }, { type: 'null' }] }
         payment_method: { type: string, enum: [cash, card] }
-        subtotal_millimes: { $ref: '#/components/schemas/Millimes' }
-        discount_millimes: { $ref: '#/components/schemas/Millimes' }
+        cart_discount_millimes: { $ref: '#/components/schemas/Millimes' }
         total_millimes: { $ref: '#/components/schemas/Millimes' }
         tendered_millimes: { $ref: '#/components/schemas/Millimes' }
         change_millimes: { $ref: '#/components/schemas/Millimes' }

@@ -42,12 +42,12 @@ function storedSession(user: User = makeUser()): string {
   return JSON.stringify(makeSession(user));
 }
 
-/** Amel's membership, as my_profile() reports it. */
+/** Amel's membership, as my_profile() reports it: the owner is an admin who also works the counter. */
 const amel: AuthUser = {
   id: 'user-1',
   email: 'amel@example.tn',
   name: 'Amel',
-  role: 'admin',
+  roles: ['admin', 'cashier'],
   shopId: 'shop-1',
 };
 
@@ -126,7 +126,7 @@ afterEach(() => {
 });
 
 describe('supabase auth', () => {
-  it('takes role, shop and name from the membership, never from token metadata', async () => {
+  it('takes roles, shop and name from the membership, never from token metadata', async () => {
     const fake = fakeAuth();
     const user = makeUser({
       app_metadata: { provider: 'email', role: 'cashier' },

@@ -2,15 +2,15 @@ import { describe, expect, it } from 'vitest';
 import {
   addItem,
   emptyCart,
+  offerLine,
   setCartDiscount,
-  setLineDiscount,
   type Cart,
   type CartProduct,
-} from '@/features/pos/cart';
+} from '@/features/caisse/cart';
 import type { TerminalContext } from '@/features/terminal/types';
 import { keysToSnake } from '@/lib/caseConversion';
 import { AppError } from '@/lib/errors';
-import { mm, neg, sub } from '@/lib/money';
+import { mm, neg, sub, type Millimes } from '@/lib/money';
 import { payloadHash } from '@/lib/payloadHash';
 import { saleRecordSchema, type PaymentMethod, type Sale, type SaleRecord } from '@/ports';
 import {
@@ -40,8 +40,15 @@ function envelope(seq: number, overrides: Partial<RecordEnvelope> = {}): RecordE
     sessionId: SESSION_ID,
     createdAt: '2026-09-11T09:00:00.000Z',
     terminal,
+    // These carts sit on no table: the counter is where this file sells from.
+    tableId: null,
     ...overrides,
   };
+}
+
+/** A line discount in these tests. A discount always says why, so every one here says the same. */
+function discountLine(cart: Cart, key: string, discount: Millimes): Cart {
+  return offerLine(cart, key, discount, 'offert');
 }
 
 const first: CartProduct = { id: uuid(1), name: 'Biscuits Saida', priceMillimes: mm(1_005) };
@@ -55,7 +62,7 @@ const milk: CartProduct = { id: uuid(3), name: 'Lait Délice 1 L', priceMillimes
  */
 function sampleCart(): Cart {
   const cart = addItem(addItem(addItem(emptyCart, first), second), milk, 3);
-  return setCartDiscount(setLineDiscount(cart, milk.id, mm(50)), 500);
+  return setCartDiscount(discountLine(cart, milk.id, mm(50)), 500);
 }
 
 async function rejectionOf(promise: Promise<unknown>): Promise<unknown> {
@@ -92,10 +99,11 @@ function saleView(record: SaleRecord): Sale {
     terminalId: 'terminal-t1',
     terminalCode: record.terminalCode,
     sessionId: record.sessionId,
+    tableId: record.tableId,
+    tableName: null,
     refundsSaleId: record.refundsSaleId,
     paymentMethod: record.payment.method,
-    subtotalMillimes: record.subtotalMillimes,
-    discountMillimes: record.discountMillimes,
+    cartDiscountMillimes: record.cartDiscountMillimes,
     totalMillimes: record.totalMillimes,
     tenderedMillimes: record.payment.tenderedMillimes,
     changeMillimes: record.payment.changeMillimes,
@@ -110,12 +118,12 @@ function afterRefund(sale: Sale, refund: SaleRecord): Sale {
   return {
     ...sale,
     lines: sale.lines.map((line) => {
-      const taken = refund.lines.find((item) => item.refundsLineNo === line.lineNo);
+      const taken = refund.lines.find((item) => item.refundsSaleLineId === line.id);
       return taken
         ? {
             ...line,
             refundedQty: line.refundedQty - taken.qty,
-            refundedMillimes: sub(line.refundedMillimes, taken.lineTotalMillimes),
+            refundedMillimes: sub(line.refundedMillimes, taken.netMillimes),
           }
         : line;
     }),
@@ -128,22 +136,21 @@ function afterRefund(sale: Sale, refund: SaleRecord): Sale {
  */
 function documentProblems(record: SaleRecord, refunded: Sale | null = null): string[] {
   const problems: string[] = [];
-  let subtotal = 0n;
   let discount = 0n;
   let total = 0n;
-  const seen = new Set<number>();
+  const seen = new Set<string>();
   record.lines.forEach((line, index) => {
     const at = `line ${index + 1}`;
     const qty = BigInt(line.qty);
     const unit = BigInt(line.unitPriceMillimes);
     const lineDiscount = BigInt(line.lineDiscountMillimes);
-    const share = BigInt(line.cartDiscountShareMillimes);
-    const lineTotal = BigInt(line.lineTotalMillimes);
+    const share = BigInt(line.allocatedDiscountMillimes);
+    const lineTotal = BigInt(line.netMillimes);
     if (line.lineNo !== index + 1) {
       problems.push(`${at} is numbered ${line.lineNo}`);
     }
     if (record.kind === 'sale') {
-      if (line.refundsLineNo !== null) {
+      if (line.refundsSaleLineId !== null) {
         problems.push(`${at} refunds a line`);
       }
       if (
@@ -156,14 +163,13 @@ function documentProblems(record: SaleRecord, refunded: Sale | null = null): str
       ) {
         problems.push(`${at} amounts do not add up`);
       }
-      subtotal += qty * unit - lineDiscount;
       discount += share;
     } else {
-      const original = refunded?.lines.find((item) => item.lineNo === line.refundsLineNo);
-      if (line.refundsLineNo === null || seen.has(line.refundsLineNo)) {
+      const original = refunded?.lines.find((item) => item.id === line.refundsSaleLineId);
+      if (line.refundsSaleLineId === null || seen.has(line.refundsSaleLineId)) {
         problems.push(`${at} names no sale line, or one named before`);
       } else {
-        seen.add(line.refundsLineNo);
+        seen.add(line.refundsSaleLineId);
       }
       if (!original) {
         problems.push(`${at} names a line that is not on the sale`);
@@ -180,22 +186,17 @@ function documentProblems(record: SaleRecord, refunded: Sale | null = null): str
         }
         const units = BigInt(original.refundedQty) - qty;
         const amount = BigInt(original.refundedMillimes) - lineTotal;
-        if (units > BigInt(original.qty) || amount > BigInt(original.lineTotalMillimes)) {
+        if (units > BigInt(original.qty) || amount > BigInt(original.netMillimes)) {
           problems.push(`${at} refunds more than is left`);
         }
-        if (units === BigInt(original.qty) && amount !== BigInt(original.lineTotalMillimes)) {
+        if (units === BigInt(original.qty) && amount !== BigInt(original.netMillimes)) {
           problems.push(`${at} takes the last units without paying exactly what is left`);
         }
       }
-      subtotal += lineTotal;
     }
     total += lineTotal;
   });
-  if (
-    BigInt(record.subtotalMillimes) !== subtotal ||
-    BigInt(record.discountMillimes) !== discount ||
-    BigInt(record.totalMillimes) !== total
-  ) {
+  if (BigInt(record.cartDiscountMillimes) !== discount || BigInt(record.totalMillimes) !== total) {
     problems.push('the document totals do not match its lines');
   }
   const tendered = BigInt(record.payment.tenderedMillimes);
@@ -241,19 +242,15 @@ function randomCart(below: (bound: number) => number): Cart {
   }
   for (const line of cart.lines) {
     if (below(3) === 0) {
-      cart = setLineDiscount(
-        cart,
-        line.productId,
-        mm(below(line.unitPriceMillimes * line.qty + 1)),
-      );
+      cart = discountLine(cart, line.productId, mm(below(line.unitPriceMillimes * line.qty + 1)));
     }
   }
   return setCartDiscount(cart, [0, 10_000, below(10_001), below(2_000)][below(4)]);
 }
 
 const RECORD_KEYS = [
+  'cart_discount_millimes',
   'created_at',
-  'discount_millimes',
   'epoch',
   'id',
   'kind',
@@ -263,20 +260,23 @@ const RECORD_KEYS = [
   'refunds_sale_id',
   'seq',
   'session_id',
-  'subtotal_millimes',
+  'table_id',
   'terminal_code',
   'total_millimes',
 ];
 
 const LINE_KEYS = [
-  'cart_discount_share_millimes',
+  'allocated_discount_millimes',
+  'id',
   'line_discount_millimes',
+  'line_discount_reason',
   'line_no',
-  'line_total_millimes',
+  'net_millimes',
+  'open_order_item_id',
   'product_id',
   'product_name',
   'qty',
-  'refunds_line_no',
+  'refunds_sale_line_id',
   'unit_price_millimes',
 ];
 
@@ -314,44 +314,53 @@ describe('buildSaleRecord', () => {
       epoch: 1,
       seq: 7,
       sessionId: SESSION_ID,
+      tableId: null,
       createdAt: '2026-09-11T09:00:00.000Z',
       lines: [
         {
+          id: record.lines[0].id,
           lineNo: 1,
           productId: first.id,
+          openOrderItemId: null,
           productName: 'Biscuits Saida',
           qty: 1,
           unitPriceMillimes: 1_005,
           lineDiscountMillimes: 0,
-          cartDiscountShareMillimes: 51,
-          lineTotalMillimes: 954,
-          refundsLineNo: null,
+          lineDiscountReason: null,
+          allocatedDiscountMillimes: 51,
+          netMillimes: 954,
+          refundsSaleLineId: null,
         },
         {
+          id: record.lines[1].id,
           lineNo: 2,
           productId: second.id,
+          openOrderItemId: null,
           productName: 'Chamia 250 g',
           qty: 1,
           unitPriceMillimes: 1_005,
           lineDiscountMillimes: 0,
-          cartDiscountShareMillimes: 50,
-          lineTotalMillimes: 955,
-          refundsLineNo: null,
+          lineDiscountReason: null,
+          allocatedDiscountMillimes: 50,
+          netMillimes: 955,
+          refundsSaleLineId: null,
         },
         {
+          id: record.lines[2].id,
           lineNo: 3,
           productId: milk.id,
+          openOrderItemId: null,
           productName: 'Lait Délice 1 L',
           qty: 3,
           unitPriceMillimes: 1_350,
           lineDiscountMillimes: 50,
-          cartDiscountShareMillimes: 200,
-          lineTotalMillimes: 3_800,
-          refundsLineNo: null,
+          lineDiscountReason: 'offert',
+          allocatedDiscountMillimes: 200,
+          netMillimes: 3_800,
+          refundsSaleLineId: null,
         },
       ],
-      subtotalMillimes: 6_010,
-      discountMillimes: 301,
+      cartDiscountMillimes: 301,
       totalMillimes: 5_709,
       payment: { method: 'cash', tenderedMillimes: 6_000, changeMillimes: 291 },
       refundsSaleId: null,
@@ -449,8 +458,7 @@ describe('buildSaleRecord', () => {
     for (const method of ['cash', 'card'] as const) {
       const record = await buildSaleRecord(envelope(1), cart, { method });
       expect(record).toMatchObject({
-        subtotalMillimes: 6_010,
-        discountMillimes: 6_010,
+        cartDiscountMillimes: 6_010,
         totalMillimes: 0,
         payment: { method, tenderedMillimes: 0, changeMillimes: 0 },
       });
@@ -603,33 +611,39 @@ describe('buildRefundRecord', () => {
       epoch: 1,
       seq: 8,
       sessionId: SESSION_ID,
+      tableId: null,
       createdAt: '2026-09-11T09:00:00.000Z',
       lines: [
         {
+          id: record.lines[0].id,
           lineNo: 1,
           productId: milk.id,
+          openOrderItemId: null,
           productName: 'Lait Délice 1 L',
           qty: -1,
           unitPriceMillimes: 1_350,
           lineDiscountMillimes: 0,
-          cartDiscountShareMillimes: 0,
-          lineTotalMillimes: -1_266,
-          refundsLineNo: 3,
+          lineDiscountReason: null,
+          allocatedDiscountMillimes: 0,
+          netMillimes: -1_266,
+          refundsSaleLineId: sale.lines[2].id,
         },
         {
+          id: record.lines[1].id,
           lineNo: 2,
           productId: first.id,
+          openOrderItemId: null,
           productName: 'Biscuits Saida',
           qty: -1,
           unitPriceMillimes: 1_005,
           lineDiscountMillimes: 0,
-          cartDiscountShareMillimes: 0,
-          lineTotalMillimes: -954,
-          refundsLineNo: 1,
+          lineDiscountReason: null,
+          allocatedDiscountMillimes: 0,
+          netMillimes: -954,
+          refundsSaleLineId: sale.lines[0].id,
         },
       ],
-      subtotalMillimes: -2_220,
-      discountMillimes: 0,
+      cartDiscountMillimes: 0,
       totalMillimes: -2_220,
       payment: { method: 'cash', tenderedMillimes: -2_220, changeMillimes: 0 },
       refundsSaleId: sale.id,
@@ -671,7 +685,7 @@ describe('buildRefundRecord', () => {
     const sale = await recordedSale();
     const record = await buildRefundRecord(envelope(8), sale, [{ lineNo: 3, qty: 3 }], 'cash');
 
-    expect(record.lines[0]).toMatchObject({ qty: -3, lineTotalMillimes: -3_800 });
+    expect(record.lines[0]).toMatchObject({ qty: -3, netMillimes: -3_800 });
     expect(documentProblems(record, sale)).toEqual([]);
   });
 
@@ -706,9 +720,10 @@ describe('buildRefundRecord', () => {
       'cash',
     );
 
-    expect(record.lines.map((line) => [line.lineNo, line.refundsLineNo, line.qty])).toEqual([
-      [1, 3, -2],
-      [2, 1, -1],
+    // Selections are taken in the order of the sale's lines, whatever order they arrive in.
+    expect(record.lines.map((line) => [line.lineNo, line.refundsSaleLineId, line.qty])).toEqual([
+      [1, sale.lines[2].id, -2],
+      [2, sale.lines[0].id, -1],
     ]);
     expect(documentProblems(record, sale)).toEqual([]);
   });
@@ -760,11 +775,8 @@ describe('buildRefundRecord', () => {
           failures.push(JSON.stringify({ sale, selections, problems }));
         }
         for (const line of record.lines) {
-          const original = sale.lines.find((item) => item.lineNo === line.refundsLineNo);
-          if (
-            original &&
-            line.lineTotalMillimes * original.qty !== line.qty * original.lineTotalMillimes
-          ) {
+          const original = sale.lines.find((item) => item.id === line.refundsSaleLineId);
+          if (original && line.netMillimes * original.qty !== line.qty * original.netMillimes) {
             unequalParts += 1;
           }
         }
@@ -775,7 +787,7 @@ describe('buildRefundRecord', () => {
         failures.push(`sale ${run}: refunded ${refundedTotal} of ${sold.totalMillimes}`);
       }
       for (const line of sale.lines) {
-        if (line.refundedMillimes !== line.lineTotalMillimes) {
+        if (line.refundedMillimes !== line.netMillimes) {
           failures.push(`sale ${run} line ${line.lineNo}: ${line.refundedMillimes} left over`);
         }
       }

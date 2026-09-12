@@ -5,7 +5,7 @@ import { CategoriesPage } from './CategoriesPage';
 
 describe('CategoriesPage', () => {
   it("lists this shop's categories", async () => {
-    const harness = await createHarness({ signedInAs: 'Admin' });
+    const harness = await createHarness({ signedInAs: 'Owner' });
     const categories = await harness.backend.catalog.listCategories();
 
     harness.renderScreen(<CategoriesPage />, { allow: ['admin'] });

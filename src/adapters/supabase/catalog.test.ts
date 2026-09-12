@@ -29,8 +29,9 @@ const productRows = [
     barcode: '6194000100015',
     description: '',
     image_url: '',
-    stock: 120,
-    available: true,
+    is_available: true,
+    track_stock: true,
+    stock_qty: 120,
     archived_at: null,
     legacy_kv_key: null,
     created_at: '2026-09-01T08:00:00+00:00',
@@ -46,8 +47,9 @@ const productRows = [
     barcode: null,
     description: 'Cuite le matin',
     image_url: 'https://example.com/baguette.jpg',
-    stock: -2,
-    available: false,
+    is_available: false,
+    track_stock: true,
+    stock_qty: -2,
     archived_at: null,
     legacy_kv_key: 'product:17',
     created_at: '2026-09-01T08:05:00+00:00',
@@ -66,8 +68,9 @@ const savedMilk = {
   barcode: '6194000200012',
   description: 'Bouteille',
   image_url: '',
-  stock: 30,
-  available: true,
+  is_available: true,
+  track_stock: true,
+  stock_qty: 30,
   created_at: '2026-09-11T09:00:00+00:00',
   updated_at: '2026-09-11T09:00:00+00:00',
 };
@@ -79,6 +82,8 @@ const milk: ProductCreateInput = {
   barcode: '6194000200012',
   description: 'Bouteille',
   imageUrl: '',
+  isAvailable: true,
+  trackStock: true,
   openingStock: 30,
 };
 
@@ -101,8 +106,9 @@ describe('supabase catalog', () => {
         barcode: '6194000100015',
         description: '',
         imageUrl: '',
-        stock: 120,
-        available: true,
+        isAvailable: true,
+        trackStock: true,
+        stockQty: 120,
         createdAt: '2026-09-01T08:00:00+00:00',
         updatedAt: '2026-09-01T08:00:00+00:00',
       },
@@ -115,8 +121,9 @@ describe('supabase catalog', () => {
         barcode: '',
         description: 'Cuite le matin',
         imageUrl: 'https://example.com/baguette.jpg',
-        stock: -2,
-        available: false,
+        isAvailable: false,
+        trackStock: true,
+        stockQty: -2,
         createdAt: '2026-09-01T08:05:00+00:00',
         updatedAt: '2026-09-03T17:40:12.52+00:00',
       },
@@ -149,6 +156,8 @@ describe('supabase catalog', () => {
         barcode: '6194000200012',
         description: 'Bouteille',
         image_url: '',
+        is_available: true,
+        track_stock: true,
         stock_delta: 30,
       },
     });
@@ -161,8 +170,9 @@ describe('supabase catalog', () => {
       barcode: '6194000200012',
       description: 'Bouteille',
       imageUrl: '',
-      stock: 30,
-      available: true,
+      isAvailable: true,
+      trackStock: true,
+      stockQty: 30,
       createdAt: '2026-09-11T09:00:00+00:00',
       updatedAt: '2026-09-11T09:00:00+00:00',
     });
@@ -170,7 +180,7 @@ describe('supabase catalog', () => {
 
   it('updates a product with its id and the stock delta', async () => {
     const { calls, catalog } = setup(
-      routes({ 'POST /rest/v1/rpc/save_product': () => json({ ...savedMilk, stock: 27 }) }),
+      routes({ 'POST /rest/v1/rpc/save_product': () => json({ ...savedMilk, stock_qty: 27 }) }),
     );
 
     const updated = await catalog.updateProduct('p-milk', {
@@ -180,6 +190,8 @@ describe('supabase catalog', () => {
       barcode: '',
       description: 'Bouteille',
       imageUrl: '',
+      isAvailable: true,
+      trackStock: true,
       stockDelta: -3,
     });
 
@@ -192,10 +204,12 @@ describe('supabase catalog', () => {
         barcode: '',
         description: 'Bouteille',
         image_url: '',
+        is_available: true,
+        track_stock: true,
         stock_delta: -3,
       },
     });
-    expect(updated.stock).toBe(27);
+    expect(updated.stockQty).toBe(27);
   });
 
   it('rejects invalid input without sending anything', async () => {

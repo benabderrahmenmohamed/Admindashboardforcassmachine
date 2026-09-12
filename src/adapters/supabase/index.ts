@@ -2,7 +2,9 @@ import type { Backend } from '@/ports';
 import { createSupabaseAuth, type StorageLike } from './auth';
 import { createSupabaseCatalog } from './catalog';
 import { getSupabaseClient, type SupabaseDatabaseClient } from './client';
+import { createSupabaseOrders } from './orders';
 import { readMyProfile } from './profile';
+import { createSupabaseRealtime } from './realtime';
 import { createSupabaseSales } from './sales';
 import { createSupabaseSessions } from './sessions';
 import { createSupabaseSettings } from './settings';
@@ -47,6 +49,8 @@ export function createSupabaseBackend(options: SupabaseBackendOptions = {}): Bac
       sessionStorageKey: options.sessionStorageKey,
     }),
     catalog: createSupabaseCatalog(client),
+    orders: createSupabaseOrders(client),
+    realtime: createSupabaseRealtime(client),
     sales: createSupabaseSales(client),
     sessions: createSupabaseSessions(client),
     settings: createSupabaseSettings(client),

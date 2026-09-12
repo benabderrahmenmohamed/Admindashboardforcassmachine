@@ -200,17 +200,22 @@ export function ProductsPage() {
                       </TableCell>
                       <TableCell>{formatTND(product.priceMillimes)}</TableCell>
                       <TableCell>
-                        <Badge
-                          variant={
-                            product.stock > 10
-                              ? 'default'
-                              : product.stock > 0
-                                ? 'secondary'
-                                : 'destructive'
-                          }
-                        >
-                          {product.stock}
-                        </Badge>
+                        {/* Most café items are not counted at all, and stock never blocks a sale. */}
+                        {product.trackStock ? (
+                          <Badge
+                            variant={
+                              product.stockQty > 10
+                                ? 'default'
+                                : product.stockQty > 0
+                                  ? 'secondary'
+                                  : 'destructive'
+                            }
+                          >
+                            {product.stockQty}
+                          </Badge>
+                        ) : (
+                          <span className="text-sm text-gray-500">Not counted</span>
+                        )}
                       </TableCell>
                       <TableCell className="font-mono text-sm">{product.barcode || '-'}</TableCell>
                       <TableCell>

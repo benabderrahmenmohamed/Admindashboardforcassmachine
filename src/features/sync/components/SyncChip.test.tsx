@@ -9,9 +9,9 @@ const STRANDED_SESSION = '00000000-0000-4000-8000-0000000000f2';
 
 function showChip(harness: Harness): void {
   const routes: RouteObject[] = [
-    { path: '/pos', element: <SyncChip conflictsPath="/pos/conflicts" /> },
+    { path: '/caisse', element: <SyncChip conflictsPath="/caisse/conflicts" /> },
   ];
-  harness.renderRoutes(routes, '/pos');
+  harness.renderRoutes(routes, '/caisse');
 }
 
 describe('SyncChip', () => {
@@ -30,7 +30,7 @@ describe('SyncChip', () => {
     showChip(harness);
 
     const chip = await screen.findByRole('link', { name: /2 to send/ });
-    expect(chip.getAttribute('href')).toBe('/pos/conflicts');
+    expect(chip.getAttribute('href')).toBe('/caisse/conflicts');
     expect(screen.getByText('nothing sent yet')).toBeDefined();
   });
 

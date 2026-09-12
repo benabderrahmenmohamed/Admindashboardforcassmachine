@@ -6,11 +6,13 @@ import {
   createProduct,
   editOf,
   failure,
+  listed,
   newId,
   openTill,
   recordCreated,
   refundRecord,
   saleRecord,
+  stockAdjustment,
   stockOf,
 } from './support';
 
@@ -32,6 +34,8 @@ export function describeCatalogPortContract(makeFixture: MakeFixture): void {
         barcode: '',
         description: 'Tozeur',
         imageUrl: '',
+        isAvailable: true,
+        trackStock: true,
         openingStock: 12,
       });
 
@@ -43,11 +47,13 @@ export function describeCatalogPortContract(makeFixture: MakeFixture): void {
         categoryName: null,
         description: 'Tozeur',
         imageUrl: '',
-        stock: 12,
+        isAvailable: true,
+        trackStock: true,
+        stockQty: 12,
       };
       expect(created).toMatchObject(expected);
-      const listed = await fixture.cashier.catalog.listProducts();
-      expect(listed.find((product) => product.id === created.id)).toMatchObject(expected);
+      const all = await fixture.cashier.catalog.listProducts();
+      expect(all.find((product) => product.id === created.id)).toMatchObject(expected);
     });
 
     it('refuses invalid product input', async () => {
@@ -58,6 +64,8 @@ export function describeCatalogPortContract(makeFixture: MakeFixture): void {
         barcode: '',
         description: '',
         imageUrl: '',
+        isAvailable: true,
+        trackStock: true,
         openingStock: 1,
       };
       await failure(
@@ -73,8 +81,8 @@ export function describeCatalogPortContract(makeFixture: MakeFixture): void {
         'VALIDATION_ERROR',
       );
 
-      const listed = await fixture.admin.catalog.listProducts();
-      expect(listed.map((product) => product.name)).not.toContain(valid.name);
+      const all = await fixture.admin.catalog.listProducts();
+      expect(all.map((product) => product.name)).not.toContain(valid.name);
     });
 
     it('changes stock only by the delta, so a sale made while the form was open is kept', async () => {
@@ -91,17 +99,17 @@ export function describeCatalogPortContract(makeFixture: MakeFixture): void {
         ...editOf(product, 5),
         priceMillimes: mm(19_000),
       });
-      expect(updated).toMatchObject({ id: product.id, priceMillimes: 19_000, stock: 12 });
+      expect(updated).toMatchObject({ id: product.id, priceMillimes: 19_000, stockQty: 12 });
       expect(await stockOf(fixture, product.id)).toBe(12);
 
       const renamed = await fixture.admin.catalog.updateProduct(product.id, {
         ...editOf(updated, 0),
         name: `${product.name} 1 L`,
       });
-      expect(renamed).toMatchObject({ name: `${product.name} 1 L`, stock: 12 });
+      expect(renamed).toMatchObject({ name: `${product.name} 1 L`, stockQty: 12 });
       await expect(
         fixture.admin.catalog.updateProduct(product.id, editOf(renamed, -12)),
-      ).resolves.toMatchObject({ stock: 0 });
+      ).resolves.toMatchObject({ stockQty: 0 });
     });
 
     it('takes sold units out of stock and puts refunded units back, below zero if need be', async () => {
@@ -122,8 +130,8 @@ export function describeCatalogPortContract(makeFixture: MakeFixture): void {
 
       await fixture.admin.catalog.deleteProduct(product.id);
 
-      const listed = await fixture.cashier.catalog.listProducts();
-      expect(listed.map((candidate) => candidate.id)).not.toContain(product.id);
+      const all = await fixture.cashier.catalog.listProducts();
+      expect(all.map((candidate) => candidate.id)).not.toContain(product.id);
       const edit = await failure(
         fixture.admin.catalog.updateProduct(product.id, editOf(product, 1)),
         'NOT_FOUND',
@@ -163,11 +171,11 @@ export function describeCatalogPortContract(makeFixture: MakeFixture): void {
       );
       await failure(fixture.cashier.catalog.deleteProduct(product.id), 'FORBIDDEN');
 
-      const listed = await fixture.admin.catalog.listProducts();
-      expect(listed.map((candidate) => candidate.name)).not.toContain(name);
-      expect(listed.find((candidate) => candidate.id === product.id)).toMatchObject({
+      const all = await fixture.admin.catalog.listProducts();
+      expect(all.map((candidate) => candidate.name)).not.toContain(name);
+      expect(all.find((candidate) => candidate.id === product.id)).toMatchObject({
         priceMillimes: 2_400,
-        stock: 40,
+        stockQty: 40,
       });
     });
 
@@ -191,12 +199,94 @@ export function describeCatalogPortContract(makeFixture: MakeFixture): void {
 
       const remaining = await fixture.cashier.catalog.listCategories();
       expect(remaining.map((candidate) => candidate.id)).not.toContain(category.id);
-      const listed = await fixture.cashier.catalog.listProducts();
-      expect(listed.find((candidate) => candidate.id === product.id)).toMatchObject({
+      const all = await fixture.cashier.catalog.listProducts();
+      expect(all.find((candidate) => candidate.id === product.id)).toMatchObject({
         categoryId: null,
         categoryName: null,
-        stock: 6,
+        stockQty: 6,
       });
+    });
+
+    // The café case: the kitchen runs out of a dish at eight in the evening and it is back tomorrow.
+    // Nobody should have to edit a price to say so, so the toggle is its own write and the floor may
+    // use it — but it must not become a way around the catalog being the admin's.
+    it('lets a waiter take a dish off the menu and put it back, touching nothing else', async () => {
+      const product = await createProduct(fixture, 'brik', 3_500, 4);
+
+      const soldOut = await fixture.waiter.catalog.setAvailability(product.id, false);
+
+      expect(soldOut).toMatchObject({
+        id: product.id,
+        isAvailable: false,
+        name: product.name,
+        priceMillimes: product.priceMillimes,
+        stockQty: 4,
+      });
+      expect(await listed(fixture, product.id)).toMatchObject({ isAvailable: false });
+      await expect(fixture.admin.catalog.setAvailability(product.id, true)).resolves.toMatchObject({
+        isAvailable: true,
+      });
+      expect(await listed(fixture, product.id)).toMatchObject({ isAvailable: true });
+    });
+
+    it('refuses the menu toggle to the kitchen and for a product that does not exist', async () => {
+      const product = await createProduct(fixture, 'chakchouka', 5_000);
+
+      await failure(fixture.kitchen.catalog.setAvailability(product.id, false), 'FORBIDDEN');
+      expect(await listed(fixture, product.id)).toMatchObject({ isAvailable: true });
+
+      const missing = newId();
+      const unknown = await failure(
+        fixture.admin.catalog.setAvailability(missing, false),
+        'NOT_FOUND',
+      );
+      expect(unknown.details).toMatchObject({ productId: missing });
+    });
+
+    it('counts an admin stock correction once, however many times it arrives', async () => {
+      const product = await createProduct(fixture, 'sugar', 1_200, 20);
+      const adjustment = await stockAdjustment(product.id, -3);
+
+      await expect(fixture.admin.catalog.adjustStock(adjustment)).resolves.toEqual({
+        status: 'created',
+        productId: product.id,
+        stockQty: 17,
+      });
+
+      // The same correction sent twice — an offline phone retrying — is the same correction, and it
+      // answers what it answered then rather than counting again.
+      await expect(fixture.admin.catalog.adjustStock(adjustment)).resolves.toEqual({
+        status: 'replayed',
+        productId: product.id,
+        stockQty: 17,
+      });
+      expect(await stockOf(fixture, product.id)).toBe(17);
+
+      await expect(
+        fixture.admin.catalog.adjustStock(await stockAdjustment(product.id, 5)),
+      ).resolves.toMatchObject({ status: 'created', stockQty: 22 });
+    });
+
+    it('keeps stock corrections to the admin and refuses one that moves nothing', async () => {
+      const product = await createProduct(fixture, 'flour', 2_000, 9);
+      const adjustment = await stockAdjustment(product.id, -2);
+
+      await failure(fixture.waiter.catalog.adjustStock(adjustment), 'FORBIDDEN');
+      await failure(fixture.cashier.catalog.adjustStock(adjustment), 'FORBIDDEN');
+      await failure(
+        fixture.admin.catalog.adjustStock(await stockAdjustment(product.id, 0)),
+        'VALIDATION_ERROR',
+      );
+      await failure(
+        fixture.admin.catalog.adjustStock(await stockAdjustment(product.id, -2, '  ')),
+        'VALIDATION_ERROR',
+      );
+      await failure(
+        fixture.admin.catalog.adjustStock(await stockAdjustment(newId(), -2)),
+        'NOT_FOUND',
+      );
+
+      expect(await stockOf(fixture, product.id)).toBe(9);
     });
   });
 }

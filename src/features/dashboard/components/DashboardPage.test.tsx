@@ -13,7 +13,7 @@ function statNamed(title: string): HTMLElement {
 
 describe('DashboardPage', () => {
   it('counts what the backend holds', async () => {
-    const harness = await createHarness({ signedInAs: 'Admin' });
+    const harness = await createHarness({ signedInAs: 'Owner' });
     const products = await harness.backend.catalog.listProducts();
     const categories = await harness.backend.catalog.listCategories();
 
@@ -22,6 +22,6 @@ describe('DashboardPage', () => {
     expect(await screen.findByText('Total Products')).toBeDefined();
     expect(within(statNamed('Total Products')).getByText(String(products.length))).toBeDefined();
     expect(within(statNamed('Categories')).getByText(String(categories.length))).toBeDefined();
-    expect(statNamed('Total Products').getAttribute('href')).toBe('/dashboard/products');
+    expect(statNamed('Total Products').getAttribute('href')).toBe('/admin/products');
   });
 });

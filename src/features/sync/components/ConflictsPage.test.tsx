@@ -2,22 +2,25 @@ import { fireEvent, screen, within } from '@testing-library/react';
 import type { RouteObject } from 'react-router';
 import { describe, expect, it } from 'vitest';
 import type { Role } from '@/ports';
-import { createHarness, type DemoLabel, type Harness } from '@/test/harness';
+import { createHarness, type Harness } from '@/test/harness';
 import { ConflictsPage } from './ConflictsPage';
 
 /** A session id no server has ever heard of, so the record naming it is refused. */
 const STRANDED_SESSION = '00000000-0000-4000-8000-0000000000f3';
 
-const GUARDS: Record<DemoLabel, { readonly role: Role; readonly home: string }> = {
-  Cashier: { role: 'cashier', home: '/pos' },
-  Admin: { role: 'admin', home: '/dashboard' },
+/** The two faces that carry a queue: the counter, and the back office where a void is possible. */
+const GUARDS: Record<'Cashier' | 'Owner', { readonly role: Role; readonly home: string }> = {
+  Cashier: { role: 'cashier', home: '/caisse' },
+  Owner: { role: 'admin', home: '/admin' },
 };
+
+type QueueLabel = keyof typeof GUARDS;
 
 /**
  * A device whose queue has stopped: it wrote a sale in a session the server does not have, so the
  * server refused it and nothing behind it can go out either.
  */
-async function stoppedQueue(signedInAs: DemoLabel): Promise<Harness> {
+async function stoppedQueue(signedInAs: QueueLabel): Promise<Harness> {
   const harness = await createHarness({ signedInAs, terminalCode: 'T1' });
   const [product] = await harness.backend.catalog.listProducts();
   await harness.sell(STRANDED_SESSION, product);
@@ -25,7 +28,7 @@ async function stoppedQueue(signedInAs: DemoLabel): Promise<Harness> {
   return harness;
 }
 
-function showConflicts(harness: Harness, signedInAs: DemoLabel): void {
+function showConflicts(harness: Harness, signedInAs: QueueLabel): void {
   const { role, home } = GUARDS[signedInAs];
   const routes: RouteObject[] = [{ path: home, element: <p>Back at work</p> }];
   harness.renderScreen(<ConflictsPage home={home} />, {
@@ -88,9 +91,9 @@ describe('ConflictsPage', () => {
   });
 
   it('offers an admin the void, on the record and with a reason', async () => {
-    const harness = await stoppedQueue('Admin');
+    const harness = await stoppedQueue('Owner');
 
-    showConflicts(harness, 'Admin');
+    showConflicts(harness, 'Owner');
 
     fireEvent.click(await screen.findByRole('button', { name: /Void receipt/ }));
     const dialog = await screen.findByRole('dialog');

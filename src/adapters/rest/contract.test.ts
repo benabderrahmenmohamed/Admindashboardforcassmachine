@@ -27,7 +27,7 @@ afterAll(() => {
   server.close();
 });
 
-/** A fresh API with data of its own for every test, and two devices signed in on it. */
+/** A fresh API with data of its own for every test, and one device per role signed in on it. */
 async function makeFixture(): Promise<ContractFixture> {
   const api = createFakeApi();
   server.use(...api.handlers);

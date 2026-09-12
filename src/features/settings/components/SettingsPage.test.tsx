@@ -13,7 +13,7 @@ function textarea(label: string): HTMLTextAreaElement {
 
 describe('SettingsPage', () => {
   it("shows the shop's settings and this device's registration", async () => {
-    const harness = await createHarness({ signedInAs: 'Admin', terminalCode: 'T1' });
+    const harness = await createHarness({ signedInAs: 'Owner', terminalCode: 'T1' });
     const settings = await harness.backend.settings.getSettings();
 
     harness.renderScreen(<SettingsPage />, { allow: ['admin'] });
@@ -27,7 +27,7 @@ describe('SettingsPage', () => {
   });
 
   it('saves an edited receipt footer through the settings port', async () => {
-    const harness = await createHarness({ signedInAs: 'Admin' });
+    const harness = await createHarness({ signedInAs: 'Owner' });
 
     harness.renderScreen(<SettingsPage />, { allow: ['admin'] });
     await screen.findByText('Receipt');

@@ -75,14 +75,14 @@ describe('recordErrorMessage', () => {
     const error = failure('VALIDATION_ERROR', {
       lineNo: 1,
       remainingQty: 1,
-      remainingMillimes: 1350,
+      remainingMillimes: 1900,
     });
 
     const message = recordErrorMessage(error, refund);
 
-    expect(message).toContain('Harissa Cap Bon 380 g');
+    expect(message).toContain('Café express');
     expect(message).toContain('1 unit');
-    expect(message).toContain(formatTND(mm(1350)));
+    expect(message).toContain(formatTND(mm(1900)));
   });
 
   it('picks the reason a FORBIDDEN or NOT_FOUND names', () => {
@@ -118,13 +118,13 @@ describe('canVoid', () => {
 
 describe('describeRecord and recordedMessage', () => {
   it('names a sale by its receipt, its amount and how it was paid', () => {
-    expect(describeRecord(sale)).toBe(`Sale T1-42: ${formatTND(mm(1350))} paid by cash`);
+    expect(describeRecord(sale)).toBe(`Sale T1-42: ${formatTND(mm(1900))} paid by cash`);
     expect(recordedMessage(sale)).toBe('Sale T1-42 recorded');
   });
 
   it('shows a refund as money handed back', () => {
     const refund = refundRecord(sale, { seq: 43 });
-    expect(describeRecord(refund)).toBe(`Refund T1-43: ${formatTND(mm(1350))} paid back by cash`);
+    expect(describeRecord(refund)).toBe(`Refund T1-43: ${formatTND(mm(1900))} paid back by cash`);
     expect(recordedMessage(refund)).toBe('Refund T1-43 recorded');
   });
 

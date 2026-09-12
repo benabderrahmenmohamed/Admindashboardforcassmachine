@@ -5,6 +5,8 @@ import {
   productCreateInputSchema,
   productSchema,
   productUpdateInputSchema,
+  stockAdjustmentResultSchema,
+  stockAdjustmentSchema,
   type CatalogPort,
   type Category,
   type Product,
@@ -37,8 +39,9 @@ function toProduct(row: ProductRow): Product {
       barcode: row.barcode ?? '',
       description: row.description,
       imageUrl: row.image_url,
-      stock: row.stock,
-      available: row.available,
+      isAvailable: row.is_available,
+      trackStock: row.track_stock,
+      stockQty: row.stock_qty,
       createdAt: row.created_at,
       updatedAt: row.updated_at,
     },
@@ -90,6 +93,22 @@ export function createSupabaseCatalog(client: SupabaseDatabaseClient): CatalogPo
 
     async deleteProduct(id) {
       await unwrap(client.rpc('archive_product', { p_product_id: id }));
+    },
+
+    async setAvailability(productId, isAvailable) {
+      const data = await unwrap(
+        client.rpc('set_product_availability', {
+          p_product_id: productId,
+          p_is_available: isAvailable,
+        }),
+      );
+      return fromWire(productSchema, data, 'the product');
+    },
+
+    async adjustStock(adjustment) {
+      const record = parseInput(stockAdjustmentSchema, adjustment);
+      const data = await unwrap(client.rpc('adjust_stock', { p: toWire(record) }));
+      return fromWire(stockAdjustmentResultSchema, data, 'the stock correction');
     },
 
     async listCategories() {

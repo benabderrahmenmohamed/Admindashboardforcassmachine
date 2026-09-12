@@ -1,4 +1,4 @@
-import { changeDue, totals, type Cart } from '@/features/pos/cart';
+import { changeDue, totals, type Cart } from '@/features/caisse/cart';
 import type { TerminalContext } from '@/features/terminal/types';
 import { AppError } from '@/lib/errors';
 import { add, mm, neg, ZERO, type Millimes } from '@/lib/money';
@@ -19,10 +19,37 @@ export interface RecordEnvelope {
   readonly sessionId: string;
   readonly createdAt: string;
   readonly terminal: TerminalContext;
+  /**
+   * The table being paid, or null for a counter sale — a coffee taken away that never sat on one.
+   * The server checks every line against this table's open order, so it is what turns a payment
+   * into "these rows of that table are paid" rather than "some products were sold".
+   */
+  readonly tableId: string | null;
 }
 
 export function receiptNumber(terminalCode: string, seq: number): string {
   return `${terminalCode}-${seq}`;
+}
+
+/**
+ * The row id of line `lineNo` of the record `recordId`: the first sixteen bytes of
+ * SHA-256("<record id>:<line no>"), laid out as a UUID.
+ *
+ * The device names its own rows, as it names the record, because a refund can be written before the
+ * sale it gives back has reached a server — a register that sold offline and is refunding the same
+ * receipt — and the line it points at has to have an id by then. `record_sale` stores what it was
+ * given (supabase/migrations).
+ *
+ * Derived rather than random so that the same sale, built twice, is the same record down to its
+ * hash: two records could then never be stored under one id with different contents.
+ */
+async function saleLineId(recordId: string, lineNo: number): Promise<string> {
+  const bytes = new TextEncoder().encode(`${recordId}:${lineNo}`);
+  const digest = new Uint8Array(await crypto.subtle.digest('SHA-256', bytes));
+  const hex = Array.from(digest.slice(0, 16), (byte) => byte.toString(16).padStart(2, '0')).join(
+    '',
+  );
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
 }
 
 function invalid(message: string, details?: Record<string, unknown>): AppError {
@@ -42,17 +69,23 @@ export async function buildSaleRecord(
     throw invalid('The cart is empty');
   }
   const cartTotals = totals(cart);
-  const lines: SaleLine[] = cart.lines.map((line, index) => ({
-    lineNo: index + 1,
-    productId: line.productId,
-    productName: line.name,
-    qty: line.qty,
-    unitPriceMillimes: line.unitPriceMillimes,
-    lineDiscountMillimes: cartTotals.lines[index].lineDiscountMillimes,
-    cartDiscountShareMillimes: cartTotals.lines[index].cartDiscountShareMillimes,
-    lineTotalMillimes: cartTotals.lines[index].totalMillimes,
-    refundsLineNo: null,
-  }));
+  const lines: SaleLine[] = await Promise.all(
+    cart.lines.map(async (line, index) => ({
+      id: await saleLineId(envelope.id, index + 1),
+      lineNo: index + 1,
+      // The row of the table this line pays; null when nothing was on a table.
+      openOrderItemId: line.orderItemId ?? null,
+      productId: line.productId,
+      productName: line.name,
+      qty: line.qty,
+      unitPriceMillimes: line.unitPriceMillimes,
+      lineDiscountMillimes: cartTotals.lines[index].lineDiscountMillimes,
+      lineDiscountReason: line.lineDiscountReason ?? null,
+      allocatedDiscountMillimes: cartTotals.lines[index].cartDiscountShareMillimes,
+      netMillimes: cartTotals.lines[index].totalMillimes,
+      refundsSaleLineId: null,
+    })),
+  );
   const total = cartTotals.totalMillimes;
   const tendered = payment.method === 'cash' ? (payment.tenderedMillimes ?? total) : total;
   const record = await withPayloadHash({
@@ -62,10 +95,10 @@ export async function buildSaleRecord(
     epoch: envelope.terminal.epoch,
     seq: envelope.seq,
     sessionId: envelope.sessionId,
+    tableId: envelope.tableId,
     createdAt: envelope.createdAt,
     lines,
-    subtotalMillimes: cartTotals.subtotalMillimes,
-    discountMillimes: cartTotals.discountMillimes,
+    cartDiscountMillimes: cartTotals.discountMillimes,
     totalMillimes: total,
     payment: {
       method: payment.method,
@@ -129,34 +162,40 @@ export async function buildRefundRecord(
     throw invalid('Choose at least one unit to refund');
   }
   const seen = new Set<number>();
-  const lines: SaleLine[] = chosen.map((selection, index) => {
-    if (seen.has(selection.lineNo)) {
-      throw invalid('Each line can be refunded once per refund', { lineNo: selection.lineNo });
-    }
-    seen.add(selection.lineNo);
-    const original = sale.lines.find((line) => line.lineNo === selection.lineNo);
-    if (!original) {
-      throw invalid('That line is not on the sale', { lineNo: selection.lineNo });
-    }
-    const amount = refundShare(
-      original.lineTotalMillimes,
-      original.qty,
-      original.refundedQty,
-      selection.qty,
-    );
-    return {
-      lineNo: index + 1,
-      productId: original.productId,
-      productName: original.productName,
-      qty: -selection.qty,
-      unitPriceMillimes: original.unitPriceMillimes,
-      lineDiscountMillimes: ZERO,
-      cartDiscountShareMillimes: ZERO,
-      lineTotalMillimes: neg(amount),
-      refundsLineNo: original.lineNo,
-    };
-  });
-  const total = add(...lines.map((line) => line.lineTotalMillimes));
+  const lines: SaleLine[] = await Promise.all(
+    chosen.map(async (selection, index) => {
+      if (seen.has(selection.lineNo)) {
+        throw invalid('Each line can be refunded once per refund', { lineNo: selection.lineNo });
+      }
+      seen.add(selection.lineNo);
+      const original = sale.lines.find((line) => line.lineNo === selection.lineNo);
+      if (!original) {
+        throw invalid('That line is not on the sale', { lineNo: selection.lineNo });
+      }
+      const amount = refundShare(
+        original.netMillimes,
+        original.qty,
+        original.refundedQty,
+        selection.qty,
+      );
+      return {
+        id: await saleLineId(envelope.id, index + 1),
+        lineNo: index + 1,
+        // A refund gives money back; it never pays a row of a table, so it names none.
+        openOrderItemId: null,
+        productId: original.productId,
+        productName: original.productName,
+        qty: -selection.qty,
+        unitPriceMillimes: original.unitPriceMillimes,
+        lineDiscountMillimes: ZERO,
+        lineDiscountReason: null,
+        allocatedDiscountMillimes: ZERO,
+        netMillimes: neg(amount),
+        refundsSaleLineId: original.id,
+      };
+    }),
+  );
+  const total = add(...lines.map((line) => line.netMillimes));
   const record = await withPayloadHash({
     id: envelope.id,
     kind: 'refund' as const,
@@ -164,10 +203,10 @@ export async function buildRefundRecord(
     epoch: envelope.terminal.epoch,
     seq: envelope.seq,
     sessionId: envelope.sessionId,
+    tableId: null,
     createdAt: envelope.createdAt,
     lines,
-    subtotalMillimes: total,
-    discountMillimes: ZERO,
+    cartDiscountMillimes: ZERO,
     totalMillimes: total,
     payment: { method, tenderedMillimes: total, changeMillimes: ZERO },
     refundsSaleId: sale.id,

@@ -3,7 +3,7 @@ import { render as renderIntoDom, type RenderResult } from '@testing-library/rea
 import type { ReactNode } from 'react';
 import { createMemoryRouter, RouterProvider, type RouteObject } from 'react-router';
 import { AuthProvider } from '@/features/auth/components/AuthProvider';
-import { addItem, emptyCart, type CartProduct } from '@/features/pos/cart';
+import { addItem, emptyCart, type CartProduct } from '@/features/caisse/cart';
 import { newRecordId, terminalContext } from '@/features/pos/recording';
 import { buildSaleRecord } from '@/features/sales/records';
 import { buildCloseSessionRecord, buildOpenSessionRecord } from '@/features/sessions/records';
@@ -24,7 +24,7 @@ import { BackendProvider } from '@/lib/backend-context';
 import { mm, type Millimes } from '@/lib/money';
 import { createQueryClient } from '@/lib/query';
 import { ProtectedRoute } from '@/routes/ProtectedRoute';
-import type { AuthUser, Backend, Role, ZReport } from '@/ports';
+import { hasRole, type AuthUser, type Backend, type Role, type ZReport } from '@/ports';
 
 /**
  * One app, as a screen test sees it: the in-memory backend the composition root builds for
@@ -39,10 +39,19 @@ import type { AuthUser, Backend, Role, ZReport } from '@/ports';
  * and the triggers (driven by the test instead of timers) are fakes.
  */
 
-/** The demo accounts the memory backend offers, by the label the login page shows. */
-export type DemoLabel = 'Admin' | 'Cashier';
+/**
+ * The demo accounts the memory backend offers, by the label the login page shows. "Owner" is the
+ * ordinary café case the spec names: one person who is both the admin and the cashier.
+ */
+export type DemoLabel = 'Owner' | 'Cashier' | 'Waiter' | 'Kitchen';
 
-const DEMO_ROLE: Record<DemoLabel, Role> = { Admin: 'admin', Cashier: 'cashier' };
+/** The role each account must hold for a test that asks for it to mean what it says. */
+const DEMO_ROLE: Record<DemoLabel, Role> = {
+  Owner: 'admin',
+  Cashier: 'cashier',
+  Waiter: 'waiter',
+  Kitchen: 'kitchen',
+};
 
 /** The triggers of the queue, in the hands of the test: no timer here fires on its own. */
 export interface TestSchedule extends SyncSchedule {
@@ -118,6 +127,12 @@ export interface Harness {
   readonly schedule: TestSchedule;
   /** The signed-in user, for records that name who wrote them. */
   readonly user: AuthUser | null;
+  /**
+   * Signs in as another demo account before the screen renders, as a second person taking the
+   * device over. A kitchen screen is set up this way: a waiter puts the order on the table, then
+   * the cook signs in to look at it, because no one account may do both.
+   */
+  signInAs(label: DemoLabel): Promise<AuthUser>;
   /** The screen under test, behind the guard the app puts in front of it. */
   renderScreen(ui: ReactNode, options?: RenderOptions): RenderResult;
   /** A route tree of the test's own, inside the app's providers. */
@@ -139,8 +154,10 @@ async function signIn(backend: Backend, label: DemoLabel): Promise<AuthUser> {
     throw new Error(`This backend offers no ${label} account to sign in with.`);
   }
   const user = await backend.auth.signIn({ email: account.email, password: account.password });
-  if (user.role !== DEMO_ROLE[label]) {
-    throw new Error(`The ${label} account is a ${user.role}, not a ${DEMO_ROLE[label]}.`);
+  if (!hasRole(user, [DEMO_ROLE[label]])) {
+    throw new Error(
+      `The ${label} account holds ${user.roles.join(', ')}, not ${DEMO_ROLE[label]}.`,
+    );
   }
   return user;
 }
@@ -152,7 +169,7 @@ export async function createHarness(options: HarnessOptions = {}): Promise<Harne
 
   if (options.terminalCode !== undefined) {
     // Only an admin may register a device, whoever ends up signed in afterwards.
-    await signIn(backend, 'Admin');
+    await signIn(backend, 'Owner');
     const registration = await backend.terminals.register(options.terminalCode);
     await registerTerminal(storage, registration, Date.now());
   }
@@ -210,7 +227,14 @@ export async function createHarness(options: HarnessOptions = {}): Promise<Harne
     outbox,
     storage,
     schedule,
-    user,
+    get user() {
+      return user;
+    },
+
+    async signInAs(label) {
+      user = await signIn(backend, label);
+      return user;
+    },
 
     renderScreen(ui, renderOptions = {}) {
       const {
@@ -293,6 +317,8 @@ export async function createHarness(options: HarnessOptions = {}): Promise<Harne
             sessionId,
             createdAt: new Date().toISOString(),
             terminal: terminalContext(meta),
+            // The harness sells across the counter; the table screens build their own records.
+            tableId: null,
           },
           addItem(emptyCart, product, qty),
           { method: 'cash' },

@@ -12,10 +12,16 @@ describe('readMyProfile', () => {
       id: 'user-cashier',
       email: 'cashier@demo.local',
       name: 'Karim',
-      role: 'cashier',
+      roles: ['cashier'],
       shopId: 'shop-1',
     });
     expect(calls).toHaveLength(1);
+  });
+
+  it('keeps every role of a member who holds several', async () => {
+    const { client } = fakeSupabase(() => json(profileJson('admin', 'cashier')));
+
+    await expect(readMyProfile(client)).resolves.toMatchObject({ roles: ['admin', 'cashier'] });
   });
 
   it('passes FORBIDDEN on for a user without a profile', async () => {
@@ -32,7 +38,15 @@ describe('readMyProfile', () => {
   });
 
   it('refuses a profile with a role the app does not know as unreadable', async () => {
-    const { client } = fakeSupabase(() => json({ ...profileJson('admin'), role: 'owner' }));
+    const { client } = fakeSupabase(() => json({ ...profileJson('admin'), roles: ['owner'] }));
+
+    const error = await failureOf(readMyProfile(client));
+
+    expect(error.code).toBe('VALIDATION_ERROR');
+  });
+
+  it('refuses a profile whose roles are not an array as unreadable', async () => {
+    const { client } = fakeSupabase(() => json({ ...profileJson('admin'), roles: 'admin' }));
 
     const error = await failureOf(readMyProfile(client));
 
@@ -44,14 +58,26 @@ describe('requireAdmin', () => {
   it('resolves with an admin', async () => {
     const { client } = fakeSupabase(() => json(profileJson('admin')));
 
-    await expect(requireAdmin(client)).resolves.toMatchObject({ role: 'admin', shopId: 'shop-1' });
+    await expect(requireAdmin(client)).resolves.toMatchObject({
+      roles: ['admin'],
+      shopId: 'shop-1',
+    });
   });
 
-  it('refuses a cashier with FORBIDDEN', async () => {
-    const { client } = fakeSupabase(() => json(profileJson('cashier')));
+  it('resolves with a cashier who is also an admin', async () => {
+    const { client } = fakeSupabase(() => json(profileJson('cashier', 'admin')));
 
-    const error = await failureOf(requireAdmin(client));
-
-    expect(error).toMatchObject({ code: 'FORBIDDEN', details: { role: 'cashier' } });
+    await expect(requireAdmin(client)).resolves.toMatchObject({ roles: ['cashier', 'admin'] });
   });
+
+  it.each(['cashier', 'waiter', 'kitchen'] as const)(
+    'refuses a %s with FORBIDDEN',
+    async (role) => {
+      const { client } = fakeSupabase(() => json(profileJson(role)));
+
+      const error = await failureOf(requireAdmin(client));
+
+      expect(error).toMatchObject({ code: 'FORBIDDEN', details: { roles: [role] } });
+    },
+  );
 });

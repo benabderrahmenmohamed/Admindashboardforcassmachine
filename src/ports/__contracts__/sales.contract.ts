@@ -66,7 +66,7 @@ export function describeSalesPortContract(makeFixture: MakeFixture): void {
       await expect(fixture.cashier.sessions.zReport(till.sessionId)).resolves.toEqual(report);
       const products = await fixture.cashier.catalog.listProducts();
       expect(products.find((candidate) => candidate.id === product.id)).toMatchObject({
-        stock: 18,
+        stockQty: 18,
       });
 
       const sale = await fixture.cashier.sales.getSale(record.id);
@@ -78,14 +78,17 @@ export function describeSalesPortContract(makeFixture: MakeFixture): void {
         terminalId: till.terminalId,
         terminalCode: till.terminal.terminalCode,
         sessionId: till.sessionId,
+        tableId: null,
+        tableName: null,
         refundsSaleId: null,
         paymentMethod: 'cash',
-        subtotalMillimes: 37_000,
-        discountMillimes: 0,
+        cartDiscountMillimes: 0,
         totalMillimes: 37_000,
         tenderedMillimes: 40_000,
         changeMillimes: 3_000,
       });
+      // A stored line is the recorded line — id included, since the device names its own rows —
+      // with how much of it has been given back.
       expect(sale.lines).toEqual(
         record.lines.map((line) => ({ ...line, refundedQty: 0, refundedMillimes: 0 })),
       );
@@ -365,8 +368,7 @@ export function describeSalesPortContract(makeFixture: MakeFixture): void {
       const overCap = mm(MAX_PRICE_MILLIMES + 1);
       const above = await rewrite(atCap, {
         id: newId(),
-        lines: [{ ...atCap.lines[0], unitPriceMillimes: overCap, lineTotalMillimes: overCap }],
-        subtotalMillimes: overCap,
+        lines: [{ ...atCap.lines[0], unitPriceMillimes: overCap, netMillimes: overCap }],
         totalMillimes: overCap,
         payment: { method: 'card', tenderedMillimes: overCap, changeMillimes: ZERO },
       });
@@ -396,15 +398,15 @@ export function describeSalesPortContract(makeFixture: MakeFixture): void {
           5,
         ),
       );
-      expect(record.lines.map((line) => line.lineTotalMillimes)).toEqual([2_998, 2_999]);
+      expect(record.lines.map((line) => line.netMillimes)).toEqual([2_998, 2_999]);
       await recordCreated(fixture, record);
 
-      // One unit of line 2: floor(2 999 × 1 / 3) = 999.
-      const first = await refundRecord(till, 2, await fixture.cashier.sales.getSale(record.id), [
-        { lineNo: 2, qty: 1 },
-      ]);
+      // One unit of line 2: floor(2 999 × 1 / 3) = 999. A refund line names the stored line it gives
+      // back by its id, not by its number, so it survives being read back in any order.
+      const stored = await fixture.cashier.sales.getSale(record.id);
+      const first = await refundRecord(till, 2, stored, [{ lineNo: 2, qty: 1 }]);
       expect(first.lines).toMatchObject([
-        { lineNo: 1, refundsLineNo: 2, qty: -1, lineTotalMillimes: -999 },
+        { lineNo: 1, refundsSaleLineId: stored.lines[1].id, qty: -1, netMillimes: -999 },
       ]);
       await recordCreated(fixture, first);
       const sale = await fixture.cashier.sales.getSale(record.id);
@@ -415,13 +417,13 @@ export function describeSalesPortContract(makeFixture: MakeFixture): void {
 
       // Three more units of line 2, where two are left, even for no more than the 2 000 left.
       const tooMany = await refundWith(first, 3, [
-        { ...first.lines[0], qty: -3, lineTotalMillimes: mm(-2_000) },
+        { ...first.lines[0], qty: -3, netMillimes: mm(-2_000) },
       ]);
       const units = await failure(fixture.cashier.sales.recordSale(tooMany), 'VALIDATION_ERROR');
       expect(units.details).toMatchObject({ lineNo: 1, remainingQty: 2, remainingMillimes: 2_000 });
       // One unit of line 2 for 2 001, where 2 000 are left.
       const tooMuch = await refundWith(first, 3, [
-        { ...first.lines[0], qty: -1, lineTotalMillimes: mm(-2_001) },
+        { ...first.lines[0], qty: -1, netMillimes: mm(-2_001) },
       ]);
       const money = await failure(fixture.cashier.sales.recordSale(tooMuch), 'VALIDATION_ERROR');
       expect(money.details).toMatchObject({ lineNo: 1, remainingQty: 2, remainingMillimes: 2_000 });
@@ -438,8 +440,8 @@ export function describeSalesPortContract(makeFixture: MakeFixture): void {
         'card',
       );
       expect(second.lines).toMatchObject([
-        { lineNo: 1, refundsLineNo: 1, qty: -1, lineTotalMillimes: -1_499 },
-        { lineNo: 2, refundsLineNo: 2, qty: -2, lineTotalMillimes: -2_000 },
+        { lineNo: 1, refundsSaleLineId: stored.lines[0].id, qty: -1, netMillimes: -1_499 },
+        { lineNo: 2, refundsSaleLineId: stored.lines[1].id, qty: -2, netMillimes: -2_000 },
       ]);
       await recordCreated(fixture, second);
       expect(refunded(await fixture.cashier.sales.getSale(record.id))).toEqual([
@@ -449,8 +451,8 @@ export function describeSalesPortContract(makeFixture: MakeFixture): void {
 
       // Line 2 is fully refunded: the error names the line of the refund that asks for more.
       const nothingLeft = await refundWith(second, 4, [
-        { ...second.lines[0], qty: -1, lineTotalMillimes: mm(-1_499) },
-        { ...second.lines[1], qty: -1, lineTotalMillimes: mm(-1) },
+        { ...second.lines[0], qty: -1, netMillimes: mm(-1_499) },
+        { ...second.lines[1], qty: -1, netMillimes: mm(-1) },
       ]);
       const empty = await failure(
         fixture.cashier.sales.recordSale(nothingLeft),
@@ -473,7 +475,7 @@ export function describeSalesPortContract(makeFixture: MakeFixture): void {
         kind: 'refund',
         refundsSaleId: record.id,
         totalMillimes: -999,
-        lines: [{ refundsLineNo: 2, refundedQty: 0, refundedMillimes: 0 }],
+        lines: [{ refundsSaleLineId: stored.lines[1].id, refundedQty: 0, refundedMillimes: 0 }],
       });
       await expect(
         fixture.cashier.sales.listSales({ sessionId: till.sessionId }),
@@ -482,7 +484,7 @@ export function describeSalesPortContract(makeFixture: MakeFixture): void {
       expect(
         products
           .filter((candidate) => candidate.id === a.id || candidate.id === c.id)
-          .map((candidate) => candidate.stock),
+          .map((candidate) => candidate.stockQty),
       ).toEqual([10, 10]);
     });
 
@@ -499,7 +501,7 @@ export function describeSalesPortContract(makeFixture: MakeFixture): void {
       expect(all.totalMillimes).toBe(-2_998);
       const short = await failure(
         fixture.cashier.sales.recordSale(
-          await refundWith(all, 2, [{ ...all.lines[0], lineTotalMillimes: mm(-2_997) }]),
+          await refundWith(all, 2, [{ ...all.lines[0], netMillimes: mm(-2_997) }]),
         ),
         'VALIDATION_ERROR',
       );
@@ -523,7 +525,7 @@ export function describeSalesPortContract(makeFixture: MakeFixture): void {
       expect(last.totalMillimes).toBe(-1_000);
       const underpaid = await failure(
         fixture.cashier.sales.recordSale(
-          await refundWith(last, 4, [{ ...last.lines[0], lineTotalMillimes: mm(-999) }]),
+          await refundWith(last, 4, [{ ...last.lines[0], netMillimes: mm(-999) }]),
         ),
         'VALIDATION_ERROR',
       );
@@ -548,7 +550,7 @@ export function describeSalesPortContract(makeFixture: MakeFixture): void {
         { lineNo: 1, qty: 2 },
       ]);
       const stuck = await refundWith(valid, 2, [
-        { ...valid.lines[0], qty: -3, lineTotalMillimes: mm(-2_250) },
+        { ...valid.lines[0], qty: -3, netMillimes: mm(-2_250) },
       ]);
       await failure(fixture.cashier.sales.recordSale(stuck), 'VALIDATION_ERROR');
 

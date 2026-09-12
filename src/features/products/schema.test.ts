@@ -23,6 +23,8 @@ function formValues(overrides: Partial<ProductFormValues> = {}): ProductFormValu
     stock: '24',
     description: 'Tube 70 g',
     imageUrl: '',
+    isAvailable: true,
+    trackStock: true,
     ...overrides,
   };
 }
@@ -74,8 +76,9 @@ const product: Product = {
   barcode: '',
   description: '',
   imageUrl: '',
-  stock: 0,
-  available: false,
+  isAvailable: false,
+  trackStock: true,
+  stockQty: 0,
   createdAt: '2026-01-01T00:00:00.000Z',
   updatedAt: '2026-01-01T00:00:00.000Z',
 };
@@ -164,7 +167,7 @@ describe('productFormSchema', () => {
 
 describe('productEditFormSchema', () => {
   it('keeps a stock that sales took below zero, so the product stays editable', () => {
-    const values = toProductFormValues({ ...product, stock: -2 });
+    const values = toProductFormValues({ ...product, stockQty: -2 });
     expect(productEditFormSchema(-2).safeParse(values).success).toBe(true);
     expect(productFormSchema.safeParse(values).success).toBe(false);
   });
@@ -203,6 +206,8 @@ describe('toProductCreateInput', () => {
       barcode: '6191234567890',
       description: 'Tube 70 g',
       imageUrl: '',
+      isAvailable: true,
+      trackStock: true,
       openingStock: 24,
     });
   });
@@ -253,6 +258,8 @@ describe('toProductUpdateInput', () => {
       barcode: '6191234567890',
       description: 'Tube 70 g',
       imageUrl: '',
+      isAvailable: true,
+      trackStock: true,
       stockDelta: 4,
     });
   });
@@ -298,11 +305,13 @@ describe('toProductFormValues', () => {
       stock: '100',
       description: '',
       imageUrl: '',
+      isAvailable: true,
+      trackStock: false,
     });
   });
 
   it('shows a product with its price in dinars and its stock as text', () => {
-    expect(toProductFormValues({ ...product, categoryId: 'cat-laitier', stock: 7 })).toEqual({
+    expect(toProductFormValues({ ...product, categoryId: 'cat-laitier', stockQty: 7 })).toEqual({
       name: 'Lait demi-écrémé 1 L',
       price: '1.350',
       categoryId: 'cat-laitier',
@@ -310,22 +319,24 @@ describe('toProductFormValues', () => {
       stock: '7',
       description: '',
       imageUrl: '',
+      isAvailable: false,
+      trackStock: true,
     });
     expect(toProductFormValues(product)).toMatchObject({ categoryId: '', stock: '0' });
-    expect(toProductFormValues({ ...product, stock: -2 })).toMatchObject({ stock: '-2' });
+    expect(toProductFormValues({ ...product, stockQty: -2 })).toMatchObject({ stock: '-2' });
   });
 
   it('keeps the price and the stock of a product saved without changes', () => {
     for (const millimes of [0, 1, 999, 1_000, 1_350, 12_500, 999_999_999_999, 1_000_000_000_000]) {
       const input = toProductUpdateInput(
         toProductFormValues({ ...product, priceMillimes: mm(millimes) }),
-        product.stock,
+        product.stockQty,
       );
       expect(input.priceMillimes).toBe(millimes);
       expect(input.stockDelta).toBe(0);
     }
-    for (const stock of [-5, 0, 7, 1_000_000]) {
-      const input = toProductUpdateInput(toProductFormValues({ ...product, stock }), stock);
+    for (const stockQty of [-5, 0, 7, 1_000_000]) {
+      const input = toProductUpdateInput(toProductFormValues({ ...product, stockQty }), stockQty);
       expect(input.stockDelta).toBe(0);
     }
   });

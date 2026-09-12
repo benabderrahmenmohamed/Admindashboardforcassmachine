@@ -124,11 +124,11 @@ export function storedZReport(session: SessionRow): ZReport {
   return structuredClone(session.serverZReport);
 }
 
-/** How much of line `lineNo` of sale `saleId` stored refunds have taken back, as positive amounts. */
+/** How much of the line `lineId` of sale `saleId` stored refunds have taken back, as positive amounts. */
 export function refundedOf(
   store: MemoryStore,
   saleId: string,
-  lineNo: number,
+  lineId: string,
 ): { readonly qty: number; readonly millimes: Millimes } {
   let qty = 0;
   let millimes = ZERO;
@@ -137,9 +137,9 @@ export function refundedOf(
       continue;
     }
     for (const line of document.lines) {
-      if (line.refundsLineNo === lineNo) {
+      if (line.refundsSaleLineId === lineId) {
         qty -= line.qty;
-        millimes = sub(millimes, line.lineTotalMillimes);
+        millimes = sub(millimes, line.netMillimes);
       }
     }
   }
@@ -156,10 +156,12 @@ export function saleView(store: MemoryStore, sale: SaleRow): Sale {
     terminalId: sale.terminalId,
     terminalCode: terminalById(store, sale.terminalId).code,
     sessionId: sale.sessionId,
+    tableId: sale.tableId,
+    // The table's name as it is now, retired or not: a receipt read later still says where it was paid.
+    tableName: sale.tableId === null ? null : (store.diningTables.get(sale.tableId)?.name ?? null),
     refundsSaleId: sale.refundsSaleId,
     paymentMethod: sale.paymentMethod,
-    subtotalMillimes: sale.subtotalMillimes,
-    discountMillimes: sale.discountMillimes,
+    cartDiscountMillimes: sale.cartDiscountMillimes,
     totalMillimes: sale.totalMillimes,
     tenderedMillimes: sale.tenderedMillimes,
     changeMillimes: sale.changeMillimes,
@@ -167,7 +169,7 @@ export function saleView(store: MemoryStore, sale: SaleRow): Sale {
     receivedAt: sale.receivedAt,
     lines: sale.lines.map((line) => {
       const refunded =
-        sale.kind === 'sale' ? refundedOf(store, sale.id, line.lineNo) : { qty: 0, millimes: ZERO };
+        sale.kind === 'sale' ? refundedOf(store, sale.id, line.id) : { qty: 0, millimes: ZERO };
       return { ...line, refundedQty: refunded.qty, refundedMillimes: refunded.millimes };
     }),
   };

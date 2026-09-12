@@ -20,7 +20,7 @@ const memberSchema = z
   .object({
     userId: z.string().min(1),
     shopId: z.string().min(1),
-    role: roleSchema,
+    roles: z.array(roleSchema).min(1),
     displayName: z.string(),
     email: z.string(),
   })
@@ -28,7 +28,7 @@ const memberSchema = z
     id: member.userId,
     email: member.email,
     name: member.displayName,
-    role: member.role,
+    roles: member.roles,
     shopId: member.shopId,
   }));
 

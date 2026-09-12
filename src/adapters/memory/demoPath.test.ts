@@ -176,6 +176,7 @@ describe('the demo path', () => {
             sessionId: session?.id ?? '',
             createdAt: new Date(device.clock.now()).toISOString(),
             terminal: { terminalCode: current.code, epoch: current.epoch },
+            tableId: null,
           },
           cartOf(2),
           { method: 'cash', tenderedMillimes: mm(2_000) },
@@ -218,6 +219,7 @@ describe('the demo path', () => {
             sessionId: sale.sessionId,
             createdAt: new Date(device.clock.now()).toISOString(),
             terminal: { terminalCode: current.code, epoch: current.epoch },
+            tableId: null,
           },
           offlineRows[0].sale,
           [{ lineNo: 1, qty: 1 }],
@@ -286,7 +288,7 @@ describe('the demo path', () => {
       email: adminAccount.email,
       password: adminAccount.password,
     });
-    expect(admin.role).toBe('admin');
+    expect(admin.roles).toContain('admin');
     const registration = await backend.terminals.register('T1');
     await registerTerminal(device.runtime.storage, registration, device.clock.now());
     const meta = await device.meta();
@@ -302,6 +304,7 @@ describe('the demo path', () => {
             sessionId: crypto.randomUUID(),
             createdAt: new Date(device.clock.now()).toISOString(),
             terminal: { terminalCode: current.code, epoch: current.epoch },
+            tableId: null,
           },
           cartOf(1),
           { method: 'card' },

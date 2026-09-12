@@ -4,17 +4,20 @@ import {
   listSalesQuerySchema,
   MAX_PRICE_MILLIMES,
   type RecordSaleResult,
-  type SaleLine,
+  type Role,
   type SalesPort,
   type VoidReceiptResult,
 } from '@/ports';
 import { refundedOf, requireEpoch, requireNextSeq, saleView, terminalFor } from './ledger';
+import { closeIfSettled } from './orders';
 import type { MemoryProfile } from './seed';
-import { saleRecordInput, voidReceiptInput } from './shapes';
+import { saleRecordInput, voidReceiptInput, type SaleLineInput } from './shapes';
 import {
   moveStock,
   type MemoryReceiptVoid,
   type MemoryTerminal,
+  type OpenOrderItemRow,
+  type SaleLineRow,
   type SaleRow,
   type SessionRow,
 } from './store';
@@ -31,10 +34,11 @@ import {
 
 /** A document's lines as stored, with the amounts recomputed from them. */
 interface CheckedLines {
-  readonly lines: SaleLine[];
-  readonly subtotal: bigint;
+  readonly lines: SaleLineRow[];
   readonly discount: bigint;
   readonly total: bigint;
+  /** The open order items this document pays, in line order; empty when it pays no table. */
+  readonly paid: readonly OpenOrderItemRow[];
 }
 
 function lineError(lineNo: number, message: string): AppError {
@@ -42,10 +46,20 @@ function lineError(lineNo: number, message: string): AppError {
 }
 
 /**
+ * Who may take money. A waiter works the tables but does not record sales or refunds: the counter
+ * does, on a registered terminal with an open session of its own.
+ */
+const SELL_ROLES: readonly Role[] = ['admin', 'cashier'];
+
+/**
  * The sales ledger, as record_sale and void_receipt, in their order of checks (contracts/errors.md):
  * caller, terminal, replay, registration, session, numbering, then the document recomputed from its
- * lines. Any member records; only an admin voids. Amounts are checked in bigint, like the
+ * lines. A cashier or an admin records; only an admin voids. Amounts are checked in bigint, like the
  * database's bigint columns, so no sum ever leaves the safe integers unnoticed.
+ *
+ * Paying a table is one sale for a set of that table's active, unpaid items: each line names the
+ * item it pays, the items are stamped with the sale, and the order closes when nothing unpaid is
+ * left on it — so a table can pay in parts, and what the register saw must still be there.
  */
 export function createMemorySales(context: MemoryContext): SalesPort {
   const { store } = context;
@@ -76,11 +90,108 @@ export function createMemorySales(context: MemoryContext): SalesPort {
     return session;
   }
 
+  /** The line as the ledger stores it, under the id the device that wrote it gave it. */
+  function storedLine(line: SaleLineInput, productId: string): SaleLineRow {
+    return {
+      id: parseUuid(line.id, 'id'),
+      lineNo: line.lineNo,
+      openOrderItemId: line.openOrderItemId,
+      productId,
+      productName: line.productName,
+      qty: line.qty,
+      unitPriceMillimes: line.unitPriceMillimes,
+      lineDiscountMillimes: line.lineDiscountMillimes,
+      lineDiscountReason: line.lineDiscountReason,
+      allocatedDiscountMillimes: line.allocatedDiscountMillimes,
+      netMillimes: line.netMillimes,
+      refundsSaleLineId: line.refundsSaleLineId,
+    };
+  }
+
+  function orderChanged(lineNo: number, itemId: string, item: OpenOrderItemRow | null): AppError {
+    const tableId = item === null ? null : (store.openOrders.get(item.orderId)?.tableId ?? null);
+    return new AppError(
+      'ORDER_CHANGED',
+      'This table changed while it was being paid for. Look at it again.',
+      { details: { lineNo, itemId, orderId: item?.orderId ?? null, tableId } },
+    );
+  }
+
+  /**
+   * The open order item a sale line pays, or null on a line that pays no table. The item has to be
+   * where the register last saw it: on an open order of this shop, still there, not yet paid, and
+   * the same product, quantity and unit price. Anything else means the table moved under the
+   * request — somebody added, removed or paid meanwhile — so the terminal refreshes and pays again.
+   */
+  function paidItem(
+    profile: MemoryProfile,
+    line: SaleLineInput,
+    productId: string,
+  ): OpenOrderItemRow | null {
+    const reference = line.openOrderItemId ?? null;
+    if (reference === null) {
+      return null;
+    }
+    const itemId = parseUuid(reference, 'open_order_item_id');
+    const item = store.openOrderItems.get(itemId);
+    if (!item || item.shopId !== profile.shopId) {
+      throw orderChanged(line.lineNo, itemId, null);
+    }
+    if (
+      item.removedAt !== null ||
+      item.paidSaleId !== null ||
+      store.openOrders.get(item.orderId)?.status !== 'open' ||
+      item.productId !== productId ||
+      item.qty !== line.qty ||
+      item.unitPriceMillimes !== line.unitPriceMillimes
+    ) {
+      throw orderChanged(line.lineNo, itemId, item);
+    }
+    return item;
+  }
+
+  /**
+   * The table a sale is paid at, checked against the items its lines pay.
+   *
+   * A counter sale names no table and pays no order item: a coffee taken away sat on nothing. A
+   * table payment names the table, and every item it pays has to be on that table's open order, so
+   * a stale receipt cannot settle rows of the table next to it. The two mix on one bill — the guest
+   * at table 4 who also buys a packet of cigarettes off the counter — and the counter lines simply
+   * pay no item: nothing is lost either way, since only a named item is marked paid.
+   */
+  function tableForPayment(
+    profile: MemoryProfile,
+    reference: string | null,
+    paid: readonly OpenOrderItemRow[],
+  ): string | null {
+    const [first] = paid;
+    if (reference === null) {
+      if (first) {
+        throw invalidField('table_id', 'A sale that pays a table must name it.');
+      }
+      return null;
+    }
+    const tableId = parseUuid(reference, 'table_id');
+    const table = store.diningTables.get(tableId);
+    if (!table || table.shopId !== profile.shopId) {
+      throw new AppError('NOT_FOUND', 'The table does not exist.', { details: { tableId } });
+    }
+    // A retired table is still paid for: the guests sitting there when it was retired still owe.
+    if (first && store.openOrders.get(first.orderId)?.tableId !== tableId) {
+      throw new AppError(
+        'ORDER_CHANGED',
+        'These items are not on the table this sale names. Look at it again.',
+        { details: { tableId, itemId: first.id, orderId: first.orderId } },
+      );
+    }
+    return tableId;
+  }
+
   /**
    * Lines numbered 1, 2, 3, naming products of the shop (archived ones included) at a unit price
    * within the product bound: what record_sale checks for a line of either kind, in its order.
    */
-  function lineProductId(profile: MemoryProfile, line: SaleLine, index: number): string {
+  function lineProductId(profile: MemoryProfile, line: SaleLineInput, index: number): string {
     if (line.lineNo !== index + 1) {
       throw invalidField('lines', 'Lines must be numbered 1, 2, 3 in order.');
     }
@@ -98,36 +209,51 @@ export function createMemorySales(context: MemoryContext): SalesPort {
     return productId;
   }
 
-  function checkSaleLines(profile: MemoryProfile, lines: readonly SaleLine[]): CheckedLines {
-    let subtotal = 0n;
+  function checkSaleLines(profile: MemoryProfile, lines: readonly SaleLineInput[]): CheckedLines {
     let discount = 0n;
     let total = 0n;
-    const stored = lines.map((line, index): SaleLine => {
+    const paid: OpenOrderItemRow[] = [];
+    const stored = lines.map((line, index): SaleLineRow => {
       const productId = lineProductId(profile, line, index);
-      if (line.refundsLineNo !== null) {
+      if (line.refundsSaleLineId !== null) {
         throw lineError(line.lineNo, 'A sale line cannot refund another line.');
+      }
+      // Money off a bill is a decision somebody made, so it is never anonymous.
+      if (line.lineDiscountMillimes !== 0 && (line.lineDiscountReason ?? '').trim() === '') {
+        throw lineError(line.lineNo, 'A line discount needs a reason.');
+      }
+      if (paid.some((other) => other.id === line.openOrderItemId)) {
+        throw lineError(line.lineNo, 'An order item can appear on only one line.');
+      }
+      const item = paidItem(profile, line, productId);
+      if (item) {
+        // One sale pays one table: a line naming an item of another order is a stale receipt.
+        const [first] = paid;
+        if (first && first.orderId !== item.orderId) {
+          throw orderChanged(line.lineNo, item.id, item);
+        }
+        paid.push(item);
       }
       const qty = BigInt(line.qty);
       const unit = BigInt(line.unitPriceMillimes);
       const lineDiscount = BigInt(line.lineDiscountMillimes);
-      const share = BigInt(line.cartDiscountShareMillimes);
-      const lineTotal = BigInt(line.lineTotalMillimes);
+      const share = BigInt(line.allocatedDiscountMillimes);
+      const net = BigInt(line.netMillimes);
       if (
         qty < 1n ||
         unit < 0n ||
         lineDiscount < 0n ||
         share < 0n ||
         lineDiscount + share > qty * unit ||
-        lineTotal !== qty * unit - lineDiscount - share
+        net !== qty * unit - lineDiscount - share
       ) {
         throw lineError(line.lineNo, 'Line amounts do not add up.');
       }
-      subtotal += qty * unit - lineDiscount;
       discount += share;
-      total += lineTotal;
-      return { ...line, productId };
+      total += net;
+      return storedLine(line, productId);
     });
-    return { lines: stored, subtotal, discount, total };
+    return { lines: stored, discount, total, paid };
   }
 
   /**
@@ -137,66 +263,69 @@ export function createMemorySales(context: MemoryContext): SalesPort {
    */
   function checkRefundLines(
     profile: MemoryProfile,
-    lines: readonly SaleLine[],
+    lines: readonly SaleLineInput[],
     original: SaleRow,
   ): CheckedLines {
     let total = 0n;
-    const seen = new Set<number>();
-    const stored = lines.map((line, index): SaleLine => {
+    const seen = new Set<string>();
+    const stored = lines.map((line, index): SaleLineRow => {
       const productId = lineProductId(profile, line, index);
-      const { refundsLineNo } = line;
-      if (refundsLineNo === null) {
-        throw invalidField('refunds_line_no', 'refunds_line_no must be a whole number.');
+      const { refundsSaleLineId } = line;
+      if (refundsSaleLineId === null) {
+        throw invalidField('refunds_sale_line_id', 'refunds_sale_line_id is required.');
       }
-      if (seen.has(refundsLineNo)) {
+      if (seen.has(refundsSaleLineId)) {
         throw lineError(line.lineNo, 'An original line can appear only once in a refund.');
       }
-      seen.add(refundsLineNo);
-      const sold = original.lines.find((candidate) => candidate.lineNo === refundsLineNo);
+      seen.add(refundsSaleLineId);
+      const sold = original.lines.find((candidate) => candidate.id === refundsSaleLineId);
       if (!sold) {
         throw lineError(line.lineNo, 'A refund line names a line that is not on the sale.');
       }
       const qty = BigInt(line.qty);
-      const lineTotal = BigInt(line.lineTotalMillimes);
+      const net = BigInt(line.netMillimes);
       if (
         productId !== sold.productId ||
         line.unitPriceMillimes !== sold.unitPriceMillimes ||
         line.lineDiscountMillimes !== 0 ||
-        line.cartDiscountShareMillimes !== 0 ||
+        line.allocatedDiscountMillimes !== 0 ||
+        line.openOrderItemId !== null ||
         qty > -1n ||
-        lineTotal > 0n
+        net > 0n
       ) {
         throw lineError(
           line.lineNo,
           'A refund line must match its sale line, with a negative quantity and amount.',
         );
       }
-      const refunded = refundedOf(store, original.id, refundsLineNo);
+      const refunded = refundedOf(store, original.id, refundsSaleLineId);
       const remainingQty = BigInt(sold.qty - refunded.qty);
-      const remainingMillimes = BigInt(sold.lineTotalMillimes) - BigInt(refunded.millimes);
+      const remainingMillimes = BigInt(sold.netMillimes) - BigInt(refunded.millimes);
       const details = {
         lineNo: line.lineNo,
         remainingQty: Number(remainingQty),
         remainingMillimes: Number(remainingMillimes),
       };
-      if (-qty > remainingQty || -lineTotal > remainingMillimes) {
+      if (-qty > remainingQty || -net > remainingMillimes) {
         throw new AppError(
           'VALIDATION_ERROR',
           'The refund is more than what is left to refund on this line.',
           { details },
         );
       }
-      if (-qty === remainingQty && -lineTotal !== remainingMillimes) {
+      if (-qty === remainingQty && -net !== remainingMillimes) {
         throw new AppError(
           'VALIDATION_ERROR',
           'A refund of the last units of a line pays exactly what is left of it.',
           { details },
         );
       }
-      total += lineTotal;
-      return { ...line, productId };
+      total += net;
+      return storedLine(line, productId);
     });
-    return { lines: stored, subtotal: total, discount: 0n, total };
+    // A refund never touches a table: the items it gives money back for were paid and are gone
+    // from the order, and putting them back would sell them twice.
+    return { lines: stored, discount: 0n, total, paid: [] };
   }
 
   /** The sale a refund names: one of the caller's shop (NOT_FOUND otherwise), and not a refund. */
@@ -228,7 +357,8 @@ export function createMemorySales(context: MemoryContext): SalesPort {
   return {
     recordSale: (record) =>
       perform(context, 'sales.recordSale', (): RecordSaleResult => {
-        const profile = requireProfile(context);
+        // Refunds need a cashier or an admin, and so does a sale: the same people take the money.
+        const profile = requireProfile(context, SELL_ROLES);
         const input = parseInput(saleRecordInput, record);
         const id = input.id.toLowerCase();
         const terminal = terminalFor(store, profile.shopId, input.terminalCode);
@@ -271,6 +401,9 @@ export function createMemorySales(context: MemoryContext): SalesPort {
         if (input.kind === 'refund') {
           const original = refundedSale(profile, input.refundsSaleId);
           refundsSaleId = original.id;
+          if (input.tableId !== null) {
+            throw invalidField('table_id', 'A refund is not paid at a table.');
+          }
           checked = checkRefundLines(profile, input.lines, original);
         } else {
           if (input.refundsSaleId !== null) {
@@ -278,15 +411,14 @@ export function createMemorySales(context: MemoryContext): SalesPort {
           }
           checked = checkSaleLines(profile, input.lines);
         }
+        const tableId = tableForPayment(profile, input.tableId, checked.paid);
         if (
-          BigInt(input.subtotalMillimes) !== checked.subtotal ||
-          BigInt(input.discountMillimes) !== checked.discount ||
+          BigInt(input.cartDiscountMillimes) !== checked.discount ||
           BigInt(input.totalMillimes) !== checked.total
         ) {
           throw new AppError('VALIDATION_ERROR', 'The document totals do not match its lines.', {
             details: {
-              subtotalMillimes: Number(checked.subtotal),
-              discountMillimes: Number(checked.discount),
+              cartDiscountMillimes: Number(checked.discount),
               totalMillimes: Number(checked.total),
             },
           });
@@ -321,9 +453,9 @@ export function createMemorySales(context: MemoryContext): SalesPort {
           seq: input.seq,
           receiptNumber: number,
           refundsSaleId,
+          tableId,
           paymentMethod: method,
-          subtotalMillimes: input.subtotalMillimes,
-          discountMillimes: input.discountMillimes,
+          cartDiscountMillimes: input.cartDiscountMillimes,
           totalMillimes,
           tenderedMillimes,
           changeMillimes,
@@ -348,6 +480,18 @@ export function createMemorySales(context: MemoryContext): SalesPort {
             createdBy: profile.userId,
             createdAt: receivedAt,
           });
+        }
+        // The items this sale paid carry the link to it, and their table is free again once
+        // nothing unpaid is left on it: a table that pays in parts stays open until it is.
+        for (const item of checked.paid) {
+          store.openOrderItems.set(item.id, { ...item, paidSaleId: id });
+        }
+        const [first] = checked.paid;
+        if (first) {
+          if (closeIfSettled(store, first.orderId, receivedAt)) {
+            context.emit(profile.shopId, 'open_orders');
+          }
+          context.emit(profile.shopId, 'open_order_items');
         }
         store.terminals.set(terminal.id, { ...terminal, lastSeq: input.seq });
         return { saleId: id, receiptNumber: number, status: 'created' };

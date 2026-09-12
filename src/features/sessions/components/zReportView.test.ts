@@ -31,8 +31,8 @@ function line(total: number) {
   return saleLine({
     qty: total < 0 ? -1 : 1,
     unitPriceMillimes: mm(Math.abs(total)),
-    lineTotalMillimes: mm(total),
-    refundsLineNo: total < 0 ? 1 : null,
+    netMillimes: mm(total),
+    refundsSaleLineId: total < 0 ? 'the-sale-line-it-gives-back' : null,
   });
 }
 

@@ -2,6 +2,8 @@ import type { Backend, DemoAccount } from '@/ports';
 import { createMemoryAuth } from './auth';
 import { createMemoryCatalog } from './catalog';
 import { createFaultInjector, type FaultInjector } from './faults';
+import { createMemoryOrders } from './orders';
+import { createMemoryRealtime, type MemoryRealtime } from './realtime';
 import { createMemorySales } from './sales';
 import { defaultSeed, type MemorySeed } from './seed';
 import { createMemorySessions } from './sessions';
@@ -12,6 +14,9 @@ import {
   type MemoryStockMovement,
   type MemoryStore,
   type MemoryTerminal,
+  type OpenOrderItemRow,
+  type OpenOrderRow,
+  type OrderRecordRow,
 } from './store';
 import { defaultConnectivity, randomId, type MemoryContext } from './support';
 import { createMemoryTerminals } from './terminals';
@@ -26,9 +31,17 @@ export type {
   MemorySeed,
   MemorySeedCategory,
   MemorySeedProduct,
+  MemorySeedTable,
   MemoryShop,
 } from './seed';
-export type { MemoryReceiptVoid, MemoryStockMovement, MemoryTerminal } from './store';
+export type {
+  MemoryReceiptVoid,
+  MemoryStockMovement,
+  MemoryTerminal,
+  OpenOrderItemRow,
+  OpenOrderRow,
+  OrderRecordRow,
+} from './store';
 
 export interface MemoryBackendOptions {
   /** Starting data; default: `defaultSeed`. The backend copies it and never changes it. */
@@ -70,6 +83,12 @@ export interface MemoryBackend extends Backend {
     stockMovements(): MemoryStockMovement[];
     terminals(): MemoryTerminal[];
     receiptVoids(): MemoryReceiptVoid[];
+    /** Every order ever opened on a table, closed and cancelled ones included. */
+    orders(): OpenOrderRow[];
+    /** Every line ever put on a table, removed ones included. */
+    orderItems(): OpenOrderItemRow[];
+    /** The order writes the backend has accepted, which is what answers a replay. */
+    orderRecords(): OrderRecordRow[];
   };
 }
 
@@ -79,12 +98,15 @@ interface MemoryServer {
   readonly now: () => Date;
   readonly newId: () => string;
   readonly connectivity: () => boolean;
+  /** One emitter for the whole backend: a write on one client reaches the listeners of all. */
+  readonly realtime: MemoryRealtime;
 }
 
 function connectClient(server: MemoryServer, faults: FaultInjector): MemoryBackend {
-  const { store } = server;
+  const { store, realtime } = server;
   const context: MemoryContext = {
     ...server,
+    emit: realtime.emit,
     faults,
     client: { session: { status: 'anonymous' } },
   };
@@ -92,6 +114,8 @@ function connectClient(server: MemoryServer, faults: FaultInjector): MemoryBacke
     kind: 'memory',
     auth: createMemoryAuth(context),
     catalog: createMemoryCatalog(context),
+    orders: createMemoryOrders(context),
+    realtime: realtime.port,
     sales: createMemorySales(context),
     sessions: createMemorySessions(context),
     settings: createMemorySettings(context),
@@ -105,6 +129,9 @@ function connectClient(server: MemoryServer, faults: FaultInjector): MemoryBacke
       terminals: () => Array.from(store.terminals.values(), (terminal) => ({ ...terminal })),
       receiptVoids: () =>
         Array.from(store.receiptVoids.values(), (receiptVoid) => structuredClone(receiptVoid)),
+      orders: () => Array.from(store.openOrders.values(), (order) => ({ ...order })),
+      orderItems: () => Array.from(store.openOrderItems.values(), (item) => ({ ...item })),
+      orderRecords: () => Array.from(store.orderRecords.values(), (written) => ({ ...written })),
     },
   };
 }
@@ -120,6 +147,7 @@ export function createMemoryBackend(options: MemoryBackendOptions = {}): MemoryB
     now: options.now ?? (() => new Date()),
     newId: options.newId ?? (() => randomId()),
     connectivity: options.connectivity ?? (() => defaultConnectivity()),
+    realtime: createMemoryRealtime(),
   };
   return connectClient(server, options.faults ?? createFaultInjector());
 }

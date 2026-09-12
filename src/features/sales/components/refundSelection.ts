@@ -25,7 +25,7 @@ export function refundableLines(sale: Sale): RefundableLine[] {
   return sale.lines.map((line) => ({
     line,
     remainingQty: Math.max(0, line.qty - line.refundedQty),
-    remainingMillimes: sub(line.lineTotalMillimes, line.refundedMillimes),
+    remainingMillimes: sub(line.netMillimes, line.refundedMillimes),
   }));
 }
 
@@ -91,7 +91,7 @@ export function refundPreview(sale: Sale, quantities: RefundQuantities): RefundP
         lineNo: line.lineNo,
         productName: line.productName,
         qty,
-        amountMillimes: refundShare(line.lineTotalMillimes, line.qty, line.refundedQty, qty),
+        amountMillimes: refundShare(line.netMillimes, line.qty, line.refundedQty, qty),
       },
     ];
   });

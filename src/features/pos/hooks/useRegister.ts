@@ -24,8 +24,10 @@ export interface SessionClose {
 export interface RegisterHandle {
   /** True while a record is being written to this device. Nothing here waits for the network. */
   readonly isWriting: boolean;
+  /** `tableId` is the table being paid, or null for a counter sale with no table behind it. */
   readonly sell: (
     sessionId: string,
+    tableId: string | null,
     cart: Cart,
     payment: CheckoutPayment,
   ) => Promise<OutboxRecord | null>;
@@ -72,7 +74,7 @@ export function useRegister(actorUserId: string): RegisterHandle {
   return {
     isWriting,
 
-    sell: (sessionId, cart, payment) =>
+    sell: (sessionId, tableId, cart, payment) =>
       write(() =>
         runtime.outbox.appendSale('sale', ({ seq, meta }) =>
           buildSaleRecord(
@@ -80,6 +82,7 @@ export function useRegister(actorUserId: string): RegisterHandle {
               id: newRecordId(),
               seq,
               sessionId,
+              tableId,
               createdAt: new Date().toISOString(),
               terminal: terminalContext(meta),
             },
@@ -97,6 +100,8 @@ export function useRegister(actorUserId: string): RegisterHandle {
               id: newRecordId(),
               seq,
               sessionId,
+              // A refund gives money back; it is not a payment of a table.
+              tableId: null,
               createdAt: new Date().toISOString(),
               terminal: terminalContext(meta),
             },

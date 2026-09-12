@@ -1,5 +1,11 @@
 import { expect } from 'vitest';
-import { addItem, emptyCart, setCartDiscount, type Cart } from '@/features/pos/cart';
+import {
+  addItem,
+  cartOf as cartOfLines,
+  emptyCart,
+  setCartDiscount,
+  type Cart,
+} from '@/features/caisse/cart';
 import {
   buildRefundRecord,
   buildSaleRecord,
@@ -13,6 +19,8 @@ import { add, mm, ZERO, type Millimes } from '@/lib/money';
 import { withPayloadHash } from '@/lib/payloadHash';
 import type {
   CloseSessionRecord,
+  DiningTable,
+  OpenOrderItem,
   OpenSessionRecord,
   PaymentMethod,
   Product,
@@ -20,6 +28,7 @@ import type {
   Sale,
   SaleLine,
   SaleRecord,
+  StockAdjustment,
   ZReport,
 } from '@/ports';
 import type { ContractFixture } from './fixture';
@@ -66,6 +75,9 @@ export function createProduct(
     barcode: '',
     description: '',
     imageUrl: '',
+    isAvailable: true,
+    // Tracked, so the stock assertions of these suites mean something; most café items are not.
+    trackStock: true,
     openingStock,
   });
 }
@@ -79,18 +91,34 @@ export function editOf(product: Product, stockDelta: number): ProductUpdateInput
     barcode: product.barcode,
     description: product.description,
     imageUrl: product.imageUrl,
+    isAvailable: product.isAvailable,
+    trackStock: product.trackStock,
     stockDelta,
   };
 }
 
-/** The stock of a listed product. */
-export async function stockOf(fixture: ContractFixture, productId: string): Promise<number> {
+/** A listed product, as anyone in the shop sees it. */
+export async function listed(fixture: ContractFixture, productId: string): Promise<Product> {
   const products = await fixture.cashier.catalog.listProducts();
   const product = products.find((candidate) => candidate.id === productId);
   if (!product) {
     return expect.unreachable(`Product ${productId} is not listed`);
   }
-  return product.stock;
+  return product;
+}
+
+/** The stock of a listed product. */
+export async function stockOf(fixture: ContractFixture, productId: string): Promise<number> {
+  return (await listed(fixture, productId)).stockQty;
+}
+
+/** A hand count as the admin writes it: a record like any other, so a retry cannot count twice. */
+export function stockAdjustment(
+  productId: string,
+  qtyDelta: number,
+  reason = 'Counted on the shelf',
+): Promise<StockAdjustment> {
+  return withPayloadHash({ id: newId(), productId, qtyDelta, reason });
 }
 
 // Terminals and sessions
@@ -197,6 +225,8 @@ export interface RecordOptions {
   readonly terminal?: TerminalContext;
   /** Default: the till's session. */
   readonly sessionId?: string;
+  /** Default: none — a counter sale, which sat on no table. */
+  readonly tableId?: string;
 }
 
 function envelopeFor(till: Till, seq: number, options: RecordOptions): RecordEnvelope {
@@ -206,6 +236,7 @@ function envelopeFor(till: Till, seq: number, options: RecordOptions): RecordEnv
     sessionId: options.sessionId ?? till.sessionId,
     createdAt: timestamp(),
     terminal: options.terminal ?? till.terminal,
+    tableId: options.tableId ?? null,
   };
 }
 
@@ -245,13 +276,12 @@ export function refundWith(
   seq: number,
   lines: readonly SaleLine[],
 ): Promise<SaleRecord> {
-  const total = add(...lines.map((line) => line.lineTotalMillimes));
+  const total = add(...lines.map((line) => line.netMillimes));
   return rewrite(refund, {
     id: newId(),
     seq,
     lines: [...lines],
-    subtotalMillimes: total,
-    discountMillimes: ZERO,
+    cartDiscountMillimes: ZERO,
     totalMillimes: total,
     payment: { method: refund.payment.method, tenderedMillimes: total, changeMillimes: ZERO },
   });
@@ -269,4 +299,77 @@ export async function recordCreated(fixture: ContractFixture, record: SaleRecord
 /** [refundedQty, refundedMillimes] of every line of `sale`. */
 export function refunded(sale: Sale): number[][] {
   return sale.lines.map((line) => [line.refundedQty, line.refundedMillimes]);
+}
+
+// Tables and open orders
+
+/** A device id for a phone or a till in a test; two of them are two devices on one table. */
+export function deviceId(label = 'a'): string {
+  return `device-contract-${label}`;
+}
+
+/**
+ * An order record as a device writes it: the fields of its kind inside the envelope every kind
+ * carries. The hash is over the whole record, so a replay is recognised by id and hash alike.
+ */
+export function orderRecord<Fields extends object>(
+  fields: Fields,
+  options: { readonly id?: string; readonly deviceId?: string; readonly createdAt?: string } = {},
+): Promise<Fields & { id: string; deviceId: string; createdAt: string; payloadHash: string }> {
+  return withPayloadHash({
+    id: options.id ?? newId(),
+    deviceId: options.deviceId ?? deviceId(),
+    createdAt: options.createdAt ?? timestamp(),
+    ...fields,
+  });
+}
+
+/** Adds `qty` of `product` to `table` as the waiter, and answers the item that landed there. */
+export async function addToTable(
+  fixture: ContractFixture,
+  table: DiningTable,
+  product: Product,
+  qty = 1,
+  note = '',
+): Promise<OpenOrderItem> {
+  const added = await fixture.waiter.orders.addItem(
+    await orderRecord({ tableId: table.id, productId: product.id, qty, note }),
+  );
+  expect(added.status).toBe('created');
+  const order = await fixture.waiter.orders.openOrder(table.id);
+  const item = order?.items.find((candidate) => candidate.id === added.itemId);
+  if (!item) {
+    return expect.unreachable(`The item ${added.itemId} is not on table ${table.name}`);
+  }
+  return item;
+}
+
+/**
+ * Payment number `seq` for `items` of one table: each line pays one item, at the quantity and the
+ * price snapshotted when it was added, with no discount. Cash, tendered to the millime.
+ *
+ * It goes through the register's own builder, so what the suites record is what a caisse records:
+ * the table on the record and the order item on every line are what turn a payment into "these rows
+ * of that table are paid" rather than "some products were sold".
+ */
+export function tablePaymentRecord(
+  till: Till,
+  seq: number,
+  table: DiningTable,
+  items: readonly OpenOrderItem[],
+  options: RecordOptions & { readonly method?: PaymentMethod } = {},
+): Promise<SaleRecord> {
+  const cart = cartOfLines(
+    items.map((item) => ({
+      productId: item.productId,
+      name: item.nameSnapshot,
+      unitPriceMillimes: item.unitPriceMillimes,
+      qty: item.qty,
+      lineDiscountMillimes: ZERO,
+      orderItemId: item.id,
+    })),
+  );
+  return buildSaleRecord({ ...envelopeFor(till, seq, options), tableId: table.id }, cart, {
+    method: options.method ?? 'cash',
+  });
 }

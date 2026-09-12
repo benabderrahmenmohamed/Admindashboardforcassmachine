@@ -34,13 +34,18 @@ export function createRestSales(client: RestClient): SalesPort {
     },
 
     async listSales(query) {
-      const { terminalId, sessionId, limit } = parseOrInvalid(
+      const { terminalId, sessionId, tableId, limit } = parseOrInvalid(
         listSalesQuerySchema,
         query,
         'the sales query',
       );
       const response = await client.request('GET', '/sales', {
-        query: { terminal_id: terminalId, session_id: sessionId, limit },
+        query: {
+          terminal_id: terminalId,
+          session_id: sessionId,
+          table_id: tableId,
+          limit,
+        },
       });
       return fromWire(salesSchema, response.body, 'the sales');
     },

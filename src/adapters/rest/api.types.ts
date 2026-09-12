@@ -76,6 +76,45 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/products/{productId}/availability": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                productId: components["parameters"]["ProductId"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Put a product on the menu or take it off for the day. Admin, cashier or waiter.
+         * @description The daily sold-out toggle, which the floor may use. It touches nothing else about the product, and nothing already ordered.
+         */
+        put: operations["setProductAvailability"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/stock-adjustments": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Correct counted stock, leaving the movement behind as the reason. Idempotent by record id. Admin only. */
+        post: operations["adjustStock"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/categories": {
         parameters: {
             query?: never;
@@ -107,6 +146,247 @@ export interface paths {
         post?: never;
         /** Delete a category; its products become uncategorised. Admin only. */
         delete: operations["deleteCategory"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/dining-tables": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Every table of the shop, in the admin's order, retired ones included. */
+        get: operations["listDiningTables"];
+        put?: never;
+        /** Add a table to the room. Admin only. */
+        post: operations["createDiningTable"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/dining-tables/{tableId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                tableId: components["parameters"]["TableId"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Rename a table, move it in the room, or retire it. Admin only.
+         * @description Retiring leaves an order already open on the table open - the guests are still sitting there.
+         */
+        put: operations["updateDiningTable"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/table-board": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The grid - one entry per active table, free or with what it owes. */
+        get: operations["getTableBoard"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/dining-tables/{tableId}/open-order": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                tableId: components["parameters"]["TableId"];
+            };
+            cookie?: never;
+        };
+        /** The table's open order with its items, or null when the table is free. */
+        get: operations["getOpenOrder"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/order-items": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Put an item on a table. Idempotent by record id. Admin, cashier or waiter.
+         * @description The server finds the table's open order or opens one, so there is no operation that opens an order.
+         */
+        post: operations["addOrderItem"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/order-items/{itemId}/removals": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                itemId: components["parameters"]["OrderItemId"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Take an item off a table, with a reason. Idempotent by record id. Admin, cashier or waiter.
+         * @description The row stays, stamped with who removed it and why, because an item removed after the kitchen was told is what the fraud report is made of.
+         */
+        post: operations["removeOrderItem"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/order-items/{itemId}/preparations": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                itemId: components["parameters"]["OrderItemId"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Mark an item prepared. Idempotent by record id. Kitchen or admin.
+         * @description Two cooks tapping the same line is not a conflict - the first stamp stands and the second write answers `affected` 0.
+         */
+        post: operations["prepareOrderItem"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/dining-tables/{tableId}/sends": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                tableId: components["parameters"]["TableId"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Tell the kitchen about every unsent item of the table. Idempotent by record id. Admin, cashier or waiter.
+         * @description One send is one ticket. Nothing left to send is not an error - `affected` is 0.
+         */
+        post: operations["sendOrder"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/dining-tables/{tableId}/cancellations": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                tableId: components["parameters"]["TableId"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Cancel the table's open order, with a reason. Idempotent by record id. Cashier or admin.
+         * @description ORDER_CHANGED when any item of the order is already paid - only a refund undoes that.
+         */
+        post: operations["cancelOrder"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/open-orders": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * What has changed in the shop, for a client that polls instead of holding a live connection.
+         * @description Without `since` the answer is a cursor and no topics - the starting point for polling, because what changed before a screen opened is already in what it read.
+         */
+        get: operations["pollOpenOrderChanges"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/kitchen-tickets": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Sent, unprepared items grouped by send, oldest ticket first.
+         * @description A paid table keeps its ticket - the coffee still has to be made - and a cancelled one loses it.
+         */
+        get: operations["listKitchenTickets"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/reports/removed-after-sent-items": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** What was taken off tables after the kitchen had been told, newest first. Admin only. */
+        get: operations["listRemovedAfterSentItems"];
+        put?: never;
+        post?: never;
+        delete?: never;
         options?: never;
         head?: never;
         patch?: never;
@@ -277,7 +557,7 @@ export interface components {
         PayloadHash: string;
         TerminalCode: string;
         /** @enum {string} */
-        ErrorCode: "UNAUTHENTICATED" | "FORBIDDEN" | "NOT_FOUND" | "VALIDATION_ERROR" | "IDEMPOTENCY_CONFLICT" | "SEQUENCE_GAP" | "SESSION_CLOSED" | "SESSION_ALREADY_OPEN" | "TERMINAL_SUPERSEDED" | "RATE_LIMITED" | "SERVER_ERROR";
+        ErrorCode: "UNAUTHENTICATED" | "FORBIDDEN" | "NOT_FOUND" | "VALIDATION_ERROR" | "IDEMPOTENCY_CONFLICT" | "SEQUENCE_GAP" | "SESSION_CLOSED" | "SESSION_ALREADY_OPEN" | "TERMINAL_SUPERSEDED" | "ORDER_CHANGED" | "ORDER_CLOSED" | "ITEM_NOT_FOUND" | "TABLE_INACTIVE" | "RATE_LIMITED" | "SERVER_ERROR";
         ErrorEnvelope: {
             error: {
                 code: components["schemas"]["ErrorCode"];
@@ -302,11 +582,13 @@ export interface components {
             expires_in: number;
             member: components["schemas"]["Member"];
         };
+        /** @enum {string} */
+        Role: "admin" | "cashier" | "waiter" | "kitchen";
         Member: {
             user_id: components["schemas"]["Uuid"];
             shop_id: components["schemas"]["Uuid"];
-            /** @enum {string} */
-            role: "admin" | "cashier";
+            /** @description What the member may do. One person often holds several - the owner is an admin who also works the counter. */
+            roles: components["schemas"]["Role"][];
             display_name: string;
             email: string;
         };
@@ -330,11 +612,17 @@ export interface components {
             barcode: string;
             description: string;
             image_url: string;
+            /** @description On the menu right now. A café sells out of a dish and puts it back tomorrow, so this is a daily toggle rather than a change to the product. */
+            is_available: boolean;
+            /** @description Whether stock is counted for this product. Most café items are made to order and are not, so `stock_qty` only means something when this is true. */
+            track_stock: boolean;
             /** @description The sum of the product's stock movements; may be negative. */
-            stock: number;
-            available: boolean;
+            stock_qty: number;
             created_at: components["schemas"]["Timestamp"];
             updated_at: components["schemas"]["Timestamp"];
+        };
+        ProductAvailability: {
+            is_available: boolean;
         };
         ProductFields: {
             name: string;
@@ -344,6 +632,8 @@ export interface components {
             barcode: string;
             description: string;
             image_url: string;
+            is_available: boolean;
+            track_stock: boolean;
         };
         ProductCreate: components["schemas"]["ProductFields"] & {
             opening_stock: number;
@@ -351,6 +641,159 @@ export interface components {
         ProductUpdate: components["schemas"]["ProductFields"] & {
             /** @description Counted minus the stock shown when the edit started; written as an adjustment movement. */
             stock_delta: number;
+        };
+        /** @description An admin counting stock by hand, written as a record so a retry cannot count the same correction twice. */
+        StockAdjustment: {
+            id: components["schemas"]["Uuid"];
+            product_id: components["schemas"]["Uuid"];
+            qty_delta: number;
+            reason: string;
+            payload_hash: components["schemas"]["PayloadHash"];
+        };
+        /** @description What the correction did, or what it did the first time it arrived - the stock as of then, not as of now. */
+        StockAdjustmentResult: {
+            status: components["schemas"]["WriteStatus"];
+            product_id: components["schemas"]["Uuid"];
+            stock_qty: number;
+        };
+        DiningTable: {
+            id: components["schemas"]["Uuid"];
+            name: string;
+            sort_order: number;
+            /** @description A table is retired, never deleted - old sales keep its name - and a retired one takes nothing new (TABLE_INACTIVE). */
+            is_active: boolean;
+        };
+        DiningTableInput: {
+            name: string;
+            sort_order: number;
+            is_active: boolean;
+        };
+        /**
+         * @description One line on a table. name_snapshot and unit_price_millimes are copied when the item is added,
+         *     so a later price change never moves what a guest already ordered. A removed item keeps its
+         *     row: the admin's report of items removed after they were sent is the point.
+         */
+        OpenOrderItem: {
+            id: components["schemas"]["Uuid"];
+            order_id: components["schemas"]["Uuid"];
+            product_id: components["schemas"]["Uuid"];
+            name_snapshot: string;
+            /** Format: int64 */
+            unit_price_millimes: number;
+            qty: number;
+            note: string;
+            added_by: components["schemas"]["Uuid"];
+            added_at: components["schemas"]["Timestamp"];
+            /**
+             * Format: date-time
+             * @description When the kitchen was told. Items sent together are one ticket.
+             */
+            sent_at: string | null;
+            /** Format: date-time */
+            prepared_at: string | null;
+            /** Format: date-time */
+            removed_at: string | null;
+            removed_by: components["schemas"]["Uuid"] | null;
+            removed_reason: string | null;
+            /** @description The sale that paid this item, or null while it is unpaid. */
+            paid_sale_id: components["schemas"]["Uuid"] | null;
+        };
+        OpenOrder: {
+            id: components["schemas"]["Uuid"];
+            table_id: components["schemas"]["Uuid"];
+            /** @enum {string} */
+            status: "open" | "closed" | "cancelled";
+            opened_at: components["schemas"]["Timestamp"];
+            /** Format: date-time */
+            closed_at: string | null;
+            /** @description Every line ever put on this order, removed and paid ones included, oldest first. */
+            items: components["schemas"]["OpenOrderItem"][];
+        };
+        /** @description One tile of the table grid the waiter and the caisse both read. */
+        TableBoardEntry: {
+            table: components["schemas"]["DiningTable"];
+            /** @description The table's open order, or null when the table is free. */
+            order_id: components["schemas"]["Uuid"] | null;
+            /** Format: date-time */
+            opened_at: string | null;
+            /** @description What the unpaid, active items come to - what is still owed on this table. */
+            due_millimes: components["schemas"]["Millimes"];
+            active_count: number;
+            unsent_count: number;
+            unpaid_count: number;
+        };
+        /** @description One send - the items a waiter told the kitchen about at the same moment. */
+        KitchenTicket: {
+            order_id: components["schemas"]["Uuid"];
+            table_id: components["schemas"]["Uuid"];
+            table_name: string;
+            sent_at: components["schemas"]["Timestamp"];
+            items: components["schemas"]["OpenOrderItem"][];
+        };
+        /** @description An item a waiter removed after the kitchen had already been told, for the admin's report. */
+        RemovedAfterSentItem: {
+            item_id: components["schemas"]["Uuid"];
+            table_name: string;
+            product_name: string;
+            qty: number;
+            /** Format: int64 */
+            unit_price_millimes: number;
+            sent_at: components["schemas"]["Timestamp"];
+            removed_at: components["schemas"]["Timestamp"];
+            removed_by: components["schemas"]["Uuid"];
+            removed_by_name: string;
+            removed_reason: string;
+        };
+        /** @description What every order event carries - the device that wrote it, possibly offline, and how a replay is recognised. */
+        OrderRecord: {
+            id: components["schemas"]["Uuid"];
+            device_id: string;
+            created_at: components["schemas"]["Timestamp"];
+            payload_hash: components["schemas"]["PayloadHash"];
+        };
+        OrderItemAddRecord: components["schemas"]["OrderRecord"] & {
+            table_id: components["schemas"]["Uuid"];
+            product_id: components["schemas"]["Uuid"];
+            qty: number;
+            note: string;
+        };
+        OrderItemRemoveRecord: components["schemas"]["OrderRecord"] & {
+            item_id: components["schemas"]["Uuid"];
+            reason: string;
+        };
+        OrderSendRecord: components["schemas"]["OrderRecord"] & {
+            table_id: components["schemas"]["Uuid"];
+        };
+        OrderItemPrepareRecord: components["schemas"]["OrderRecord"] & {
+            item_id: components["schemas"]["Uuid"];
+        };
+        OrderCancelRecord: components["schemas"]["OrderRecord"] & {
+            table_id: components["schemas"]["Uuid"];
+            reason: string;
+        };
+        OrderItemAddResult: {
+            status: components["schemas"]["WriteStatus"];
+            order_id: components["schemas"]["Uuid"];
+            item_id: components["schemas"]["Uuid"];
+        };
+        OrderWriteResult: {
+            status: components["schemas"]["WriteStatus"];
+            order_id: components["schemas"]["Uuid"];
+            /** @description How many items the write touched - sent, prepared, removed or cancelled. A replay answers the stored count, not the work done again. */
+            affected: number;
+        };
+        /** @enum {string} */
+        RealtimeTopic: "open_orders" | "open_order_items" | "dining_tables" | "products";
+        /**
+         * @description What changed in the caller's shop since `since`, for a client with no live connection. The
+         *     answer carries no rows: the client re-reads the queries a topic covers, so a missed or a
+         *     repeated event costs a refetch and never a wrong screen.
+         */
+        OpenOrderChanges: {
+            /** @description Opaque. Send it back as `since` on the next poll. */
+            cursor: string;
+            /** @description Each topic that changed, named once. Empty when nothing did, and on the first poll. */
+            topics: components["schemas"]["RealtimeTopic"][];
         };
         ShopSettings: {
             receipt_footer: string;
@@ -444,11 +887,19 @@ export interface components {
             z_report: components["schemas"]["ZReport"];
         };
         /**
-         * @description Sale line: qty >= 1, line_total = qty * unit_price - line_discount - cart_discount_share.
-         *     Refund line: qty <= -1, refunds_line_no set, no discounts, line_total <= 0.
+         * @description Sale line: qty >= 1, net_millimes = qty * unit_price - line_discount - allocated_discount.
+         *     Refund line: qty <= -1, refunds_sale_line_id set, no discounts, net_millimes <= 0.
+         *     open_order_item_id names the item on the table this line pays; it is null for a counter sale,
+         *     which sat on no table, and for every refund line.
+         *
+         *     The row id is the writing device's to choose, not the server's: a register that sold offline
+         *     and is refunding the same receipt has to name the lines it gives back before either record
+         *     has been stored anywhere.
          */
         SaleLine: {
+            id: components["schemas"]["Uuid"];
             line_no: number;
+            open_order_item_id: components["schemas"]["Uuid"] | null;
             product_id: components["schemas"]["Uuid"];
             product_name: string;
             qty: number;
@@ -456,10 +907,15 @@ export interface components {
             unit_price_millimes: number;
             /** Format: int64 */
             line_discount_millimes: number;
-            /** Format: int64 */
-            cart_discount_share_millimes: number;
-            line_total_millimes: components["schemas"]["Millimes"];
-            refunds_line_no: number | null;
+            /** @description Why this line was discounted or offered. A line discount without a reason is refused. */
+            line_discount_reason: string | null;
+            /**
+             * Format: int64
+             * @description This line's share of the cart discount, allocated by largest remainder so the parts sum exactly.
+             */
+            allocated_discount_millimes: number;
+            net_millimes: components["schemas"]["Millimes"];
+            refunds_sale_line_id: components["schemas"]["Uuid"] | null;
         };
         /** @description Cash sale - tendered >= total, change = tendered - total. Card sale and every refund - tendered = total, change = 0. */
         Payment: {
@@ -481,11 +937,12 @@ export interface components {
              */
             seq: number;
             session_id: components["schemas"]["Uuid"];
+            /** @description The table being paid, or null for a counter sale and for a refund. */
+            table_id: components["schemas"]["Uuid"] | null;
             created_at: components["schemas"]["Timestamp"];
             lines: components["schemas"]["SaleLine"][];
-            subtotal_millimes: components["schemas"]["Millimes"];
             /** Format: int64 */
-            discount_millimes: number;
+            cart_discount_millimes: number;
             total_millimes: components["schemas"]["Millimes"];
             payment: components["schemas"]["Payment"];
             refunds_sale_id: components["schemas"]["Uuid"] | null;
@@ -512,11 +969,13 @@ export interface components {
             terminal_id: components["schemas"]["Uuid"];
             terminal_code: components["schemas"]["TerminalCode"];
             session_id: components["schemas"]["Uuid"];
+            table_id: components["schemas"]["Uuid"] | null;
+            /** @description The table's name as it is now, for a receipt someone reads later; null for a counter sale. */
+            table_name: string | null;
             refunds_sale_id: components["schemas"]["Uuid"] | null;
             /** @enum {string} */
             payment_method: "cash" | "card";
-            subtotal_millimes: components["schemas"]["Millimes"];
-            discount_millimes: components["schemas"]["Millimes"];
+            cart_discount_millimes: components["schemas"]["Millimes"];
             total_millimes: components["schemas"]["Millimes"];
             tendered_millimes: components["schemas"]["Millimes"];
             change_millimes: components["schemas"]["Millimes"];
@@ -555,7 +1014,7 @@ export interface components {
                 "application/json": components["schemas"]["ErrorEnvelope"];
             };
         };
-        /** @description The resource does not exist in the caller's shop (NOT_FOUND). */
+        /** @description The resource does not exist in the caller's shop (NOT_FOUND, or ITEM_NOT_FOUND for an order item). */
         NotFound: {
             headers: {
                 [name: string]: unknown;
@@ -564,7 +1023,7 @@ export interface components {
                 "application/json": components["schemas"]["ErrorEnvelope"];
             };
         };
-        /** @description IDEMPOTENCY_CONFLICT, SEQUENCE_GAP, SESSION_CLOSED, SESSION_ALREADY_OPEN or TERMINAL_SUPERSEDED. */
+        /** @description IDEMPOTENCY_CONFLICT, SEQUENCE_GAP, SESSION_CLOSED, SESSION_ALREADY_OPEN, TERMINAL_SUPERSEDED, ORDER_CHANGED, ORDER_CLOSED or TABLE_INACTIVE. */
         Conflict: {
             headers: {
                 [name: string]: unknown;
@@ -586,6 +1045,8 @@ export interface components {
     parameters: {
         ProductId: string;
         SessionId: string;
+        TableId: string;
+        OrderItemId: string;
     };
     requestBodies: never;
     headers: never;
@@ -744,6 +1205,74 @@ export interface operations {
             404: components["responses"]["NotFound"];
         };
     };
+    setProductAvailability: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                productId: components["parameters"]["ProductId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ProductAvailability"];
+            };
+        };
+        responses: {
+            /** @description The product as it now stands. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Product"];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            422: components["responses"]["ValidationError"];
+        };
+    };
+    adjustStock: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["StockAdjustment"];
+            };
+        };
+        responses: {
+            /** @description This same correction was already counted (replayed); the stock as of then. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StockAdjustmentResult"];
+                };
+            };
+            /** @description Counted. */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StockAdjustmentResult"];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            422: components["responses"]["ValidationError"];
+        };
+    };
     listCategories: {
         parameters: {
             query?: never;
@@ -814,6 +1343,401 @@ export interface operations {
             401: components["responses"]["Unauthenticated"];
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
+        };
+    };
+    listDiningTables: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Tables. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DiningTable"][];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+        };
+    };
+    createDiningTable: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DiningTableInput"];
+            };
+        };
+        responses: {
+            /** @description Created. */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DiningTable"];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            422: components["responses"]["ValidationError"];
+        };
+    };
+    updateDiningTable: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                tableId: components["parameters"]["TableId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DiningTableInput"];
+            };
+        };
+        responses: {
+            /** @description Saved. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DiningTable"];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            422: components["responses"]["ValidationError"];
+        };
+    };
+    getTableBoard: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The board, in the admin's table order. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TableBoardEntry"][];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+        };
+    };
+    getOpenOrder: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                tableId: components["parameters"]["TableId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The open order, or null. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OpenOrder"] | null;
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+        };
+    };
+    addOrderItem: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["OrderItemAddRecord"];
+            };
+        };
+        responses: {
+            /** @description This same record already added it (replayed). */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OrderItemAddResult"];
+                };
+            };
+            /** @description Added. */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OrderItemAddResult"];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            422: components["responses"]["ValidationError"];
+        };
+    };
+    removeOrderItem: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                itemId: components["parameters"]["OrderItemId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["OrderItemRemoveRecord"];
+            };
+        };
+        responses: {
+            /** @description This same record already removed it (replayed). */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OrderWriteResult"];
+                };
+            };
+            /** @description Removed. `affected` is 0 when the item was already off the table. */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OrderWriteResult"];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            422: components["responses"]["ValidationError"];
+        };
+    };
+    prepareOrderItem: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                itemId: components["parameters"]["OrderItemId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["OrderItemPrepareRecord"];
+            };
+        };
+        responses: {
+            /** @description This same record already prepared it (replayed). */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OrderWriteResult"];
+                };
+            };
+            /** @description Prepared. */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OrderWriteResult"];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            422: components["responses"]["ValidationError"];
+        };
+    };
+    sendOrder: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                tableId: components["parameters"]["TableId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["OrderSendRecord"];
+            };
+        };
+        responses: {
+            /** @description This same record already sent them (replayed). */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OrderWriteResult"];
+                };
+            };
+            /** @description Sent. */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OrderWriteResult"];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            409: components["responses"]["Conflict"];
+            422: components["responses"]["ValidationError"];
+        };
+    };
+    cancelOrder: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                tableId: components["parameters"]["TableId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["OrderCancelRecord"];
+            };
+        };
+        responses: {
+            /** @description This same record already cancelled it (replayed). */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OrderWriteResult"];
+                };
+            };
+            /** @description Cancelled. */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OrderWriteResult"];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            409: components["responses"]["Conflict"];
+            422: components["responses"]["ValidationError"];
+        };
+    };
+    pollOpenOrderChanges: {
+        parameters: {
+            query?: {
+                /** @description The cursor of the previous answer. */
+                since?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The changes since `since`, and the cursor to send next time. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OpenOrderChanges"];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            422: components["responses"]["ValidationError"];
+        };
+    };
+    listKitchenTickets: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Tickets. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["KitchenTicket"][];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+        };
+    };
+    listRemovedAfterSentItems: {
+        parameters: {
+            query: {
+                from: components["schemas"]["Timestamp"];
+                to: components["schemas"]["Timestamp"];
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The removed items of the period, both ends inclusive. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RemovedAfterSentItem"][];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            422: components["responses"]["ValidationError"];
         };
     };
     getShopSettings: {
@@ -1022,6 +1946,8 @@ export interface operations {
             query?: {
                 terminal_id?: string;
                 session_id?: string;
+                /** @description What was paid at one table, for a receipt the caisse reads back. */
+                table_id?: string;
                 limit?: number;
             };
             header?: never;

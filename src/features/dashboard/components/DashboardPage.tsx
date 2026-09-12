@@ -47,7 +47,7 @@ export function DashboardPage() {
       icon: Package,
       color: 'text-blue-600',
       bgColor: 'bg-blue-100',
-      link: '/dashboard/products',
+      link: '/admin/products',
     },
     {
       title: 'Categories',
@@ -55,7 +55,7 @@ export function DashboardPage() {
       icon: FolderTree,
       color: 'text-green-600',
       bgColor: 'bg-green-100',
-      link: '/dashboard/categories',
+      link: '/admin/categories',
     },
   ];
 
@@ -96,7 +96,7 @@ export function DashboardPage() {
         <CardContent>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <Link
-              to="/dashboard/products"
+              to="/admin/products"
               className="p-4 border border-gray-200 rounded-lg hover:border-blue-500 hover:bg-blue-50 transition-colors"
             >
               <Package className="w-8 h-8 text-blue-600 mb-2" />
@@ -106,7 +106,7 @@ export function DashboardPage() {
               </p>
             </Link>
             <Link
-              to="/dashboard/categories"
+              to="/admin/categories"
               className="p-4 border border-gray-200 rounded-lg hover:border-green-500 hover:bg-green-50 transition-colors"
             >
               <FolderTree className="w-8 h-8 text-green-600 mb-2" />
@@ -114,7 +114,7 @@ export function DashboardPage() {
               <p className="text-sm text-gray-600">Organize your products with categories</p>
             </Link>
             <Link
-              to="/dashboard/settings"
+              to="/admin/settings"
               className="p-4 border border-gray-200 rounded-lg hover:border-purple-500 hover:bg-purple-50 transition-colors"
             >
               <TrendingUp className="w-8 h-8 text-purple-600 mb-2" />

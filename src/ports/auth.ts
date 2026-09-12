@@ -1,17 +1,26 @@
 import { z } from 'zod';
 
-export const roleSchema = z.enum(['admin', 'cashier']);
+/**
+ * What a member may do. One person often holds several: the owner is an admin who also works the
+ * counter, so `['admin', 'cashier']` is the ordinary case rather than an edge one.
+ */
+export const roleSchema = z.enum(['admin', 'cashier', 'waiter', 'kitchen']);
 export type Role = z.infer<typeof roleSchema>;
 
-/** A signed-in member of a shop. Role and shop come from the shop's membership, never from token metadata. */
+/** A signed-in member of a shop. Roles and shop come from the membership, never from token metadata. */
 export const authUserSchema = z.object({
   id: z.string().min(1),
   email: z.string(),
   name: z.string(),
-  role: roleSchema,
+  roles: z.array(roleSchema).min(1),
   shopId: z.string().min(1),
 });
 export type AuthUser = z.infer<typeof authUserSchema>;
+
+/** True when `user` holds any of `allowed`; the route guards and every RPC check ask it this way. */
+export function hasRole(user: AuthUser, allowed: readonly Role[]): boolean {
+  return user.roles.some((role) => allowed.includes(role));
+}
 
 export const credentialsSchema = z.object({
   email: z.string().trim().min(1, 'Email is required'),

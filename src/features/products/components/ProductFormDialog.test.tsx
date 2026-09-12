@@ -5,7 +5,7 @@ import { createHarness, type Harness } from '@/test/harness';
 import { PRICE_FORMAT_MESSAGE } from '../schema';
 import { ProductsPage } from './ProductsPage';
 
-const MILK = 'Lait demi-écrémé 1 L';
+const DRINK = 'Boga Cidre 33 cl';
 
 async function productNamed(harness: Harness, name: string): Promise<Product> {
   const product = (await harness.backend.catalog.listProducts()).find(
@@ -27,7 +27,7 @@ function field(dialog: HTMLElement, label: string): HTMLInputElement {
 
 describe('the product form', () => {
   it('says what is wrong with each field instead of saving it', async () => {
-    const harness = await createHarness({ signedInAs: 'Admin' });
+    const harness = await createHarness({ signedInAs: 'Owner' });
     const before = (await harness.backend.catalog.listProducts()).length;
 
     harness.renderScreen(<ProductsPage />, { allow: ['admin'] });
@@ -53,12 +53,12 @@ describe('the product form', () => {
   });
 
   it('saves an edited stock as the change from the stock the form opened with', async () => {
-    const harness = await createHarness({ signedInAs: 'Admin', terminalCode: 'T1' });
-    const milk = await productNamed(harness, MILK);
-    expect(milk.stock).toBe(60);
+    const harness = await createHarness({ signedInAs: 'Owner', terminalCode: 'T1' });
+    const drink = await productNamed(harness, DRINK);
+    expect(drink.stockQty).toBe(60);
 
     harness.renderScreen(<ProductsPage />, { allow: ['admin'] });
-    const row = await screen.findByRole('row', { name: new RegExp(MILK) });
+    const row = await screen.findByRole('row', { name: new RegExp(DRINK) });
     // The edit and archive buttons carry no accessible name: the pencil is the row's first button.
     fireEvent.click(within(row).getAllByRole('button')[0]);
     const dialog = await screen.findByRole('dialog');
@@ -67,9 +67,9 @@ describe('the product form', () => {
     // Two are sold on this device while the form is open, and reach the ledger.
     const session = await harness.openSession();
     await harness.runtime.sync();
-    await harness.sell(session.sessionId, milk, 2);
+    await harness.sell(session.sessionId, drink, 2);
     await harness.runtime.sync();
-    expect((await productNamed(harness, MILK)).stock).toBe(58);
+    expect((await productNamed(harness, DRINK)).stockQty).toBe(58);
 
     // The stocktake counted 65 against the 60 the form showed: five more than it opened with.
     fireEvent.change(field(dialog, 'Stock Quantity'), { target: { value: '65' } });
@@ -78,6 +78,6 @@ describe('the product form', () => {
     await waitFor(() => {
       expect(screen.queryByRole('dialog')).toBeNull();
     });
-    expect((await productNamed(harness, MILK)).stock).toBe(63);
+    expect((await productNamed(harness, DRINK)).stockQty).toBe(63);
   });
 });

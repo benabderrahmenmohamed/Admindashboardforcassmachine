@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { AppError } from '@/lib/errors';
-import { authUserSchema, roleSchema, type AuthUser } from '@/ports';
+import { authUserSchema, hasRole, roleSchema, type AuthUser } from '@/ports';
 import type { SupabaseDatabaseClient } from './client';
 import { defaultErrorMessage, unwrap } from './errors';
 import { fromWire } from './wire';
@@ -9,7 +9,8 @@ import { parseOutput } from './validate';
 const myProfileSchema = z.object({
   userId: z.string().min(1),
   shopId: z.string().min(1),
-  role: roleSchema,
+  /** A member holds one role or several: the owner is an admin who also works the counter. */
+  roles: z.array(roleSchema),
   displayName: z.string(),
   email: z.string(),
 });
@@ -26,7 +27,7 @@ export async function readMyProfile(client: SupabaseDatabaseClient): Promise<Aut
       id: profile.userId,
       email: profile.email,
       name: profile.displayName,
-      role: profile.role,
+      roles: profile.roles,
       shopId: profile.shopId,
     },
     'a profile',
@@ -39,9 +40,9 @@ export async function readMyProfile(client: SupabaseDatabaseClient): Promise<Aut
  */
 export async function requireAdmin(client: SupabaseDatabaseClient): Promise<AuthUser> {
   const member = await readMyProfile(client);
-  if (member.role !== 'admin') {
+  if (!hasRole(member, ['admin'])) {
     throw new AppError('FORBIDDEN', defaultErrorMessage('FORBIDDEN'), {
-      details: { role: member.role },
+      details: { roles: member.roles },
     });
   }
   return member;

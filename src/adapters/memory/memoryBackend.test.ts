@@ -4,6 +4,7 @@ import { buildSaleRecord } from '@/features/sales/records';
 import { buildCloseSessionRecord, buildOpenSessionRecord } from '@/features/sessions/records';
 import { AppError, isAppError, type ErrorCode } from '@/lib/errors';
 import { mm } from '@/lib/money';
+import { withPayloadHash } from '@/lib/payloadHash';
 import type {
   AuthState,
   AuthUser,
@@ -11,11 +12,18 @@ import type {
   CloseSessionRecord,
   Credentials,
   OpenSessionRecord,
+  OrderCancelRecord,
+  OrderItemAddRecord,
+  OrderItemPrepareRecord,
+  OrderItemRemoveRecord,
+  OrderSendRecord,
   Product,
   ProductCreateInput,
   ProductUpdateInput,
+  RealtimeTopic,
   Role,
   SaleRecord,
+  StockAdjustment,
 } from '@/ports';
 import {
   createFaultInjector,
@@ -35,19 +43,25 @@ const START = Date.UTC(2026, 8, 11, 9, 0, 0);
 const UUID_V4 = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 
 const ADMIN_ID = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1';
+const TABLE_1 = '77777777-7777-4777-8777-777777777701';
+const TABLE_2 = '77777777-7777-4777-8777-777777777702';
+const RETIRED_TABLE = '77777777-7777-4777-8777-777777777708';
 const WATER = '55555555-5555-4555-8555-555555555501';
-const HARISSA = '55555555-5555-4555-8555-555555555504';
-const DATES = '55555555-5555-4555-8555-555555555507';
+const CREME = '55555555-5555-4555-8555-555555555504';
+const MAKROUDS = '55555555-5555-4555-8555-555555555507';
 const OTHER_PRODUCT = '66666666-6666-4666-8666-666666666601';
-const BOISSONS = '44444444-4444-4444-8444-444444444401';
-const LAITIERS = '44444444-4444-4444-8444-444444444402';
-const EPICERIE = '44444444-4444-4444-8444-444444444403';
-const BOULANGERIE = '44444444-4444-4444-8444-444444444404';
+const FRAICHES = '44444444-4444-4444-8444-444444444401';
+const CHAUDES = '44444444-4444-4444-8444-444444444402';
+const SNACKS = '44444444-4444-4444-8444-444444444403';
+const PATISSERIE = '44444444-4444-4444-8444-444444444404';
 const GENERAL = '44444444-4444-4444-8444-444444444411';
 
 const CREDENTIALS = {
+  // The owner: an admin who also works the counter, which is how the demo signs in as an admin.
   admin: { email: 'admin@demo.local', password: 'demo-admin-2026' },
   cashier: { email: 'cashier@demo.local', password: 'demo-cashier-2026' },
+  waiter: { email: 'waiter@demo.local', password: 'demo-waiter-2026' },
+  kitchen: { email: 'kitchen@demo.local', password: 'demo-kitchen-2026' },
   otherAdmin: { email: 'other-admin@demo.local', password: 'other-admin-2026' },
   otherCashier: { email: 'other-cashier@demo.local', password: 'other-cashier-2026' },
 } satisfies Record<string, Credentials>;
@@ -62,6 +76,31 @@ function recordId(n: number): string {
   return `dddddddd-0000-4000-8000-${String(n).padStart(12, '0')}`;
 }
 
+const DEVICE_ID = 'device-memory-test';
+
+/** The n-th order record this device writes: the fields of its kind, in the envelope every kind has. */
+function orderRecord<Fields extends object>(
+  n: number,
+  fields: Fields,
+): Promise<Fields & { id: string; deviceId: string; createdAt: string; payloadHash: string }> {
+  return withPayloadHash({
+    id: recordId(n),
+    deviceId: DEVICE_ID,
+    createdAt: isoAt(0),
+    ...fields,
+  });
+}
+
+/** A hand count as the admin writes it: a record like any other, so a retry cannot count twice. */
+function stockCorrection(productId: string, qtyDelta: number): Promise<StockAdjustment> {
+  return withPayloadHash({
+    id: recordId(90),
+    productId,
+    qtyDelta,
+    reason: 'Counted on the shelf',
+  });
+}
+
 /** A seeded product as listProducts shows it. */
 function listed(product: MemorySeedProduct): Product {
   return {
@@ -74,8 +113,9 @@ function listed(product: MemorySeedProduct): Product {
     barcode: product.barcode,
     description: product.description,
     imageUrl: product.imageUrl,
-    stock: product.stock,
-    available: product.available,
+    isAvailable: product.isAvailable,
+    trackStock: product.trackStock,
+    stockQty: product.stockQty,
     createdAt: product.createdAt,
     updatedAt: product.createdAt,
   };
@@ -183,29 +223,34 @@ function signedInUser(state: AuthState): AuthUser {
   return state.user;
 }
 
-const dates: ProductCreateInput = {
-  name: 'Dattes Deglet Nour 1 kg',
+const makrouds: ProductCreateInput = {
+  name: 'Makrouds maison',
   priceMillimes: mm(14_500),
-  categoryId: EPICERIE,
+  categoryId: SNACKS,
   barcode: '6194000300071',
-  description: 'Tozeur',
+  description: 'Kairouan',
   imageUrl: '',
+  isAvailable: true,
+  trackStock: true,
   openingStock: 30,
 };
 
-const harissaEdit: ProductUpdateInput = {
-  name: 'Harissa 380 g',
+const cremeEdit: ProductUpdateInput = {
+  name: 'Café crème',
   priceMillimes: mm(2_600),
-  categoryId: EPICERIE,
+  categoryId: SNACKS,
   barcode: '6194000300019',
   description: '',
   imageUrl: '',
+  isAvailable: true,
+  trackStock: true,
   stockDelta: 5,
 };
 
 /**
  * What the calls of `callFor` need, prepared by the admin on a client of its own: terminal T1 with
- * an open session and sale T1-1, terminal T2 without a session, and records not yet sent.
+ * an open session and sale T1-1, terminal T2 without a session, table 1 with an item nobody has
+ * sent yet, table 2 with an item the kitchen has, and records not yet sent.
  */
 interface Prepared {
   readonly terminalId: string;
@@ -215,6 +260,11 @@ interface Prepared {
   readonly openOnT2: OpenSessionRecord;
   readonly closeT1: CloseSessionRecord;
   readonly nextSale: SaleRecord;
+  readonly addOnTable1: OrderItemAddRecord;
+  readonly removeOnTable1: OrderItemRemoveRecord;
+  readonly sendTable1: OrderSendRecord;
+  readonly prepareOnTable2: OrderItemPrepareRecord;
+  readonly cancelTable1: OrderCancelRecord;
 }
 
 async function prepare(backend: MemoryBackend): Promise<Prepared> {
@@ -232,19 +282,39 @@ async function prepare(backend: MemoryBackend): Promise<Prepared> {
   await admin.sessions.open(open);
   const cart = addItem(
     emptyCart,
-    { id: WATER, name: 'Eau minérale 1,5 L', priceMillimes: mm(850) },
+    { id: WATER, name: 'Eau minérale 50 cl', priceMillimes: mm(850) },
     2,
   );
-  const envelope = { sessionId: open.id, createdAt: isoAt(0), terminal };
+  const envelope = { sessionId: open.id, createdAt: isoAt(0), terminal, tableId: null };
   const first = await buildSaleRecord({ ...envelope, id: recordId(2), seq: 1 }, cart, {
     method: 'cash',
   });
   await admin.sales.recordSale(first);
+  const onTable1 = await admin.orders.addItem(
+    await orderRecord(6, { tableId: TABLE_1, productId: WATER, qty: 2, note: '' }),
+  );
+  const onTable2 = await admin.orders.addItem(
+    await orderRecord(7, { tableId: TABLE_2, productId: CREME, qty: 1, note: 'Sans sucre' }),
+  );
+  await admin.orders.send(await orderRecord(8, { tableId: TABLE_2 }));
   return {
     terminalId: t1.terminalId,
     otherTerminalId: t2.terminalId,
     sessionId: open.id,
     saleId: first.id,
+    addOnTable1: await orderRecord(9, {
+      tableId: TABLE_1,
+      productId: WATER,
+      qty: 1,
+      note: '',
+    }),
+    removeOnTable1: await orderRecord(10, {
+      itemId: onTable1.itemId,
+      reason: 'The guest changed their mind',
+    }),
+    sendTable1: await orderRecord(11, { tableId: TABLE_1 }),
+    prepareOnTable2: await orderRecord(12, { itemId: onTable2.itemId }),
+    cancelTable1: await orderRecord(13, { tableId: TABLE_1, reason: 'The guests left' }),
     openOnT2: await buildOpenSessionRecord({
       id: recordId(3),
       terminal: { terminalCode: 'T2', epoch: 0 },
@@ -289,12 +359,19 @@ async function observable(backend: MemoryBackend, prepared: Prepared) {
     sessionOnT2: await viewer.sessions.current(prepared.otherTerminalId),
     report: await viewer.sessions.zReport(prepared.sessionId),
     sales: await viewer.sales.listSales({}),
+    tables: await viewer.orders.listTables(),
+    board: await viewer.orders.board(),
+    tickets: await viewer.orders.kitchenTickets(),
     otherProducts: await other.catalog.listProducts(),
     otherCategories: await other.catalog.listCategories(),
     otherSettings: await other.settings.getSettings(),
+    otherBoard: await other.orders.board(),
     movements: backend.inspect.stockMovements(),
     terminals: backend.inspect.terminals(),
     voids: backend.inspect.receiptVoids(),
+    orders: backend.inspect.orders(),
+    orderItems: backend.inspect.orderItems(),
+    orderRecords: backend.inspect.orderRecords(),
   };
 }
 
@@ -307,13 +384,31 @@ const callFor: Record<
   'auth.signIn': (backend) => backend.auth.signIn(CREDENTIALS.admin),
   'auth.signOut': (backend) => backend.auth.signOut(),
   'catalog.listProducts': (backend) => backend.catalog.listProducts(),
-  'catalog.createProduct': (backend) => backend.catalog.createProduct(dates),
-  'catalog.updateProduct': (backend) => backend.catalog.updateProduct(HARISSA, harissaEdit),
-  'catalog.deleteProduct': (backend) => backend.catalog.deleteProduct(DATES),
+  'catalog.createProduct': (backend) => backend.catalog.createProduct(makrouds),
+  'catalog.updateProduct': (backend) => backend.catalog.updateProduct(CREME, cremeEdit),
+  'catalog.deleteProduct': (backend) => backend.catalog.deleteProduct(MAKROUDS),
+  'catalog.setAvailability': (backend) => backend.catalog.setAvailability(CREME, false),
+  'catalog.adjustStock': async (backend) =>
+    backend.catalog.adjustStock(await stockCorrection(WATER, -3)),
   'catalog.listCategories': (backend) => backend.catalog.listCategories(),
   'catalog.createCategory': (backend) =>
     backend.catalog.createCategory({ name: 'Surgelés', color: '#6366f1' }),
-  'catalog.deleteCategory': (backend) => backend.catalog.deleteCategory(BOULANGERIE),
+  'catalog.deleteCategory': (backend) => backend.catalog.deleteCategory(PATISSERIE),
+  'orders.listTables': (backend) => backend.orders.listTables(),
+  'orders.createTable': (backend) =>
+    backend.orders.createTable({ name: 'Terrasse 9', sortOrder: 9, isActive: true }),
+  'orders.updateTable': (backend) =>
+    backend.orders.updateTable(TABLE_1, { name: 'Salle 1', sortOrder: 1, isActive: true }),
+  'orders.board': (backend) => backend.orders.board(),
+  'orders.openOrder': (backend) => backend.orders.openOrder(TABLE_1),
+  'orders.kitchenTickets': (backend) => backend.orders.kitchenTickets(),
+  'orders.removedAfterSent': (backend) =>
+    backend.orders.removedAfterSent({ from: isoAt(0), to: isoAt(60) }),
+  'orders.addItem': (backend, prepared) => backend.orders.addItem(prepared.addOnTable1),
+  'orders.removeItem': (backend, prepared) => backend.orders.removeItem(prepared.removeOnTable1),
+  'orders.send': (backend, prepared) => backend.orders.send(prepared.sendTable1),
+  'orders.prepareItem': (backend, prepared) => backend.orders.prepareItem(prepared.prepareOnTable2),
+  'orders.cancelOrder': (backend, prepared) => backend.orders.cancelOrder(prepared.cancelTable1),
   'settings.getSettings': (backend) => backend.settings.getSettings(),
   'settings.updateSettings': (backend) =>
     backend.settings.updateSettings({ receiptFooter: 'À bientôt' }),
@@ -333,7 +428,11 @@ const callFor: Record<
     }),
 };
 
-type Access = 'anyone' | 'member' | 'admin';
+/**
+ * Who a call is open to: anyone, any member of the shop, whoever works the tables (a waiter, the
+ * counter, the admin), whoever takes money (the counter and the admin), the kitchen, or the admin.
+ */
+type Access = 'anyone' | 'member' | 'table' | 'register' | 'kitchen' | 'admin';
 
 /** Who may call each port method: the check made by the database behind it. */
 const accessFor: Record<MemoryOperation, Access> = {
@@ -345,9 +444,23 @@ const accessFor: Record<MemoryOperation, Access> = {
   'catalog.createProduct': 'admin', // save_product
   'catalog.updateProduct': 'admin', // save_product
   'catalog.deleteProduct': 'admin', // archive_product
+  'catalog.setAvailability': 'table', // set_product_availability: the floor takes a dish off the menu
+  'catalog.adjustStock': 'admin', // adjust_stock
   'catalog.listCategories': 'member', // categories
   'catalog.createCategory': 'admin', // categories insert policy
   'catalog.deleteCategory': 'admin', // categories delete policy
+  'orders.listTables': 'member', // dining_tables
+  'orders.createTable': 'admin', // save_dining_table: the room is the admin's
+  'orders.updateTable': 'admin', // save_dining_table
+  'orders.board': 'member', // dining_tables and open_orders
+  'orders.openOrder': 'member', // open_orders and open_order_items
+  'orders.kitchenTickets': 'member', // open_order_items
+  'orders.removedAfterSent': 'admin', // the report of what was removed after being sent
+  'orders.addItem': 'table', // order_item_add
+  'orders.removeItem': 'table', // order_item_remove
+  'orders.send': 'table', // order_send
+  'orders.prepareItem': 'kitchen', // order_item_prepare
+  'orders.cancelOrder': 'register', // order_cancel
   'settings.getSettings': 'member', // shop_settings
   'settings.updateSettings': 'admin', // shop_settings update policy
   'terminals.register': 'admin', // register_terminal
@@ -355,31 +468,74 @@ const accessFor: Record<MemoryOperation, Access> = {
   'sessions.close': 'member', // close_session
   'sessions.current': 'member', // cash_sessions
   'sessions.zReport': 'member', // z_report
-  'sales.recordSale': 'member', // record_sale
+  'sales.recordSale': 'register', // record_sale
   'sales.listSales': 'member', // sales and sale_lines
   'sales.getSale': 'member', // sales and sale_lines
   'sales.voidReceipt': 'admin', // void_receipt
 };
 
-const CALLERS: readonly Caller[] = ['signed out', 'cashier', 'admin'];
+const CALLERS: readonly Caller[] = ['signed out', 'cashier', 'waiter', 'kitchen', 'admin'];
+
+const SIGNED_OUT = { 'signed out': 'UNAUTHENTICATED' } as const;
 
 /** How a call settles for each caller under each access rule. */
 const outcomeUnder: Record<Access, Record<Caller, 'resolved' | ErrorCode>> = {
-  anyone: { 'signed out': 'resolved', cashier: 'resolved', admin: 'resolved' },
-  member: { 'signed out': 'UNAUTHENTICATED', cashier: 'resolved', admin: 'resolved' },
-  admin: { 'signed out': 'UNAUTHENTICATED', cashier: 'FORBIDDEN', admin: 'resolved' },
+  anyone: {
+    'signed out': 'resolved',
+    cashier: 'resolved',
+    waiter: 'resolved',
+    kitchen: 'resolved',
+    admin: 'resolved',
+  },
+  member: {
+    ...SIGNED_OUT,
+    cashier: 'resolved',
+    waiter: 'resolved',
+    kitchen: 'resolved',
+    admin: 'resolved',
+  },
+  table: {
+    ...SIGNED_OUT,
+    cashier: 'resolved',
+    waiter: 'resolved',
+    kitchen: 'FORBIDDEN',
+    admin: 'resolved',
+  },
+  register: {
+    ...SIGNED_OUT,
+    cashier: 'resolved',
+    waiter: 'FORBIDDEN',
+    kitchen: 'FORBIDDEN',
+    admin: 'resolved',
+  },
+  kitchen: {
+    ...SIGNED_OUT,
+    cashier: 'FORBIDDEN',
+    waiter: 'FORBIDDEN',
+    kitchen: 'resolved',
+    admin: 'resolved',
+  },
+  admin: {
+    ...SIGNED_OUT,
+    cashier: 'FORBIDDEN',
+    waiter: 'FORBIDDEN',
+    kitchen: 'FORBIDDEN',
+    admin: 'resolved',
+  },
 };
 
 describe('default seed', () => {
-  it('mirrors supabase/seed.sql: two shops with their members, categories and products, and no terminal', () => {
-    const { shops, accounts, profiles, categories, products } = defaultSeed;
+  it('mirrors supabase/seed.sql: two shops with their members, tables, categories and menu, and no terminal', () => {
+    const { shops, accounts, profiles, tables, categories, products } = defaultSeed;
     expect(shops.map((shop) => [shop.id, shop.name, shop.settings.receiptFooter])).toEqual([
-      [DEMO_SHOP_ID, 'Épicerie du Coin', 'Merci pour votre visite !'],
+      [DEMO_SHOP_ID, 'Café des Nattes', 'Merci pour votre visite !'],
       [OTHER_SHOP_ID, 'Other Shop', 'Thank you for your purchase!'],
     ]);
     expect(accounts.map((account) => [account.email, account.demoLabel])).toEqual([
-      ['admin@demo.local', 'Admin'],
+      ['admin@demo.local', 'Owner'],
       ['cashier@demo.local', 'Cashier'],
+      ['waiter@demo.local', 'Waiter'],
+      ['kitchen@demo.local', 'Kitchen'],
       ['other-admin@demo.local', null],
       ['other-cashier@demo.local', null],
     ]);
@@ -387,23 +543,35 @@ describe('default seed', () => {
       profiles.map((profile) => [
         profile.userId,
         profile.shopId,
-        profile.role,
+        profile.roles,
         profile.displayName,
       ]),
     ).toEqual([
-      [ADMIN_ID, DEMO_SHOP_ID, 'admin', 'Demo Admin'],
-      ['aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa2', DEMO_SHOP_ID, 'cashier', 'Demo Cashier'],
-      ['bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb1', OTHER_SHOP_ID, 'admin', 'Other Admin'],
-      ['bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb2', OTHER_SHOP_ID, 'cashier', 'Other Cashier'],
+      // The owner holds two roles, which is the ordinary case and not an edge one.
+      [ADMIN_ID, DEMO_SHOP_ID, ['admin', 'cashier'], 'Demo Owner'],
+      ['aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa2', DEMO_SHOP_ID, ['cashier'], 'Demo Cashier'],
+      ['aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa3', DEMO_SHOP_ID, ['waiter'], 'Demo Waiter'],
+      ['aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa4', DEMO_SHOP_ID, ['kitchen'], 'Demo Kitchen'],
+      ['bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb1', OTHER_SHOP_ID, ['admin'], 'Other Admin'],
+      ['bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb2', OTHER_SHOP_ID, ['cashier'], 'Other Cashier'],
     ]);
+
+    const demoTables = tables.filter((table) => table.shopId === DEMO_SHOP_ID);
+    expect(demoTables.map((table) => table.sortOrder)).toEqual([1, 2, 3, 4, 5, 6, 7, 8]);
+    expect(demoTables.filter((table) => !table.isActive)).toHaveLength(1);
+    expect(tables.filter((table) => table.shopId === OTHER_SHOP_ID)).toHaveLength(1);
 
     const demoProducts = products.filter((product) => product.shopId === DEMO_SHOP_ID);
     expect(DEMO_CATEGORIES).toHaveLength(4);
     expect(demoProducts).toHaveLength(12);
     expect(OTHER_PRODUCTS).toHaveLength(2);
     expect(demoProducts.some((product) => product.priceMillimes % 1000 !== 0)).toBe(true);
-    expect(demoProducts.some((product) => product.stock === 0)).toBe(true);
-    expect(demoProducts.some((product) => product.stock > 0 && product.stock <= 10)).toBe(true);
+    expect(demoProducts.some((product) => product.stockQty === 0)).toBe(true);
+    expect(demoProducts.some((product) => product.stockQty > 0 && product.stockQty <= 10)).toBe(
+      true,
+    );
+    // One item is sold out today, so the menu shows what is_available is for.
+    expect(demoProducts.filter((product) => !product.isAvailable)).toHaveLength(1);
     const withBarcode = demoProducts.filter((product) => product.barcode !== '');
     expect(withBarcode.length).toBeGreaterThan(demoProducts.length / 2);
     expect(new Set(withBarcode.map((product) => product.barcode)).size).toBe(withBarcode.length);
@@ -419,7 +587,7 @@ describe('default seed', () => {
     const movements = backend.inspect.stockMovements();
 
     expect(movements).toHaveLength(
-      defaultSeed.products.filter((product) => product.stock !== 0).length,
+      defaultSeed.products.filter((product) => product.stockQty !== 0).length,
     );
     expect(movements[0]).toEqual({
       id: 1,
@@ -436,7 +604,7 @@ describe('default seed', () => {
       const sum = movements
         .filter((movement) => movement.productId === product.id)
         .reduce((total, movement) => total + movement.delta, 0);
-      expect(sum, product.name).toBe(product.stock);
+      expect(sum, product.name).toBe(product.stockQty);
     }
   });
 
@@ -446,7 +614,7 @@ describe('default seed', () => {
     await signInAs(first, 'admin');
     await signInAs(second, 'admin');
 
-    const created = await first.catalog.createProduct(dates);
+    const created = await first.catalog.createProduct(makrouds);
 
     expect(created.id).toMatch(UUID_V4);
     await expect(second.catalog.listProducts()).resolves.toEqual(DEMO_PRODUCTS);
@@ -476,7 +644,7 @@ describe('default seed', () => {
         ...defaultSeed,
         profiles: [
           ...defaultSeed.profiles,
-          { userId: idNo(1), shopId: DEMO_SHOP_ID, role: 'cashier', displayName: 'Ghost' },
+          { userId: idNo(1), shopId: DEMO_SHOP_ID, roles: ['cashier'], displayName: 'Ghost' },
         ],
       },
     ];
@@ -489,7 +657,7 @@ describe('default seed', () => {
 });
 
 describe('auth', () => {
-  it('starts anonymous and signs a member in with the name, role and shop of their profile', async () => {
+  it('starts anonymous and signs a member in with the name, roles and shop of their profile', async () => {
     const { backend } = setup();
     const events: AuthState[] = [];
     backend.auth.onStateChange((state) => {
@@ -505,8 +673,8 @@ describe('auth', () => {
     expect(user).toEqual({
       id: ADMIN_ID,
       email: 'admin@demo.local',
-      name: 'Demo Admin',
-      role: 'admin',
+      name: 'Demo Owner',
+      roles: ['admin', 'cashier'],
       shopId: DEMO_SHOP_ID,
     });
     await expect(backend.auth.getState()).resolves.toEqual({ status: 'authenticated', user });
@@ -515,7 +683,7 @@ describe('auth', () => {
       id: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb2',
       email: 'other-cashier@demo.local',
       name: 'Other Cashier',
-      role: 'cashier',
+      roles: ['cashier'],
       shopId: OTHER_SHOP_ID,
     });
   });
@@ -574,7 +742,7 @@ describe('auth', () => {
     });
 
     const cashier = await signInAs(backend, 'cashier');
-    expect(cashier).toMatchObject({ role: 'cashier', shopId: DEMO_SHOP_ID });
+    expect(cashier).toMatchObject({ roles: ['cashier'], shopId: DEMO_SHOP_ID });
     await backend.auth.signOut();
     await expect(backend.auth.getState()).resolves.toEqual({ status: 'anonymous' });
 
@@ -588,7 +756,7 @@ describe('auth', () => {
     const { backend } = setup();
     backend.auth.onStateChange((state) => {
       if (state.status !== 'anonymous') {
-        state.user.role = 'admin';
+        state.user.roles = ['admin'];
       }
     });
     const seen: AuthState[] = [];
@@ -598,28 +766,30 @@ describe('auth', () => {
 
     const user = await signInAs(backend, 'cashier');
     const cashier = structuredClone(user);
-    expect(cashier.role).toBe('cashier');
-    user.role = 'admin';
+    expect(cashier.roles).toEqual(['cashier']);
+    user.roles = ['admin'];
 
     const state = await backend.auth.getState();
     expect(state).toEqual({ status: 'authenticated', user: cashier });
     expect(seen).toEqual([{ status: 'authenticated', user: cashier }]);
-    signedInUser(state).role = 'admin';
+    signedInUser(state).roles = ['admin'];
 
     await expect(backend.auth.getState()).resolves.toEqual({
       status: 'authenticated',
       user: cashier,
     });
-    // The role the ports check is the profile's, not the one on a cached user.
+    // The roles the ports check are the profile's, not the ones on a cached user.
     await failure(backend.settings.updateSettings({ receiptFooter: 'À bientôt' }), 'FORBIDDEN');
   });
 
-  it("offers the demo shop's admin and cashier as demo accounts", () => {
+  it('offers one demo account per role of the demo shop', () => {
     const { backend } = setup();
     expect(backend.kind).toBe('memory');
     expect(backend.demoAccounts).toEqual([
-      { label: 'Admin', email: 'admin@demo.local', password: 'demo-admin-2026' },
+      { label: 'Owner', email: 'admin@demo.local', password: 'demo-admin-2026' },
       { label: 'Cashier', email: 'cashier@demo.local', password: 'demo-cashier-2026' },
+      { label: 'Waiter', email: 'waiter@demo.local', password: 'demo-waiter-2026' },
+      { label: 'Kitchen', email: 'kitchen@demo.local', password: 'demo-kitchen-2026' },
     ]);
   });
 });
@@ -633,7 +803,9 @@ describe('clients', () => {
 
     const created = await backend.catalog.createCategory({ name: 'Surgelés', color: '#6366f1' });
     await expect(cashier.catalog.listCategories()).resolves.toContainEqual(created);
-    await expect(backend.auth.getState()).resolves.toMatchObject({ user: { role: 'admin' } });
+    await expect(backend.auth.getState()).resolves.toMatchObject({
+      user: { roles: ['admin', 'cashier'] },
+    });
 
     faults.failNext('*', new AppError('NETWORK_ERROR', 'Offline'));
     await expect(cashier.catalog.listProducts()).resolves.toHaveLength(12);
@@ -655,7 +827,7 @@ describe('catalog', () => {
     expect(products).toEqual(DEMO_PRODUCTS);
 
     products[0].name = 'Changed';
-    products[0].stock = 999;
+    products[0].stockQty = 999;
 
     await expect(backend.catalog.listProducts()).resolves.toEqual(DEMO_PRODUCTS);
     await expect(backend.catalog.listCategories()).resolves.toEqual(DEMO_CATEGORIES);
@@ -666,19 +838,20 @@ describe('catalog', () => {
 
   it('creates a product with an id, timestamps, availability, the category name and an opening movement', async () => {
     const { backend } = await setupAs('admin');
-    const created = await backend.catalog.createProduct(dates);
+    const created = await backend.catalog.createProduct(makrouds);
 
     expect(created).toEqual({
       id: idNo(1),
-      name: dates.name,
-      priceMillimes: dates.priceMillimes,
-      categoryId: EPICERIE,
-      categoryName: 'Épicerie',
-      barcode: dates.barcode,
-      description: 'Tozeur',
+      name: makrouds.name,
+      priceMillimes: makrouds.priceMillimes,
+      categoryId: SNACKS,
+      categoryName: 'Snacks',
+      barcode: makrouds.barcode,
+      description: 'Kairouan',
       imageUrl: '',
-      stock: 30,
-      available: true,
+      isAvailable: true,
+      trackStock: true,
+      stockQty: 30,
       createdAt: isoAt(1),
       updatedAt: isoAt(1),
     });
@@ -698,7 +871,7 @@ describe('catalog', () => {
     });
 
     const loose = await backend.catalog.createProduct({
-      ...dates,
+      ...makrouds,
       categoryId: null,
       barcode: '',
       openingStock: 0,
@@ -706,8 +879,8 @@ describe('catalog', () => {
     expect(loose).toMatchObject({
       categoryId: null,
       categoryName: null,
-      stock: 0,
-      available: true,
+      stockQty: 0,
+      isAvailable: true,
     });
     expect(backend.inspect.stockMovements()).toHaveLength(14);
   });
@@ -715,31 +888,36 @@ describe('catalog', () => {
   it('updates the fields and moves stock by the delta only, keeping availability, createdAt and position', async () => {
     const { backend } = await setupAs('admin');
     const before = await backend.catalog.listProducts();
-    const index = before.findIndex((product) => product.id === DATES);
-    expect(before[index]).toMatchObject({ stock: 0, available: true });
+    const index = before.findIndex((product) => product.id === MAKROUDS);
+    // Sold out in the seed, and an edit of its other fields leaves it sold out.
+    expect(before[index]).toMatchObject({ stockQty: 0, isAvailable: false });
 
     const input: ProductUpdateInput = {
-      name: 'Dattes Deglet Nour 1 kg',
+      name: 'Makrouds maison',
       priceMillimes: mm(14_500),
-      categoryId: LAITIERS,
+      categoryId: CHAUDES,
       barcode: '',
       description: 'Grand format',
-      imageUrl: 'https://example.com/dattes.jpg',
+      imageUrl: 'https://example.com/makrouds.jpg',
+      // The edit leaves it sold out: the menu toggle is its own write, not part of the form.
+      isAvailable: false,
+      trackStock: true,
       stockDelta: -2,
     };
-    const updated = await backend.catalog.updateProduct(DATES, input);
+    const updated = await backend.catalog.updateProduct(MAKROUDS, input);
 
     expect(updated).toEqual({
-      id: DATES,
+      id: MAKROUDS,
       name: input.name,
       priceMillimes: input.priceMillimes,
-      categoryId: LAITIERS,
-      categoryName: 'Produits laitiers',
+      categoryId: CHAUDES,
+      categoryName: 'Boissons chaudes',
       barcode: '',
       description: 'Grand format',
       imageUrl: input.imageUrl,
-      stock: -2,
-      available: true,
+      isAvailable: false,
+      trackStock: true,
+      stockQty: -2,
       createdAt: before[index].createdAt,
       updatedAt: isoAt(1),
     });
@@ -747,13 +925,13 @@ describe('catalog', () => {
     expect(after[index]).toEqual(updated);
     expect(after).toHaveLength(before.length);
     expect(backend.inspect.stockMovements().at(-1)).toMatchObject({
-      productId: DATES,
+      productId: MAKROUDS,
       delta: -2,
       reason: 'adjustment',
       createdBy: ADMIN_ID,
     });
 
-    const unchanged = await backend.catalog.updateProduct(DATES, { ...input, stockDelta: 0 });
+    const unchanged = await backend.catalog.updateProduct(MAKROUDS, { ...input, stockDelta: 0 });
     expect(unchanged).toEqual({ ...updated, updatedAt: isoAt(2) });
     expect(backend.inspect.stockMovements()).toHaveLength(14);
   });
@@ -762,7 +940,7 @@ describe('catalog', () => {
     const { backend } = await setupAs('admin');
     const error = await failure(
       backend.catalog.createProduct({
-        ...dates,
+        ...makrouds,
         name: '   ',
         priceMillimes: mm(-1),
         openingStock: -1,
@@ -773,7 +951,7 @@ describe('catalog', () => {
     expect(error.message).toBe('Product name is required');
 
     await failure(
-      backend.catalog.updateProduct(HARISSA, { ...harissaEdit, imageUrl: 'not a url' }),
+      backend.catalog.updateProduct(CREME, { ...cremeEdit, imageUrl: 'not a url' }),
       'VALIDATION_ERROR',
     );
     await expect(backend.catalog.listProducts()).resolves.toEqual(DEMO_PRODUCTS);
@@ -783,7 +961,7 @@ describe('catalog', () => {
     const { backend } = await setupAs('admin');
 
     const badId = await failure(
-      backend.catalog.updateProduct('prod-harissa', harissaEdit),
+      backend.catalog.updateProduct('prod-harissa', cremeEdit),
       'VALIDATION_ERROR',
     );
     expect(badId.details).toEqual({ field: 'id' });
@@ -800,18 +978,18 @@ describe('catalog', () => {
 
     for (const categoryId of [idNo(99), GENERAL, 'cat-epicerie']) {
       const error = await failure(
-        backend.catalog.createProduct({ ...dates, categoryId }),
+        backend.catalog.createProduct({ ...makrouds, categoryId }),
         'VALIDATION_ERROR',
       );
       expect(error.details, categoryId).toEqual({ field: 'category_id' });
     }
     // The category is checked before the product.
     await failure(
-      backend.catalog.updateProduct(idNo(99), { ...harissaEdit, categoryId: GENERAL }),
+      backend.catalog.updateProduct(idNo(99), { ...cremeEdit, categoryId: GENERAL }),
       'VALIDATION_ERROR',
     );
     for (const id of [idNo(99), OTHER_PRODUCT]) {
-      const edit = await failure(backend.catalog.updateProduct(id, harissaEdit), 'NOT_FOUND');
+      const edit = await failure(backend.catalog.updateProduct(id, cremeEdit), 'NOT_FOUND');
       expect(edit.details).toEqual({ productId: id });
       const removal = await failure(backend.catalog.deleteProduct(id), 'NOT_FOUND');
       expect(removal.details).toEqual({ productId: id });
@@ -830,41 +1008,41 @@ describe('catalog', () => {
     const waterBarcode = '6194000100015';
 
     const created = await failure(
-      backend.catalog.createProduct({ ...dates, barcode: waterBarcode }),
+      backend.catalog.createProduct({ ...makrouds, barcode: waterBarcode }),
       'VALIDATION_ERROR',
     );
     expect(created.details).toEqual({ field: 'barcode' });
     const updated = await failure(
-      backend.catalog.updateProduct(HARISSA, { ...harissaEdit, barcode: waterBarcode }),
+      backend.catalog.updateProduct(CREME, { ...cremeEdit, barcode: waterBarcode }),
       'VALIDATION_ERROR',
     );
     expect(updated.details).toEqual({ field: 'barcode' });
 
-    await expect(backend.catalog.updateProduct(HARISSA, harissaEdit)).resolves.toMatchObject({
-      barcode: harissaEdit.barcode,
+    await expect(backend.catalog.updateProduct(CREME, cremeEdit)).resolves.toMatchObject({
+      barcode: cremeEdit.barcode,
     });
     await expect(
-      backend.catalog.createProduct({ ...dates, barcode: '9990000000011' }),
+      backend.catalog.createProduct({ ...makrouds, barcode: '9990000000011' }),
     ).resolves.toMatchObject({ barcode: '9990000000011' });
     await backend.catalog.deleteProduct(WATER);
     await expect(
-      backend.catalog.createProduct({ ...dates, barcode: waterBarcode }),
+      backend.catalog.createProduct({ ...makrouds, barcode: waterBarcode }),
     ).resolves.toMatchObject({ barcode: waterBarcode });
   });
 
   it('archives a deleted product: it leaves the list, its movements stay, and it is not archived twice', async () => {
     const { backend } = await setupAs('admin');
-    await backend.catalog.deleteProduct(HARISSA);
+    await backend.catalog.deleteProduct(CREME);
 
     const products = await backend.catalog.listProducts();
-    expect(products.map((product) => product.id)).not.toContain(HARISSA);
+    expect(products.map((product) => product.id)).not.toContain(CREME);
     expect(products).toHaveLength(DEMO_PRODUCTS.length - 1);
     expect(
-      backend.inspect.stockMovements().filter((movement) => movement.productId === HARISSA),
+      backend.inspect.stockMovements().filter((movement) => movement.productId === CREME),
     ).toHaveLength(1);
-    const again = await failure(backend.catalog.deleteProduct(HARISSA), 'NOT_FOUND');
-    expect(again.details).toEqual({ productId: HARISSA });
-    await failure(backend.catalog.updateProduct(HARISSA, harissaEdit), 'NOT_FOUND');
+    const again = await failure(backend.catalog.deleteProduct(CREME), 'NOT_FOUND');
+    expect(again.details).toEqual({ productId: CREME });
+    await failure(backend.catalog.updateProduct(CREME, cremeEdit), 'NOT_FOUND');
   });
 
   it("creates categories in the caller's shop with a trimmed name and allows duplicate names", async () => {
@@ -876,10 +1054,10 @@ describe('catalog', () => {
     expect(second).toMatchObject({ id: idNo(2), name: 'Surgelés' });
     const categories = await backend.catalog.listCategories();
     expect(categories.map((category) => category.id)).toEqual([
-      BOISSONS,
-      LAITIERS,
-      EPICERIE,
-      BOULANGERIE,
+      FRAICHES,
+      CHAUDES,
+      SNACKS,
+      PATISSERIE,
       idNo(1),
       idNo(2),
     ]);
@@ -912,23 +1090,23 @@ describe('catalog', () => {
 
   it('deletes a category and clears it on its products only', async () => {
     const { backend } = await setupAs('admin');
-    await backend.catalog.deleteCategory(BOISSONS);
+    await backend.catalog.deleteCategory(FRAICHES);
 
     const categories = await backend.catalog.listCategories();
-    expect(categories.map((category) => category.id)).not.toContain(BOISSONS);
+    expect(categories.map((category) => category.id)).not.toContain(FRAICHES);
     const products = await backend.catalog.listProducts();
-    expect(DEMO_PRODUCTS.filter((product) => product.categoryId === BOISSONS)).toHaveLength(2);
+    expect(DEMO_PRODUCTS.filter((product) => product.categoryId === FRAICHES)).toHaveLength(3);
     for (const seeded of DEMO_PRODUCTS) {
       const product = products.find((candidate) => candidate.id === seeded.id);
-      if (seeded.categoryId === BOISSONS) {
+      if (seeded.categoryId === FRAICHES) {
         expect(product).toEqual({ ...seeded, categoryId: null, categoryName: null });
       } else {
         expect(product).toEqual(seeded);
       }
     }
 
-    const again = await failure(backend.catalog.deleteCategory(BOISSONS), 'NOT_FOUND');
-    expect(again.details).toEqual({ categoryId: BOISSONS });
+    const again = await failure(backend.catalog.deleteCategory(FRAICHES), 'NOT_FOUND');
+    expect(again.details).toEqual({ categoryId: FRAICHES });
   });
 });
 
@@ -1005,7 +1183,7 @@ describe('access', () => {
   });
 
   it('checks the caller first, then the id, then the input, then the rows', async () => {
-    const nameless: ProductUpdateInput = { ...harissaEdit, name: '' };
+    const nameless: ProductUpdateInput = { ...cremeEdit, name: '' };
     const { backend } = setup();
     await failure(backend.catalog.updateProduct('missing', nameless), 'UNAUTHENTICATED');
 
@@ -1023,7 +1201,7 @@ describe('access', () => {
       'VALIDATION_ERROR',
     );
     expect(input.details).toHaveProperty('issues');
-    await failure(backend.catalog.updateProduct(idNo(99), harissaEdit), 'NOT_FOUND');
+    await failure(backend.catalog.updateProduct(idNo(99), cremeEdit), 'NOT_FOUND');
   });
 
   it('fails with a pending fault before it checks the caller', async () => {
@@ -1031,8 +1209,8 @@ describe('access', () => {
     const offline = new AppError('NETWORK_ERROR', 'Offline');
     faults.failNext('catalog.createProduct', offline);
 
-    await expect(backend.catalog.createProduct(dates)).rejects.toBe(offline);
-    await failure(backend.catalog.createProduct(dates), 'UNAUTHENTICATED');
+    await expect(backend.catalog.createProduct(makrouds)).rejects.toBe(offline);
+    await failure(backend.catalog.createProduct(makrouds), 'UNAUTHENTICATED');
   });
 });
 
@@ -1250,7 +1428,7 @@ describe('ids and unexpected failures', () => {
   });
 
   it('refuses an id source that returns anything but an unused lowercase UUID', async () => {
-    for (const id of ['id-1', idNo(1).replace('0', 'A').toUpperCase(), BOISSONS]) {
+    for (const id of ['id-1', idNo(1).replace('0', 'A').toUpperCase(), FRAICHES]) {
       const backend = createMemoryBackend({ newId: () => id });
       await signInAs(backend, 'admin');
       await failure(
@@ -1277,5 +1455,103 @@ describe('ids and unexpected failures', () => {
     expect(error.message).toBe('crypto.randomUUID is not a function');
     expect(error.cause).toBe(broken);
     await expect(backend.catalog.listCategories()).resolves.toEqual(DEMO_CATEGORIES);
+  });
+});
+
+describe('orders and realtime', () => {
+  it('tells the shop which topic a write changed, until the listener unsubscribes', async () => {
+    const { backend } = await setupAs('waiter');
+    const caisse = await clientAs(backend, CREDENTIALS.cashier);
+    const heard: RealtimeTopic[] = [];
+    const stop = caisse.realtime.subscribe(DEMO_SHOP_ID, (topic) => {
+      heard.push(topic);
+    });
+
+    // The first item on a free table opens its order, so both topics change.
+    const added = await backend.orders.addItem(
+      await orderRecord(1, { tableId: TABLE_1, productId: WATER, qty: 1, note: '' }),
+    );
+    expect(heard).toEqual(['open_orders', 'open_order_items']);
+
+    heard.length = 0;
+    await backend.orders.send(await orderRecord(2, { tableId: TABLE_1 }));
+    await backend.orders.removeItem(
+      await orderRecord(3, { itemId: added.itemId, reason: 'The guest sent it back' }),
+    );
+    expect(heard).toEqual(['open_order_items', 'open_order_items']);
+
+    heard.length = 0;
+    // A send that stamps nothing changes nothing, so it says nothing.
+    await backend.orders.send(await orderRecord(4, { tableId: TABLE_1 }));
+    await backend.orders.addItem(
+      await orderRecord(5, { tableId: TABLE_1, productId: WATER, qty: 1, note: '' }),
+    );
+    expect(heard).toEqual(['open_order_items']);
+
+    heard.length = 0;
+    await caisse.orders.cancelOrder(
+      await orderRecord(6, { tableId: TABLE_1, reason: 'The guests left' }),
+    );
+    expect(heard).toEqual(['open_orders', 'open_order_items']);
+
+    heard.length = 0;
+    const admin = await clientAs(backend, CREDENTIALS.admin);
+    await admin.catalog.createCategory({ name: 'Chicha', color: '#6366f1' });
+    expect(heard).toEqual(['products']);
+
+    stop();
+    await backend.orders.addItem(
+      await orderRecord(7, { tableId: TABLE_1, productId: WATER, qty: 1, note: '' }),
+    );
+    expect(heard).toEqual(['products']);
+  });
+
+  it('keeps a listener of another shop, and one that throws, out of the way of the write', async () => {
+    const { backend } = await setupAs('waiter');
+    const elsewhere: RealtimeTopic[] = [];
+    backend.realtime.subscribe(OTHER_SHOP_ID, (topic) => {
+      elsewhere.push(topic);
+    });
+    const broken = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    backend.realtime.subscribe(DEMO_SHOP_ID, () => {
+      throw new TypeError('This screen is broken');
+    });
+    const heard: RealtimeTopic[] = [];
+    backend.realtime.subscribe(DEMO_SHOP_ID, (topic) => {
+      heard.push(topic);
+    });
+
+    const added = await backend.orders.addItem(
+      await orderRecord(1, { tableId: TABLE_1, productId: WATER, qty: 2, note: '' }),
+    );
+
+    expect(added.status).toBe('created');
+    expect(elsewhere).toEqual([]);
+    expect(heard).toEqual(['open_orders', 'open_order_items']);
+    expect(broken).toHaveBeenCalled();
+    broken.mockRestore();
+    await expect(backend.orders.openOrder(TABLE_1)).resolves.toMatchObject({
+      items: [{ id: added.itemId, qty: 2 }],
+    });
+  });
+
+  it('takes nothing on a retired table and leaves it off the board, but still lists it', async () => {
+    const { backend } = await setupAs('waiter');
+
+    const refused = await failure(
+      backend.orders.addItem(
+        await orderRecord(1, { tableId: RETIRED_TABLE, productId: WATER, qty: 1, note: '' }),
+      ),
+      'TABLE_INACTIVE',
+    );
+
+    expect(refused.details).toEqual({ tableId: RETIRED_TABLE });
+    const tables = await backend.orders.listTables();
+    expect(tables.map((table) => table.id)).toContain(RETIRED_TABLE);
+    const board = await backend.orders.board();
+    expect(board.map((entry) => entry.table.id)).not.toContain(RETIRED_TABLE);
+    expect(board).toHaveLength(tables.filter((table) => table.isActive).length);
+    expect(backend.inspect.orders()).toEqual([]);
+    expect(backend.inspect.orderRecords()).toEqual([]);
   });
 });

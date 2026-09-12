@@ -44,6 +44,12 @@ const REFUSALS: ReadonlySet<ErrorCode> = new Set<ErrorCode>([
   'SESSION_CLOSED',
   'SESSION_ALREADY_OPEN',
   'TERMINAL_SUPERSEDED',
+  // A payment refused because the table moved under it is refused for good: the same lines will
+  // never match again, so its receipt number can be voided and the queue moved on.
+  'ORDER_CHANGED',
+  'ORDER_CLOSED',
+  'ITEM_NOT_FOUND',
+  'TABLE_INACTIVE',
 ]);
 
 export function isRefusal(code: ErrorCode): boolean {
@@ -112,6 +118,14 @@ export function recordErrorMessage(error: OutboxError, record: OutboxRecord | nu
       return 'This terminal already has an open session, so another one cannot be opened.';
     case 'IDEMPOTENCY_CONFLICT':
       return 'The server already holds a different record under this id, so this one can never be recorded.';
+    case 'ORDER_CHANGED':
+      return 'The table changed before this payment arrived: something on it had already been paid, taken off or altered. Read the table again and take the payment afresh.';
+    case 'ORDER_CLOSED':
+      return 'That table was paid or cancelled before this record arrived, so there is nothing left on it to pay for.';
+    case 'ITEM_NOT_FOUND':
+      return 'An item this record pays for is no longer on the table.';
+    case 'TABLE_INACTIVE':
+      return 'That table is out of service, so nothing can be recorded against it.';
     case 'FORBIDDEN': {
       const code = textDetail(error, 'terminalCode');
       if (code !== null) {

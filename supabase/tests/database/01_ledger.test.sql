@@ -45,20 +45,76 @@ exception when others then
 end;
 $$;
 
--- A one-line cash sale of `p_qty` units at `p_unit` on terminal T1.
+-- The caller's first table. Every fixture sale in this file is paid at it.
+create function test_helpers.first_table()
+returns uuid
+language sql
+security definer
+as $$
+  select t.id
+  from public.dining_tables t
+  join public.profiles p on p.shop_id = t.shop_id
+  where p.user_id = auth.uid()
+  order by t.sort_order
+  limit 1
+$$;
+
+-- A sale pays for items of a table's open order, so a payload needs an item to name. This puts one
+-- on that table, opening an order lazily the way order_item_add does, and returns its id. A product
+-- the caller's shop does not have, or a price above the cap an order item may hold, gets a made-up
+-- id instead: record_sale looks at the product and at the price before it looks at the item, and
+-- those tests are about the earlier answer.
+create function test_helpers.order_item(p_product uuid, p_qty integer, p_unit bigint)
+returns uuid
+language plpgsql
+security definer
+as $$
+declare
+  v_shop uuid;
+  v_table uuid;
+  v_order uuid;
+  v_item uuid := gen_random_uuid();
+  v_product public.products;
+begin
+  select p.shop_id into v_shop from public.profiles p where p.user_id = auth.uid();
+  select * into v_product from public.products where id = p_product and shop_id = v_shop;
+  if not found or p_unit > 1000000000000 then
+    return v_item;
+  end if;
+  v_table := test_helpers.first_table();
+  select o.id into v_order from public.open_orders o where o.table_id = v_table and o.status = 'open';
+  if v_order is null then
+    insert into public.open_orders (shop_id, table_id) values (v_shop, v_table) returning id into v_order;
+  end if;
+  insert into public.open_order_items (
+    id, shop_id, order_id, product_id, name_snapshot, unit_price_millimes, qty, added_by, added_at
+  )
+  values (v_item, v_shop, v_order, p_product, v_product.name, p_unit, p_qty, auth.uid(), now());
+  return v_item;
+end;
+$$;
+
+-- A one-line cash sale of `p_qty` units at `p_unit` on terminal C1, paying for one order item. The
+-- amounts keep the key names the app used before the café model, so every call here also proves
+-- that a record queued by the older client is still accepted.
 create function test_helpers.sale(
   p_id uuid, p_seq bigint, p_session uuid, p_epoch integer, p_hash text,
   p_product uuid, p_qty integer, p_unit bigint,
   p_method text default 'cash', p_tendered bigint default null
 )
 returns jsonb
-language sql
+language plpgsql
+security definer
 as $$
-  select jsonb_build_object(
-    'id', p_id, 'kind', 'sale', 'terminal_code', 'T1', 'epoch', p_epoch, 'seq', p_seq, 'session_id', p_session,
+declare
+  v_item uuid := test_helpers.order_item(p_product, p_qty, p_unit);
+begin
+  return jsonb_build_object(
+    'id', p_id, 'kind', 'sale', 'terminal_code', 'C1', 'epoch', p_epoch, 'seq', p_seq, 'session_id', p_session,
+    'table_id', test_helpers.first_table(),
     'created_at', '2026-09-11T10:00:00Z', 'payload_hash', p_hash,
     'lines', jsonb_build_array(jsonb_build_object(
-      'line_no', 1, 'product_id', p_product, 'product_name', 'Test product', 'qty', p_qty,
+      'line_no', 1, 'open_order_item_id', v_item, 'product_id', p_product, 'product_name', 'Test product', 'qty', p_qty,
       'unit_price_millimes', p_unit, 'line_discount_millimes', 0, 'cart_discount_share_millimes', 0,
       'line_total_millimes', p_qty * p_unit
     )),
@@ -68,7 +124,8 @@ as $$
       'tendered_millimes', coalesce(p_tendered, p_qty * p_unit),
       'change_millimes', coalesce(p_tendered, p_qty * p_unit) - p_qty * p_unit
     )
-  )
+  );
+end;
 $$;
 
 -- A refund of `p_qty` units of line 1 of `p_sale` at `p_unit`, paying `p_amount` (qty x unit when null).
@@ -80,7 +137,7 @@ returns jsonb
 language sql
 as $$
   select jsonb_build_object(
-    'id', p_id, 'kind', 'refund', 'terminal_code', 'T1', 'epoch', p_epoch, 'seq', p_seq, 'session_id', p_session,
+    'id', p_id, 'kind', 'refund', 'terminal_code', 'C1', 'epoch', p_epoch, 'seq', p_seq, 'session_id', p_session,
     'created_at', '2026-09-11T11:00:00Z', 'payload_hash', p_hash, 'refunds_sale_id', p_sale,
     'lines', jsonb_build_array(jsonb_build_object(
       'line_no', 1, 'refunds_line_no', 1, 'product_id', p_product, 'product_name', 'Test product', 'qty', -p_qty,
@@ -179,7 +236,7 @@ grant execute on all functions in schema test_helpers to authenticated, anon;
 -- Seed ids
 --   shop A admin   aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1   shop A cashier aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa2
 --   shop B cashier bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb2   water (850, stock 120) 55555555-5555-4555-8555-555555555501
---   shop B product 66666666-6666-4666-8666-666666666601   each shop has a terminal T1 at epoch 0
+--   shop B product 66666666-6666-4666-8666-666666666601   each shop has a terminal C1 at epoch 0
 
 -- Anonymous callers get nothing.
 set local role anon;
@@ -212,12 +269,12 @@ select test_helpers.logout();
 select throws_ok($$ select public.my_profile() $$, 'PT401', 'UNAUTHENTICATED', 'no JWT subject is UNAUTHENTICATED');
 
 select test_helpers.login('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa2');
-select is(public.my_profile() ->> 'role', 'cashier', 'my_profile returns the cashier role');
+select is(public.my_profile() -> 'roles', '["cashier"]'::jsonb, 'my_profile returns the roles the member holds');
 
 -- Sessions
 select is(
   public.open_session(jsonb_build_object(
-    'id', '77777777-7777-4777-8777-777777777701', 'terminal_code', 'T1', 'epoch', 0,
+    'id', '77777777-7777-4777-8777-777777777701', 'terminal_code', 'C1', 'epoch', 0,
     'actor_user_id', 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa2', 'opened_at', '2026-09-11T08:00:00Z',
     'opening_float_millimes', 50000, 'payload_hash', repeat('a', 64)
   )) ->> 'status',
@@ -226,7 +283,7 @@ select is(
 );
 select is(
   public.open_session(jsonb_build_object(
-    'id', '77777777-7777-4777-8777-777777777701', 'terminal_code', 'T1', 'epoch', 0,
+    'id', '77777777-7777-4777-8777-777777777701', 'terminal_code', 'C1', 'epoch', 0,
     'actor_user_id', 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa2', 'opened_at', '2026-09-11T08:00:00Z',
     'opening_float_millimes', 50000, 'payload_hash', repeat('a', 64)
   )) ->> 'status',
@@ -235,21 +292,21 @@ select is(
 );
 select throws_ok(
   $$ select public.open_session(jsonb_build_object(
-    'id', '77777777-7777-4777-8777-777777777701', 'terminal_code', 'T1', 'epoch', 0,
+    'id', '77777777-7777-4777-8777-777777777701', 'terminal_code', 'C1', 'epoch', 0,
     'actor_user_id', 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa2', 'opened_at', '2026-09-11T08:00:00Z',
     'opening_float_millimes', 60000, 'payload_hash', repeat('b', 64))) $$,
   'PT409', 'IDEMPOTENCY_CONFLICT', 'the same session id with another payload is IDEMPOTENCY_CONFLICT'
 );
 select throws_ok(
   $$ select public.open_session(jsonb_build_object(
-    'id', '77777777-7777-4777-8777-777777777702', 'terminal_code', 'T1', 'epoch', 0,
+    'id', '77777777-7777-4777-8777-777777777702', 'terminal_code', 'C1', 'epoch', 0,
     'actor_user_id', 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa2', 'opened_at', '2026-09-11T08:05:00Z',
     'opening_float_millimes', 0, 'payload_hash', repeat('c', 64))) $$,
   'PT409', 'SESSION_ALREADY_OPEN', 'a second open session on the terminal is SESSION_ALREADY_OPEN'
 );
 select throws_ok(
   $$ select public.open_session(jsonb_build_object(
-    'id', '77777777-7777-4777-8777-777777777702', 'terminal_code', 'T1', 'epoch', 0,
+    'id', '77777777-7777-4777-8777-777777777702', 'terminal_code', 'C1', 'epoch', 0,
     'actor_user_id', 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb2', 'opened_at', 'not a time',
     'opening_float_millimes', -1, 'payload_hash', repeat('c', 64))) $$,
   'PT409', 'SESSION_ALREADY_OPEN', 'SESSION_ALREADY_OPEN comes before the actor, float and time checks'
@@ -259,18 +316,18 @@ select throws_ok(
 select is(
   public.record_sale(test_helpers.sale('88888888-8888-4888-8888-888888888801', 1, '77777777-7777-4777-8777-777777777701', 0,
     repeat('d', 64), '55555555-5555-4555-8555-555555555501', 2, 850, 'cash', 2000)) ->> 'receipt_number',
-  'T1-1',
-  'the first sale on T1 is receipt T1-1'
+  'C1-1',
+  'the first sale on C1 is receipt C1-1'
 );
 select is(
   public.record_sale(test_helpers.sale('88888888-8888-4888-8888-888888888801', 1, '77777777-7777-4777-8777-777777777701', 0,
     repeat('d', 64), '55555555-5555-4555-8555-555555555501', 2, 850, 'cash', 2000)),
-  jsonb_build_object('sale_id', '88888888-8888-4888-8888-888888888801', 'receipt_number', 'T1-1', 'status', 'replayed'),
+  jsonb_build_object('sale_id', '88888888-8888-4888-8888-888888888801', 'receipt_number', 'C1-1', 'status', 'replayed'),
   'a replayed record_sale returns replayed with the same receipt number'
 );
 select is((select count(*)::integer from public.sales), 1, 'a replay does not insert a second sale');
 select is(
-  (select stock from public.products where id = '55555555-5555-4555-8555-555555555501'),
+  (select stock_qty from public.products where id = '55555555-5555-4555-8555-555555555501'),
   118,
   'the sale takes 2 units out of stock'
 );
@@ -348,7 +405,7 @@ select throws_ok(
 select throws_ok($$ update public.sales set total_millimes = 0 $$, '42501', null, 'a cashier cannot update sales');
 select throws_ok($$ delete from public.sales $$, '42501', null, 'a cashier cannot delete sales');
 select throws_ok($$ delete from public.sale_lines $$, '42501', null, 'a cashier cannot delete sale lines');
-select throws_ok($$ update public.products set stock = 999 $$, '42501', null, 'a cashier cannot write stock directly');
+select throws_ok($$ update public.products set stock_qty = 999 $$, '42501', null, 'a cashier cannot write stock directly');
 select throws_ok($$ select public.register_terminal('T9') $$, 'PT403', 'FORBIDDEN', 'a cashier cannot register a terminal');
 
 -- Refunds
@@ -372,7 +429,7 @@ select is(
   'a refund of the last unit must pay exactly what is left of the line'
 );
 select is(
-  (select stock from public.products where id = '55555555-5555-4555-8555-555555555501'),
+  (select stock_qty from public.products where id = '55555555-5555-4555-8555-555555555501'),
   119,
   'a refund puts the unit back in stock'
 );
@@ -390,7 +447,7 @@ select throws_ok(
 select throws_ok(
   $$ select public.close_session(jsonb_build_object(
     'id', '99999999-9999-4999-8999-999999999909', 'session_id', '77777777-7777-4777-8777-777777777701',
-    'terminal_code', 'T1', 'epoch', 0, 'actor_user_id', 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb2',
+    'terminal_code', 'C1', 'epoch', 0, 'actor_user_id', 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb2',
     'closed_at', '2026-09-11T20:00:00Z', 'closing_counted_millimes', 0, 'client_z_report', null,
     'payload_hash', repeat('8', 64))) $$,
   'PT403', 'FORBIDDEN', 'closing another shop''s session is FORBIDDEN'
@@ -403,8 +460,8 @@ select throws_ok(
 -- Re-registering the terminal supersedes the old device, but replays still return their outcome
 select test_helpers.login('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1');
 select is(
-  public.register_terminal('t1') - 'terminal_id' - 'open_session',
-  jsonb_build_object('code', 'T1', 'last_seq', 2, 'epoch', 1),
+  public.register_terminal('c1') - 'terminal_id' - 'open_session',
+  jsonb_build_object('code', 'C1', 'last_seq', 2, 'epoch', 1),
   'registration returns the counter to adopt and bumps the epoch'
 );
 select test_helpers.login('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa2');
@@ -429,7 +486,7 @@ select is(
     'error_code', 'VALIDATION_ERROR',
     'reason', 'Refund recorded offline after the unit was already refunded on another till'
   )) ->> 'receipt_number',
-  'T1-3',
+  'C1-3',
   'void_receipt consumes the next receipt number'
 );
 select test_helpers.login('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa2');
@@ -447,7 +504,7 @@ select is(
     'error_code', 'NETWORK_ERROR',
     'reason', 'Never acknowledged on the till'
   )),
-  jsonb_build_object('sale_id', '88888888-8888-4888-8888-888888888801', 'receipt_number', 'T1-1', 'status', 'recorded'),
+  jsonb_build_object('sale_id', '88888888-8888-4888-8888-888888888801', 'receipt_number', 'C1-1', 'status', 'recorded'),
   'voiding the same record that reached the ledger returns recorded'
 );
 select throws_ok(
@@ -472,7 +529,7 @@ select test_helpers.clash('close');
 select is(
   test_helpers.error_of($$ select public.close_session(jsonb_build_object(
     'id', '99999999-9999-4999-8999-999999999901', 'session_id', '77777777-7777-4777-8777-777777777701',
-    'terminal_code', 'T1', 'epoch', 1, 'actor_user_id', 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa2',
+    'terminal_code', 'C1', 'epoch', 1, 'actor_user_id', 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa2',
     'closed_at', '2026-09-11T20:00:00Z', 'closing_counted_millimes', 50800, 'client_z_report', null,
     'payload_hash', repeat('5', 64))) $$),
   jsonb_build_object('code', 'PT409', 'message', 'IDEMPOTENCY_CONFLICT', 'detail', jsonb_build_object('id', '99999999-9999-4999-8999-999999999901')),
@@ -501,7 +558,7 @@ select throws_ok(
 select throws_ok(
   $$ select public.close_session(jsonb_build_object(
     'id', '99999999-9999-4999-8999-999999999906', 'session_id', 'S1',
-    'terminal_code', 'T1', 'epoch', 0, 'actor_user_id', 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa2',
+    'terminal_code', 'C1', 'epoch', 0, 'actor_user_id', 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa2',
     'closed_at', '2026-09-11T20:00:00Z', 'closing_counted_millimes', 0, 'client_z_report', null,
     'payload_hash', repeat('8', 64))) $$,
   'PT409', 'TERMINAL_SUPERSEDED', 'a close from a superseded device is TERMINAL_SUPERSEDED, malformed session id or not'
@@ -511,7 +568,7 @@ select throws_ok(
 select is(
   test_helpers.error_of($$ select public.close_session(jsonb_build_object(
     'id', '99999999-9999-4999-8999-999999999902', 'session_id', '77777777-7777-4777-8777-777777777799',
-    'terminal_code', 'T1', 'epoch', 1, 'actor_user_id', 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa2',
+    'terminal_code', 'C1', 'epoch', 1, 'actor_user_id', 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa2',
     'closed_at', '2026-09-11T20:00:00Z', 'closing_counted_millimes', 0, 'client_z_report', null,
     'payload_hash', repeat('6', 64))) $$),
   jsonb_build_object('code', 'PT404', 'message', 'NOT_FOUND', 'detail', jsonb_build_object('session_id', '77777777-7777-4777-8777-777777777799')),
@@ -520,7 +577,7 @@ select is(
 select is(
   (public.close_session(jsonb_build_object(
     'id', '99999999-9999-4999-8999-999999999901', 'session_id', '77777777-7777-4777-8777-777777777701',
-    'terminal_code', 'T1', 'epoch', 1, 'actor_user_id', 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa2',
+    'terminal_code', 'C1', 'epoch', 1, 'actor_user_id', 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa2',
     'closed_at', '2026-09-11T20:00:00Z', 'closing_counted_millimes', 50800, 'client_z_report', null,
     'payload_hash', repeat('5', 64)
   )) -> 'z_report') - 'session_id',
@@ -538,7 +595,7 @@ select is(
 select is(
   public.close_session(jsonb_build_object(
     'id', '99999999-9999-4999-8999-999999999901', 'session_id', '77777777-7777-4777-8777-777777777701',
-    'terminal_code', 'T1', 'epoch', 1, 'actor_user_id', 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa2',
+    'terminal_code', 'C1', 'epoch', 1, 'actor_user_id', 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa2',
     'closed_at', '2026-09-11T20:00:00Z', 'closing_counted_millimes', 50800, 'client_z_report', null,
     'payload_hash', repeat('5', 64)
   )) ->> 'status',
@@ -548,7 +605,7 @@ select is(
 select throws_ok(
   $$ select public.close_session(jsonb_build_object(
     'id', '99999999-9999-4999-8999-999999999903', 'session_id', '77777777-7777-4777-8777-777777777701',
-    'terminal_code', 'T1', 'epoch', 0, 'actor_user_id', 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa2',
+    'terminal_code', 'C1', 'epoch', 0, 'actor_user_id', 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa2',
     'closed_at', '2026-09-11T21:00:00Z', 'closing_counted_millimes', 50800, 'client_z_report', null,
     'payload_hash', repeat('a', 64))) $$,
   'PT409', 'TERMINAL_SUPERSEDED', 'a new close from the superseded device is TERMINAL_SUPERSEDED before the session checks'
@@ -556,7 +613,7 @@ select throws_ok(
 select throws_ok(
   $$ select public.close_session(jsonb_build_object(
     'id', '99999999-9999-4999-8999-999999999904', 'session_id', '77777777-7777-4777-8777-777777777701',
-    'terminal_code', 'T1', 'epoch', 1, 'actor_user_id', 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa2',
+    'terminal_code', 'C1', 'epoch', 1, 'actor_user_id', 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa2',
     'closed_at', '2026-09-11T21:00:00Z', 'closing_counted_millimes', 50800, 'client_z_report', null,
     'payload_hash', repeat('b', 64))) $$,
   'PT409', 'SESSION_CLOSED', 'a new close of a closed session is SESSION_CLOSED'
@@ -564,7 +621,7 @@ select throws_ok(
 select test_helpers.clash('open');
 select is(
   test_helpers.error_of($$ select public.open_session(jsonb_build_object(
-    'id', '77777777-7777-4777-8777-777777777703', 'terminal_code', 'T1', 'epoch', 1,
+    'id', '77777777-7777-4777-8777-777777777703', 'terminal_code', 'C1', 'epoch', 1,
     'actor_user_id', 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa2', 'opened_at', '2026-09-12T08:00:00Z',
     'opening_float_millimes', 0, 'payload_hash', repeat('c', 64))) $$),
   jsonb_build_object('code', 'PT409', 'message', 'IDEMPOTENCY_CONFLICT', 'detail', jsonb_build_object('id', '77777777-7777-4777-8777-777777777703')),
@@ -587,7 +644,7 @@ select throws_ok(
 select is(
   (select last_seq from public.terminals where id = '33333333-3333-4333-8333-333333333331'),
   3::bigint,
-  'every receipt number up to T1-3 is accounted for'
+  'every receipt number up to C1-3 is accounted for'
 );
 
 -- Prices stop at one billion dinars, the bound src/ports/catalog.ts reads rows back with
@@ -606,7 +663,7 @@ select is(
   'a product one millime above the cap is VALIDATION_ERROR with price_millimes'
 );
 select public.open_session(jsonb_build_object(
-  'id', '77777777-7777-4777-8777-777777777704', 'terminal_code', 'T1', 'epoch', 1,
+  'id', '77777777-7777-4777-8777-777777777704', 'terminal_code', 'C1', 'epoch', 1,
   'actor_user_id', 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1', 'opened_at', '2026-09-12T08:00:00Z',
   'opening_float_millimes', 0, 'payload_hash', repeat('d', 64)
 ));

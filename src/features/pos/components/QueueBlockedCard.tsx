@@ -49,7 +49,7 @@ export function QueueBlockedCard({ record, waiting }: QueueBlockedCardProps) {
             </p>
           )}
           <Button asChild className="w-full" size="lg">
-            <Link to="/pos/conflicts">Review the queue</Link>
+            <Link to="/caisse/conflicts">Review the queue</Link>
           </Button>
         </CardContent>
       </Card>

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { addItem, emptyCart, setCartDiscount } from '@/features/pos/cart';
+import { addItem, emptyCart, setCartDiscount } from '@/features/caisse/cart';
 import { buildRefundRecord, buildSaleRecord, receiptNumber } from '@/features/sales/records';
 import { add, mm, neg, ZERO } from '@/lib/money';
 import type { Sale, SaleRecord } from '@/ports';
@@ -19,6 +19,7 @@ const envelope = {
   sessionId: 'session-1',
   createdAt: AT,
   terminal: { terminalCode: 'T1', epoch: 0 },
+  tableId: null,
 };
 
 const harissa = { id: 'p-harissa', name: 'Harissa Cap Bon 380 g', priceMillimes: mm(1350) };
@@ -33,16 +34,23 @@ function view(record: SaleRecord): Sale {
     terminalId: 'terminal-1',
     terminalCode: record.terminalCode,
     sessionId: record.sessionId,
+    tableId: record.tableId,
+    tableName: null,
     refundsSaleId: record.refundsSaleId,
     paymentMethod: record.payment.method,
-    subtotalMillimes: record.subtotalMillimes,
-    discountMillimes: record.discountMillimes,
+    cartDiscountMillimes: record.cartDiscountMillimes,
     totalMillimes: record.totalMillimes,
     tenderedMillimes: record.payment.tenderedMillimes,
     changeMillimes: record.payment.changeMillimes,
     createdAt: record.createdAt,
     receivedAt: record.createdAt,
-    lines: record.lines.map((line) => ({ ...line, refundedQty: 0, refundedMillimes: ZERO })),
+    // The ledger gives every stored line an id; a refund line names the one it gives back.
+    lines: record.lines.map((line) => ({
+      ...line,
+      id: `${record.id}-${line.lineNo}`,
+      refundedQty: 0,
+      refundedMillimes: ZERO,
+    })),
   };
 }
 
@@ -188,7 +196,7 @@ describe('refundPreview', () => {
       'card',
     );
 
-    expect(record.lines.map((line) => neg(line.lineTotalMillimes))).toEqual(
+    expect(record.lines.map((line) => neg(line.netMillimes))).toEqual(
       preview.lines.map((line) => line.amountMillimes),
     );
     expect(record.totalMillimes).toBe(neg(preview.totalMillimes));

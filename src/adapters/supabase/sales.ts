@@ -17,9 +17,10 @@ import { parseInput, parseOutput } from './validate';
 import { fromWire, toWire } from './wire';
 
 const SALE_COLUMNS =
-  'id, kind, seq, receipt_number, terminal_id, session_id, refunds_sale_id, payment_method, subtotal_millimes, discount_millimes, total_millimes, tendered_millimes, change_millimes, created_at, received_at, terminals(code), sale_lines(line_no, product_id, product_name, qty, unit_price_millimes, line_discount_millimes, cart_discount_share_millimes, line_total_millimes, refunds_line_no)';
+  'id, kind, seq, receipt_number, terminal_id, session_id, table_id, refunds_sale_id, payment_method, cart_discount_millimes, total_millimes, tendered_millimes, change_millimes, created_at, received_at, terminals(code), dining_tables(name), sale_lines(id, line_no, open_order_item_id, product_id, product_name, qty, unit_price_millimes, line_discount_millimes, line_discount_reason, allocated_discount_millimes, line_total_millimes, refunds_sale_line_id)';
 
-const REFUND_COLUMNS = 'refunds_sale_id, sale_lines(refunds_line_no, qty, line_total_millimes)';
+const REFUND_COLUMNS =
+  'refunds_sale_id, sale_lines(refunds_sale_line_id, qty, line_total_millimes)';
 
 /** Sale ids per refund lookup, which keeps its URL far below any proxy's length limit. */
 const REFUND_LOOKUP_BATCH = 50;
@@ -34,10 +35,10 @@ type SaleRow = Pick<
   | 'receipt_number'
   | 'terminal_id'
   | 'session_id'
+  | 'table_id'
   | 'refunds_sale_id'
   | 'payment_method'
-  | 'subtotal_millimes'
-  | 'discount_millimes'
+  | 'cart_discount_millimes'
   | 'total_millimes'
   | 'tendered_millimes'
   | 'change_millimes'
@@ -45,13 +46,14 @@ type SaleRow = Pick<
   | 'received_at'
 > & {
   readonly terminals: { readonly code: string } | null;
+  readonly dining_tables: { readonly name: string } | null;
   readonly sale_lines: readonly SaleLineRow[];
 };
 
 type RefundRow = Pick<Tables<'sales'>, 'refunds_sale_id'> & {
   readonly sale_lines: readonly Pick<
     Tables<'sale_lines'>,
-    'refunds_line_no' | 'qty' | 'line_total_millimes'
+    'refunds_sale_line_id' | 'qty' | 'line_total_millimes'
   >[];
 };
 
@@ -60,24 +62,16 @@ interface Refunded {
   readonly millimes: Millimes;
 }
 
-function lineKey(saleId: string, lineNo: number): string {
-  return `${saleId}#${lineNo}`;
-}
-
-/** What refunds took back of each sale line, keyed by `lineKey`, as positive units and millimes. */
+/** What refunds took back of each sale line, keyed by the line's own id, as positive amounts. */
 function refundedByLine(refunds: readonly RefundRow[]): Map<string, Refunded> {
   const refunded = new Map<string, Refunded>();
   for (const refund of refunds) {
-    if (refund.refunds_sale_id === null) {
-      continue;
-    }
     for (const line of refund.sale_lines) {
-      if (line.refunds_line_no === null) {
+      if (line.refunds_sale_line_id === null) {
         continue;
       }
-      const key = lineKey(refund.refunds_sale_id, line.refunds_line_no);
-      const earlier = refunded.get(key) ?? { qty: 0, millimes: ZERO };
-      refunded.set(key, {
+      const earlier = refunded.get(line.refunds_sale_line_id) ?? { qty: 0, millimes: ZERO };
+      refunded.set(line.refunds_sale_line_id, {
         qty: earlier.qty - line.qty,
         millimes: add(earlier.millimes, neg(mm(line.line_total_millimes))),
       });
@@ -91,17 +85,21 @@ function toSale(row: SaleRow, refunded: ReadonlyMap<string, Refunded>): Sale {
     .sort((a, b) => a.line_no - b.line_no)
     .map((line) => {
       // Only sales are refunded; the lines of a refund take nothing back.
-      const taken = row.kind === 'sale' ? refunded.get(lineKey(row.id, line.line_no)) : undefined;
+      const taken = row.kind === 'sale' ? refunded.get(line.id) : undefined;
       return {
+        id: line.id,
         lineNo: line.line_no,
+        openOrderItemId: line.open_order_item_id,
         productId: line.product_id,
         productName: line.product_name,
         qty: line.qty,
         unitPriceMillimes: line.unit_price_millimes,
         lineDiscountMillimes: line.line_discount_millimes,
-        cartDiscountShareMillimes: line.cart_discount_share_millimes,
-        lineTotalMillimes: line.line_total_millimes,
-        refundsLineNo: line.refunds_line_no,
+        lineDiscountReason: line.line_discount_reason,
+        allocatedDiscountMillimes: line.allocated_discount_millimes,
+        // `net_millimes` in the payload and in docs/spec.md; the column kept its original name.
+        netMillimes: line.line_total_millimes,
+        refundsSaleLineId: line.refunds_sale_line_id,
         refundedQty: taken?.qty ?? 0,
         refundedMillimes: taken?.millimes ?? ZERO,
       };
@@ -116,10 +114,11 @@ function toSale(row: SaleRow, refunded: ReadonlyMap<string, Refunded>): Sale {
       terminalId: row.terminal_id,
       terminalCode: row.terminals?.code ?? '',
       sessionId: row.session_id,
+      tableId: row.table_id,
+      tableName: row.dining_tables?.name ?? null,
       refundsSaleId: row.refunds_sale_id,
       paymentMethod: row.payment_method,
-      subtotalMillimes: row.subtotal_millimes,
-      discountMillimes: row.discount_millimes,
+      cartDiscountMillimes: row.cart_discount_millimes,
       totalMillimes: row.total_millimes,
       tenderedMillimes: row.tendered_millimes,
       changeMillimes: row.change_millimes,

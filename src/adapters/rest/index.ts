@@ -3,12 +3,16 @@ import type { Backend } from '@/ports';
 import { createRestAuth } from './auth';
 import { createRestCatalog } from './catalog';
 import { createRestClient } from './http';
+import { createRestOrders } from './orders';
+import { createRestRealtime, type RestRealtimeOptions } from './realtime';
 import { createRestSales } from './sales';
 import { createSessionStore, type StorageLike } from './session';
 import { createRestSessions } from './sessions';
 import { createRestSettings } from './settings';
 import { createRestTerminals } from './terminals';
 
+export { pollRetryDelayMs } from './realtime';
+export type { RestRealtimeOptions } from './realtime';
 export { REST_SESSION_STORAGE_KEY } from './session';
 export type { RestSession, RestSessionStore, StorageLike } from './session';
 
@@ -24,6 +28,8 @@ export interface RestBackendOptions {
   readonly storage?: () => StorageLike;
   /** The key the session is kept under. Default: REST_SESSION_STORAGE_KEY. */
   readonly storageKey?: string;
+  /** How often live updates are polled for. Default: the values in realtime.ts. */
+  readonly realtime?: RestRealtimeOptions;
 }
 
 /**
@@ -46,6 +52,9 @@ export function createRestBackend(options: RestBackendOptions = {}): Backend {
     kind: 'rest',
     auth: createRestAuth({ client, session }),
     catalog: createRestCatalog(client),
+    orders: createRestOrders(client),
+    // No socket: this service is asked what changed, so live updates are a poll (realtime.ts).
+    realtime: createRestRealtime(client, options.realtime),
     sales: createRestSales(client),
     sessions: createRestSessions(client),
     settings: createRestSettings(client),

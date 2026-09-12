@@ -25,7 +25,11 @@ export function LoginPage() {
     try {
       const user = await signIn(credentials);
       toast.success('Login successful!');
-      void navigate(homePathFor(user.role));
+      const home = homePathFor(user);
+      if (home !== null) {
+        void navigate(home);
+      }
+      // With no face for these roles the landing page stays put and says so.
     } catch (error) {
       toast.error(errorMessage(error, 'Login failed'));
     } finally {

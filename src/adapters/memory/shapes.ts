@@ -17,16 +17,28 @@ import {
  */
 
 const saleLineInput = z.object({
+  /** The row id the device that wrote the line gave it; a refund names a line by it. */
+  id: z.string(),
   lineNo: z.number().int(),
+  /**
+   * The item of an open order this line pays, for a table payment; null on a counter sale — a
+   * coffee taken away, which sat on no table — and on every refund line.
+   */
+  openOrderItemId: z.string().nullable(),
   productId: z.string(),
   productName: z.string(),
   qty: z.number().int(),
   unitPriceMillimes: millimesSchema,
   lineDiscountMillimes: millimesSchema,
-  cartDiscountShareMillimes: millimesSchema,
-  lineTotalMillimes: millimesSchema,
-  refundsLineNo: z.number().int().nullable(),
+  lineDiscountReason: z.string().nullable(),
+  allocatedDiscountMillimes: millimesSchema,
+  netMillimes: millimesSchema,
+  /** The stored line a refund line gives back, by id; null on a sale line. */
+  refundsSaleLineId: z.string().nullable(),
 });
+
+/** A line as a device wrote it, before record_sale's rules have read it. */
+export type SaleLineInput = z.infer<typeof saleLineInput>;
 
 export const saleRecordInput = z.object({
   id: recordIdSchema,
@@ -35,10 +47,11 @@ export const saleRecordInput = z.object({
   epoch: z.number().int(),
   seq: z.number().int(),
   sessionId: z.string(),
+  /** The table being paid, or null for a counter sale and for a refund. */
+  tableId: z.string().nullable(),
   createdAt: z.string(),
   lines: z.array(saleLineInput),
-  subtotalMillimes: millimesSchema,
-  discountMillimes: millimesSchema,
+  cartDiscountMillimes: millimesSchema,
   totalMillimes: millimesSchema,
   payment: z.object({
     method: paymentMethodSchema,
@@ -74,5 +87,42 @@ export const closeSessionInput = z.object({
 export const voidReceiptInput = z.object({
   record: saleRecordInput,
   errorCode: z.string().min(1),
+  reason: z.string(),
+});
+
+/*
+ * The order records a waiter's phone, the caisse and the kitchen write. Same rule as above: the
+ * types are checked here and the values where the operation checks them, so a replay answers before
+ * a quantity or a reason can refuse it.
+ */
+
+const orderRecordInput = {
+  id: recordIdSchema,
+  deviceId: z.string(),
+  createdAt: z.string(),
+  payloadHash: payloadHashSchema,
+};
+
+export const orderItemAddInput = z.object({
+  ...orderRecordInput,
+  tableId: z.string(),
+  productId: z.string(),
+  qty: z.number().int(),
+  note: z.string(),
+});
+
+export const orderItemRemoveInput = z.object({
+  ...orderRecordInput,
+  itemId: z.string(),
+  reason: z.string(),
+});
+
+export const orderSendInput = z.object({ ...orderRecordInput, tableId: z.string() });
+
+export const orderItemPrepareInput = z.object({ ...orderRecordInput, itemId: z.string() });
+
+export const orderCancelInput = z.object({
+  ...orderRecordInput,
+  tableId: z.string(),
   reason: z.string(),
 });

@@ -153,6 +153,8 @@ function envelopeFor(
     sessionId: SESSION_ID,
     createdAt,
     terminal: { terminalCode: registration.code, epoch: registration.epoch },
+    // The outbox tests sell across the counter: what they are about is the queue, not the room.
+    tableId: null,
   };
 }
 
@@ -176,16 +178,22 @@ function saleView(record: SaleRecord): Sale {
     terminalId: TERMINAL_ID,
     terminalCode: record.terminalCode,
     sessionId: record.sessionId,
+    tableId: record.tableId,
+    tableName: null,
     refundsSaleId: record.refundsSaleId,
     paymentMethod: record.payment.method,
-    subtotalMillimes: record.subtotalMillimes,
-    discountMillimes: record.discountMillimes,
+    cartDiscountMillimes: record.cartDiscountMillimes,
     totalMillimes: record.totalMillimes,
     tenderedMillimes: record.payment.tenderedMillimes,
     changeMillimes: record.payment.changeMillimes,
     createdAt: record.createdAt,
     receivedAt: record.createdAt,
-    lines: record.lines.map((line) => ({ ...line, refundedQty: 0, refundedMillimes: mm(0) })),
+    lines: record.lines.map((line) => ({
+      ...line,
+      id: `${record.id}-${line.lineNo}`,
+      refundedQty: 0,
+      refundedMillimes: mm(0),
+    })),
   };
 }
 

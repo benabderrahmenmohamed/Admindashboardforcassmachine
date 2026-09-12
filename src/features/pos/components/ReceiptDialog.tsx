@@ -7,7 +7,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { SyncBadge } from '@/features/sales/components/SyncBadge';
-import { formatTND, neg, type Millimes } from '@/lib/money';
+import { add, formatTND, neg, type Millimes } from '@/lib/money';
 import { syncStatus, type NumberedRecord } from '../queue';
 import { receiptOf, syncStatusMessage } from '../recording';
 
@@ -64,16 +64,20 @@ function ReceiptBody({ record }: { readonly record: NumberedRecord }) {
                 {Math.abs(line.qty)} × {formatTND(line.unitPriceMillimes)}
               </span>
             </span>
-            <span className="text-right font-medium">{amount(line.lineTotalMillimes)}</span>
+            <span className="text-right font-medium">{amount(line.netMillimes)}</span>
           </li>
         ))}
       </ul>
 
       <dl className="space-y-1 text-sm">
-        {payload.discountMillimes !== 0 && (
+        {payload.cartDiscountMillimes !== 0 && (
           <>
-            <ReceiptRow label="Subtotal" value={amount(payload.subtotalMillimes)} />
-            <ReceiptRow label="Discount" value={amount(payload.discountMillimes)} />
+            {/* The subtotal is what the lines came to before the cart discount was shared out. */}
+            <ReceiptRow
+              label="Subtotal"
+              value={amount(add(payload.totalMillimes, payload.cartDiscountMillimes))}
+            />
+            <ReceiptRow label="Discount" value={amount(payload.cartDiscountMillimes)} />
           </>
         )}
         <ReceiptRow

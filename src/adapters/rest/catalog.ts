@@ -6,6 +6,8 @@ import {
   productCreateInputSchema,
   productSchema,
   productUpdateInputSchema,
+  stockAdjustmentResultSchema,
+  stockAdjustmentSchema,
   type CatalogPort,
 } from '@/ports';
 import type { RestClient } from './http';
@@ -14,9 +16,12 @@ import {
   fromWire,
   toWire,
   type WireCategoryCreate,
+  type WireProductAvailability,
   type WireProductCreate,
   type WireProductUpdate,
+  type WireStockAdjustment,
 } from './wire';
+import { checkWriteOutcome } from './writes';
 
 const productsSchema = z.array(productSchema);
 const categoriesSchema = z.array(categorySchema);
@@ -55,6 +60,28 @@ export function createRestCatalog(client: RestClient): CatalogPort {
 
     async deleteProduct(id) {
       await client.request('DELETE', `/products/${pathSegment(id, 'the product id')}`);
+    },
+
+    async setAvailability(productId, isAvailable) {
+      // Its own path rather than an edit: the daily sold-out toggle belongs to the floor as well as
+      // to the admin, and it must touch nothing else about the product.
+      const response = await client.request(
+        'PUT',
+        `/products/${pathSegment(productId, 'the product id')}/availability`,
+        { body: toWire<WireProductAvailability>({ isAvailable }) },
+      );
+      return fromWire(productSchema, response.body, 'the product');
+    },
+
+    async adjustStock(adjustment) {
+      const record = parseOrInvalid(stockAdjustmentSchema, adjustment, 'the stock correction');
+      const response = await client.request('POST', '/stock-adjustments', {
+        body: toWire<WireStockAdjustment>(record),
+      });
+      const result = fromWire(stockAdjustmentResultSchema, response.body, 'the stock correction');
+      // A correction is a record like any other: 201 counted it now, 200 says it was already counted.
+      checkWriteOutcome(response.status, result.status, 'created', 'a stock correction');
+      return result;
     },
 
     async listCategories() {

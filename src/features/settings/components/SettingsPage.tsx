@@ -4,6 +4,7 @@ import { ErrorState, LoadingState } from '@/components/feedback';
 import { useCurrentUser } from '@/features/auth/hooks/useAuth';
 import { TerminalCard } from '@/features/terminal/components/TerminalCard';
 import { errorMessage } from '@/lib/errors';
+import { hasRole } from '@/ports';
 import { useSettings } from '../hooks/useSettings';
 import { SettingsForm } from './SettingsForm';
 
@@ -37,7 +38,7 @@ export function SettingsPage() {
 
       <div className="space-y-6">
         {/* Only an admin registers a device; the route already keeps cashiers out. */}
-        {user.role === 'admin' && <TerminalCard />}
+        {hasRole(user, ['admin']) && <TerminalCard />}
         <SettingsForm settings={settingsQuery.data} />
       </div>
     </div>

@@ -3,6 +3,7 @@ import {
   categoryInputSchema,
   productCreateInputSchema,
   productUpdateInputSchema,
+  stockAdjustmentSchema,
   type CatalogPort,
   type Category,
   type Product,
@@ -15,14 +16,19 @@ import {
   parseInput,
   parseUuid,
   perform,
+  replayOf,
   requireProfile,
+  storedProductId,
   type MemoryContext,
 } from './support';
 
 /**
- * The caller's shop's products and categories, as save_product, archive_product and the categories
+ * The caller's shop's menu and categories, as save_product, archive_product and the categories
  * table behave: members read them, only an admin changes them. Stock changes only through
  * movements, and deleting a product archives it.
+ *
+ * Every change tells the shop's 'products' topic, so a waiter's menu and the caisse follow a price
+ * or an availability change without reloading; a category change moves the menu too.
  */
 export function createMemoryCatalog(context: MemoryContext): CatalogPort {
   const { store } = context;
@@ -38,8 +44,9 @@ export function createMemoryCatalog(context: MemoryContext): CatalogPort {
       barcode: row.barcode,
       description: row.description,
       imageUrl: row.imageUrl,
-      stock: row.stock,
-      available: row.available,
+      isAvailable: row.isAvailable,
+      trackStock: row.trackStock,
+      stockQty: row.stockQty,
       createdAt: row.createdAt,
       updatedAt: row.updatedAt,
     };
@@ -117,8 +124,9 @@ export function createMemoryCatalog(context: MemoryContext): CatalogPort {
           barcode: fields.barcode,
           description: fields.description,
           imageUrl: fields.imageUrl,
-          stock: 0,
-          available: true,
+          stockQty: 0,
+          isAvailable: fields.isAvailable,
+          trackStock: fields.trackStock,
           archivedAt: null,
           createdAt: timestamp,
           updatedAt: timestamp,
@@ -134,6 +142,7 @@ export function createMemoryCatalog(context: MemoryContext): CatalogPort {
           createdBy: profile.userId,
           createdAt: timestamp,
         });
+        context.emit(profile.shopId, 'products');
         return productView(stocked);
       }),
 
@@ -146,7 +155,7 @@ export function createMemoryCatalog(context: MemoryContext): CatalogPort {
         const existing = liveProduct(profile, productId);
         requireFreeBarcode(profile, fields.barcode, productId);
         const timestamp = context.now().toISOString();
-        // Stock, availability and createdAt stay; the delta below is the only stock change.
+        // Stock and createdAt stay; the delta below is the only stock change.
         store.products.set(productId, {
           ...existing,
           categoryId,
@@ -155,6 +164,8 @@ export function createMemoryCatalog(context: MemoryContext): CatalogPort {
           barcode: fields.barcode,
           description: fields.description,
           imageUrl: fields.imageUrl,
+          isAvailable: fields.isAvailable,
+          trackStock: fields.trackStock,
           updatedAt: timestamp,
         });
         const stocked = moveStock(store, {
@@ -167,7 +178,66 @@ export function createMemoryCatalog(context: MemoryContext): CatalogPort {
           createdBy: profile.userId,
           createdAt: timestamp,
         });
+        context.emit(profile.shopId, 'products');
         return productView(stocked);
+      }),
+
+    setAvailability: (productId, isAvailable) =>
+      perform(context, 'catalog.setAvailability', () => {
+        // The floor uses this: a dish runs out and leaves the menu without anyone touching a price.
+        const profile = requireProfile(context, ['admin', 'cashier', 'waiter']);
+        const id = parseUuid(productId, 'product_id');
+        const existing = liveProduct(profile, id);
+        const row: ProductRow = {
+          ...existing,
+          isAvailable,
+          updatedAt: context.now().toISOString(),
+        };
+        store.products.set(id, row);
+        context.emit(profile.shopId, 'products');
+        return productView(row);
+      }),
+
+    adjustStock: (adjustment) =>
+      perform(context, 'catalog.adjustStock', () => {
+        const profile = requireProfile(context, ['admin']);
+        const input = parseInput(stockAdjustmentSchema, adjustment);
+        const id = parseUuid(input.id, 'id');
+        const replay = replayOf(store, profile, 'stock_adjustment', id, input.payloadHash);
+        if (replay) {
+          return {
+            status: 'replayed' as const,
+            productId: storedProductId(replay),
+            stockQty: replay.stockQty ?? 0,
+          };
+        }
+        const existing = liveProduct(profile, parseUuid(input.productId, 'product_id'));
+        const timestamp = context.now().toISOString();
+        const moved = moveStock(store, {
+          shopId: profile.shopId,
+          productId: existing.id,
+          delta: input.qtyDelta,
+          reason: 'adjustment',
+          saleId: null,
+          note: input.reason,
+          createdBy: profile.userId,
+          createdAt: timestamp,
+        });
+        store.orderRecords.set(id, {
+          id,
+          shopId: profile.shopId,
+          kind: 'stock_adjustment',
+          deviceId: '',
+          payloadHash: input.payloadHash,
+          orderId: null,
+          itemId: null,
+          affected: 1,
+          productId: moved.id,
+          stockQty: moved.stockQty,
+          receivedAt: timestamp,
+        });
+        context.emit(profile.shopId, 'products');
+        return { status: 'created' as const, productId: moved.id, stockQty: moved.stockQty };
       }),
 
     deleteProduct: (id) =>
@@ -177,6 +247,7 @@ export function createMemoryCatalog(context: MemoryContext): CatalogPort {
         const existing = liveProduct(profile, productId);
         const timestamp = context.now().toISOString();
         store.products.set(productId, { ...existing, archivedAt: timestamp, updatedAt: timestamp });
+        context.emit(profile.shopId, 'products');
       }),
 
     listCategories: () =>
@@ -200,6 +271,7 @@ export function createMemoryCatalog(context: MemoryContext): CatalogPort {
           createdAt: context.now().toISOString(),
         };
         store.categories.set(row.id, row);
+        context.emit(profile.shopId, 'products');
         return categoryView(row);
       }),
 
@@ -219,6 +291,7 @@ export function createMemoryCatalog(context: MemoryContext): CatalogPort {
             store.products.set(product.id, { ...product, categoryId: null });
           }
         }
+        context.emit(profile.shopId, 'products');
       }),
   };
 }

@@ -30,15 +30,18 @@ export function meta(overrides: Partial<OutboxMeta> = {}): OutboxMeta {
 
 export function saleLine(overrides: Partial<SaleLine> = {}): SaleLine {
   return {
+    id: 'line-1',
     lineNo: 1,
-    productId: 'p-harissa',
-    productName: 'Harissa Cap Bon 380 g',
+    openOrderItemId: null,
+    productId: 'p-express',
+    productName: 'Café express',
     qty: 1,
-    unitPriceMillimes: mm(1350),
+    unitPriceMillimes: mm(1900),
     lineDiscountMillimes: ZERO,
-    cartDiscountShareMillimes: ZERO,
-    lineTotalMillimes: mm(1350),
-    refundsLineNo: null,
+    lineDiscountReason: null,
+    allocatedDiscountMillimes: ZERO,
+    netMillimes: mm(1900),
+    refundsSaleLineId: null,
     ...overrides,
   };
 }
@@ -77,12 +80,13 @@ export function saleRecord(
     readonly method?: PaymentMethod;
     readonly lines?: readonly SaleLine[];
     readonly refundsSaleId?: string | null;
+    readonly tableId?: string | null;
   },
 ): NumberedRecord {
   const base = shell(input, uuid(input.seq));
   const kind = input.kind ?? 'sale';
   const lines = input.lines ?? [saleLine()];
-  const total = add(...lines.map((line) => line.lineTotalMillimes));
+  const total = add(...lines.map((line) => line.netMillimes));
   return {
     ...base,
     kind,
@@ -95,10 +99,10 @@ export function saleRecord(
       epoch: 2,
       seq: input.seq,
       sessionId: input.sessionId ?? SESSION_ID,
+      tableId: input.tableId ?? null,
       createdAt: AT,
       lines: [...lines],
-      subtotalMillimes: total,
-      discountMillimes: ZERO,
+      cartDiscountMillimes: ZERO,
       totalMillimes: total,
       payment: {
         method: input.method ?? 'cash',
@@ -118,7 +122,7 @@ export function refundRecord(
 ): NumberedRecord {
   const original = sale.payload.lines[0];
   const qty = input.qty ?? original.qty;
-  const amount = mm(-Math.round((original.lineTotalMillimes * qty) / original.qty));
+  const amount = mm(-Math.round((original.netMillimes * qty) / original.qty));
   return saleRecord({
     ...input,
     kind: 'refund',
@@ -126,10 +130,12 @@ export function refundRecord(
     refundsSaleId: sale.payload.id,
     lines: [
       saleLine({
+        id: `line-refund-${input.seq}`,
         qty: -qty,
         unitPriceMillimes: original.unitPriceMillimes,
-        lineTotalMillimes: amount,
-        refundsLineNo: original.lineNo,
+        netMillimes: amount,
+        // The line it gives back, by the row id the device that sold it gave that line.
+        refundsSaleLineId: original.id,
       }),
     ],
   });
