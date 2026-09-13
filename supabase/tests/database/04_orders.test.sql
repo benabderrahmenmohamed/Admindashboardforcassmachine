@@ -335,7 +335,9 @@ select public.order_item_remove(jsonb_build_object(
 ));
 select test_helpers.login('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1');
 select is(
-  public.removed_after_sent('2026-09-12T00:00:00Z', '2026-09-13T00:00:00Z'),
+  -- Around now(), never a date written here: removed_at is when the server took the removal, so a
+  -- fixed day stops matching the day after it.
+  public.removed_after_sent(now() - interval '1 hour', now() + interval '1 hour'),
   jsonb_build_array(jsonb_build_object(
     'item_id', 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeee20',
     'table_name', 'Table 3',
