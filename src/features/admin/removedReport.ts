@@ -65,6 +65,19 @@ export function removalsByWaiter(rows: readonly RemovedAfterSent[]): WaiterRemov
     );
 }
 
+/**
+ * The name of the login a removal was sent under, when that is not the person the removal names: a
+ * phone passed on before it synced, or a record written in someone else's name. Null when they are
+ * the same person, and for a removal from before the login was recorded, of which nothing more is
+ * known. An empty name is a login with no display name, which is still another login.
+ */
+export function otherSender(row: RemovedAfterSent): string | null {
+  if (row.submittedBy === null || row.submittedBy === row.removedBy) {
+    return null;
+  }
+  return row.submittedByName ?? '';
+}
+
 /** How long the kitchen had the item before it was taken off. Floor, never negative. */
 export function minutesBeforeRemoval(row: RemovedAfterSent): number {
   const sent = Date.parse(row.sentAt);

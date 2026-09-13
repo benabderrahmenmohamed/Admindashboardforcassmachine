@@ -440,7 +440,7 @@ export function createMemoryOrders(context: MemoryContext): OrdersPort {
         }
         const removed: RemovedAfterSent[] = [];
         for (const item of store.openOrderItems.values()) {
-          const { sentAt, removedAt, removedBy, removedReason } = item;
+          const { sentAt, removedAt, removedBy, removedReason, removalSubmittedBy } = item;
           if (
             item.shopId !== profile.shopId ||
             sentAt === null ||
@@ -465,6 +465,11 @@ export function createMemoryOrders(context: MemoryContext): OrdersPort {
             removedBy,
             removedByName: store.profiles.get(removedBy)?.displayName ?? '',
             removedReason: removedReason ?? '',
+            submittedBy: removalSubmittedBy,
+            submittedByName:
+              removalSubmittedBy === null
+                ? null
+                : (store.profiles.get(removalSubmittedBy)?.displayName ?? ''),
           });
         }
         // Newest first, as a report of a shift is read.
@@ -539,6 +544,7 @@ export function createMemoryOrders(context: MemoryContext): OrdersPort {
           removedAt: null,
           removedBy: null,
           removedReason: null,
+          removalSubmittedBy: null,
           paidSaleId: null,
         };
         store.openOrderItems.set(item.id, item);
@@ -586,6 +592,7 @@ export function createMemoryOrders(context: MemoryContext): OrdersPort {
             removedAt: context.now().toISOString(),
             removedBy,
             removedReason: reason,
+            removalSubmittedBy: profile.userId,
           });
           // Taking the last unpaid item off a table that has paid for the rest frees it, exactly as
           // paying for that item would have.
@@ -697,6 +704,7 @@ export function createMemoryOrders(context: MemoryContext): OrdersPort {
             removedAt,
             removedBy,
             removedReason: reason,
+            removalSubmittedBy: profile.userId,
           });
         }
         store.openOrders.set(order.id, {

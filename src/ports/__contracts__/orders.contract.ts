@@ -292,6 +292,8 @@ export function describeOrdersPortContract(makeFixture: MakeFixture): void {
         removedBy: fixture.waiterUser.id,
         removedByName: fixture.waiterUser.name,
         removedReason: 'The guest sent it back',
+        submittedBy: fixture.waiterUser.id,
+        submittedByName: fixture.waiterUser.name,
       });
       // The one taken off before the kitchen heard of it is not fraud, so it is not in the report.
       expect(report.some((line) => line.itemId === unsentItem.id)).toBe(false);
@@ -348,13 +350,18 @@ export function describeOrdersPortContract(makeFixture: MakeFixture): void {
         from: minutesAgo(60),
         to: timestamp(),
       });
+      // Each names its author, and the login that sent it beside them: the admin's, for both.
       expect(report.find((line) => line.itemId === added.itemId)).toMatchObject({
         removedBy: waiter.id,
         removedByName: waiter.name,
+        submittedBy: fixture.adminUser.id,
+        submittedByName: fixture.adminUser.name,
       });
       expect(report.find((line) => line.itemId === left.id)).toMatchObject({
         removedBy: fixture.cashierUser.id,
         removedByName: fixture.cashierUser.name,
+        submittedBy: fixture.adminUser.id,
+        submittedByName: fixture.adminUser.name,
       });
     });
 

@@ -350,7 +350,9 @@ select is(
     'removed_at', (select to_jsonb(i.removed_at) #>> '{}' from public.open_order_items i where i.id = 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeee20'),
     'removed_by', 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa3',
     'removed_by_name', 'Demo Waiter',
-    'removed_reason', 'Client parti'
+    'removed_reason', 'Client parti',
+    'submitted_by', 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa3',
+    'submitted_by_name', 'Demo Waiter'
   )),
   'the report names the waiter, the table, the item and the reason, and only for items the kitchen had been told about'
 );

@@ -91,6 +91,8 @@ export interface OpenOrderItemRow {
   readonly removedAt: string | null;
   readonly removedBy: string | null;
   readonly removedReason: string | null;
+  /** The login the removal was sent under, beside the person it names (`removedBy`). */
+  readonly removalSubmittedBy: string | null;
   readonly paidSaleId: string | null;
 }
 

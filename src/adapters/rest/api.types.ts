@@ -740,9 +740,17 @@ export interface components {
             unit_price_millimes: number;
             sent_at: components["schemas"]["Timestamp"];
             removed_at: components["schemas"]["Timestamp"];
+            /** @description The person the removal names - its record's actor_user_id, or the caller when it named nobody. */
             removed_by: components["schemas"]["Uuid"];
             removed_by_name: string;
             removed_reason: string;
+            /**
+             * @description The login the removal was sent under. The same person as removed_by unless a phone was passed on
+             *     or the record named someone else; null for an item taken off before this was recorded.
+             */
+            submitted_by: components["schemas"]["Uuid"] | null;
+            /** @description The display name of submitted_by; null when submitted_by is. */
+            submitted_by_name: string | null;
         };
         /** @description What every order event carries - who did it, the device that wrote it, possibly offline, and how a replay is recognised. */
         OrderRecord: {

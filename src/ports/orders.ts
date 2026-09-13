@@ -166,9 +166,17 @@ export const removedAfterSentSchema = z.object({
   unitPriceMillimes: priceMillimesSchema,
   sentAt: timestampSchema,
   removedAt: timestampSchema,
+  /** The person the removal names: its record's author, or whoever sent a record that named nobody. */
   removedBy: z.string().min(1),
   removedByName: z.string(),
   removedReason: z.string(),
+  /**
+   * The login the removal was sent under. The same person as `removedBy` unless the phone was passed
+   * on, or the record named someone else — which is what an admin reading this report wants to see.
+   * Null for an item taken off before the login was recorded.
+   */
+  submittedBy: z.string().min(1).nullable(),
+  submittedByName: z.string().nullable(),
 });
 export type RemovedAfterSent = z.infer<typeof removedAfterSentSchema>;
 

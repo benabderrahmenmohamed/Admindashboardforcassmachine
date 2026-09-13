@@ -1,14 +1,14 @@
 -- Who an order record credits: private.order_actor, migration 20260911000011. A phone passed from one
 -- waiter to the next sends the first one's records under the second one's login, so a record names
 -- its author as actor_user_id — a member of the caller's shop, stamped as added_by on the item an add
--- creates and as removed_by on what a removal or a cancel takes off — and order_records keeps who
--- sent it. A record that names nobody was queued before records named their author: its sender is
--- credited.
+-- creates and as removed_by on what a removal or a cancel takes off. The login that sent a removal is
+-- stamped beside it and shown by the report (migration 20260913000015). A record that names nobody was
+-- queued before records named their author: its sender is credited.
 begin;
 
 create extension if not exists pgtap with schema extensions;
 
-select plan(9);
+select plan(11);
 
 create schema test_helpers;
 grant usage on schema test_helpers to authenticated, anon;
@@ -59,12 +59,19 @@ as $$
     || p_fields
 $$;
 
--- Who sent a record. order_records is nobody's to read, so this reads it as the test's own role.
-create function test_helpers.submitted_by(p_id uuid)
-returns uuid
+-- What an item removed before migration 20260913000015 looks like: nobody wrote down who sent it.
+-- Nobody may write to open_order_items, so these run as the test's own role.
+create function test_helpers.forget_sender(p_item uuid)
+returns void
 language sql
 security definer
-as $$ select r.submitted_by from public.order_records r where r.id = p_id $$;
+as $$ update public.open_order_items set removal_submitted_by = null where id = p_item $$;
+
+create function test_helpers.set_sender(p_item uuid, p_user uuid)
+returns void
+language sql
+security definer
+as $$ update public.open_order_items set removal_submitted_by = p_user where id = p_item $$;
 
 -- The demo café (supabase/seed.sql): the cashier aaa…2, the waiter aaa…3 and the owner aaa…5, who is
 -- an admin and a cashier; the other shop's cashier bbb…2. Terrasse 2 is dddddddd-…-06 and Terrasse 3
@@ -94,9 +101,9 @@ select is(
   'an item the waiter added and took off is the waiter''s, whoever sent the records'
 );
 select is(
-  test_helpers.submitted_by('eeeeeeee-eeee-4eee-8eee-eeeeeeeeee03'),
+  (select i.removal_submitted_by from public.open_order_items i where i.id = 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeee01'),
   'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa5'::uuid,
-  'and the removal keeps who sent it'
+  'and the item keeps the login the removal was sent under'
 );
 
 -- A cancel takes what is still on the table off in the name of whoever cancelled.
@@ -116,13 +123,24 @@ select public.order_cancel(test_helpers.record(
 
 -- The period is around now(): removed_at is when the server took the removal.
 select is(
-  (select jsonb_agg(jsonb_build_object('item', r ->> 'item_id', 'by', r ->> 'removed_by_name') order by r ->> 'item_id')
+  (select jsonb_agg(jsonb_build_object('item', r ->> 'item_id', 'by', r ->> 'removed_by_name',
+      'sent', r ->> 'submitted_by_name') order by r ->> 'item_id')
    from jsonb_array_elements(public.removed_after_sent(now() - interval '1 hour', now() + interval '1 hour')) r),
   jsonb_build_array(
-    jsonb_build_object('item', 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeee01', 'by', 'Demo Waiter'),
-    jsonb_build_object('item', 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeee04', 'by', 'Demo Cashier')
+    jsonb_build_object('item', 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeee01', 'by', 'Demo Waiter', 'sent', 'Demo Owner'),
+    jsonb_build_object('item', 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeee04', 'by', 'Demo Cashier', 'sent', 'Demo Owner')
   ),
-  'the report names the waiter who took one item off and the cashier who cancelled the rest'
+  'the report names the waiter who took one item off and the cashier who cancelled the rest, and the owner''s login that sent both'
+);
+
+-- An item taken off before the login was recorded: the report names its author and nobody else.
+select test_helpers.forget_sender('eeeeeeee-eeee-4eee-8eee-eeeeeeeeee01');
+select is(
+  (select jsonb_build_object('by', r -> 'submitted_by', 'name', r -> 'submitted_by_name')
+   from jsonb_array_elements(public.removed_after_sent(now() - interval '1 hour', now() + interval '1 hour')) r
+   where r ->> 'item_id' = 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeee01'),
+  jsonb_build_object('by', 'null'::jsonb, 'name', 'null'::jsonb),
+  'a removal nobody recorded the login of is reported with none'
 );
 
 -- ---------------------------------------------------------------------------------------------
@@ -170,6 +188,12 @@ select is(
 select ok(
   (select i.removed_at is null from public.open_order_items i where i.id = 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeee08'),
   'and the item is still on the table'
+);
+select is(
+  test_helpers.error_of($$ select test_helpers.set_sender(
+    'eeeeeeee-eeee-4eee-8eee-eeeeeeeeee08', 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa5') $$) ->> 'code',
+  '23514',
+  'an item still on the table has no removal to have sent'
 );
 
 select * from finish();

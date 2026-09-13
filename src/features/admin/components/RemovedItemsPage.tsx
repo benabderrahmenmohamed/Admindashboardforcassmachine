@@ -13,10 +13,12 @@ import {
 } from '@/components/ui/table';
 import { useRemovedAfterSent } from '@/features/orders/hooks/useOrders';
 import { formatTND } from '@/lib/money';
+import type { RemovedAfterSent } from '@/ports';
 import {
   dayBounds,
   isoDay,
   minutesBeforeRemoval,
+  otherSender,
   removalTotals,
   removalValue,
   removalsByWaiter,
@@ -27,7 +29,8 @@ import {
  *
  * The spec asks for this report by name and says why: removing an item the kitchen has made is the
  * classic waiter fraud, and a removal keeps its row precisely so it can be read here. A removal is
- * not proof of anything on its own, so the reason and the table are shown next to every one.
+ * not proof of anything on its own, so the reason and the table are shown next to every one — and,
+ * when the removal was synced under somebody else's login, whose.
  */
 export function RemovedItemsPage() {
   const today = isoDay(new Date());
@@ -143,7 +146,10 @@ function ReportBody({
                     <TableCell>{row.qty}</TableCell>
                     <TableCell>{formatTND(removalValue(row))}</TableCell>
                     <TableCell>{minutesBeforeRemoval(row)} min</TableCell>
-                    <TableCell>{row.removedReason}</TableCell>
+                    <TableCell>
+                      {row.removedReason}
+                      <SenderNote row={row} />
+                    </TableCell>
                   </TableRow>
                 ))}
               </TableBody>
@@ -152,5 +158,22 @@ function ReportBody({
         </Card>
       ))}
     </div>
+  );
+}
+
+/**
+ * A removal names the person the device says took the item off, and the server can only check that
+ * they work here. When the login that synced it was somebody else's — a phone passed on, or a record
+ * written in another person's name — the row says whose, so the admin reads both.
+ */
+function SenderNote({ row }: { readonly row: RemovedAfterSent }) {
+  const sender = otherSender(row);
+  if (sender === null) {
+    return null;
+  }
+  return (
+    <span className="mt-1 block text-sm text-amber-800">
+      Synced under {sender === '' ? 'another login' : `${sender}’s login`}
+    </span>
   );
 }

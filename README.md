@@ -222,7 +222,7 @@ The tests against the local stack read these from the environment, never from `.
 
 - **Unit, page and contract tests** (Vitest, Testing Library, fake-indexeddb, MSW): the rules of every feature as plain modules — the cart, the payment, the room drawn over the queue, the kitchen tickets, the outbox and its retention — each screen behind the guard the app puts in front of it, on the memory backend the demo runs, and the port contract suite on the memory and REST adapters. With `CONTRACT_BACKEND=supabase` the same suite, and the security tests, run against a local stack.
 - **Database tests** (pgTAP, `supabase/tests/database`): the ledger's immutability and refund limits, the import, the demo reset, the order RPCs, sales with and without a table, table names, and who an order record credits.
-- **End to end** (Playwright): the café on one device against the demo — an order taken with no network, prepared, paid while the payment's answer is lost, and the drawer closed balanced; an order the server refuses and a waiter discards; and every target on every screen of the waiter's phone measured at 44 px or more. With `E2E_BACKEND=supabase`, the waiter's phone, the kitchen and the counter as three devices on a local stack, each screen changing because another device wrote something.
+- **End to end** (Playwright): the café on one device against the demo — an order taken with no network, prepared, paid while the payment's answer is lost, and the drawer closed balanced; an order the server refuses and a waiter discards; a removal still queued when the tablet changes hands, reported under the waiter who made it and the owner's login that synced it; and every target on every screen of the waiter's phone measured at 44 px or more. With `E2E_BACKEND=supabase`, the waiter's phone, the kitchen and the counter as three devices on a local stack, each screen changing because another device wrote something.
 - **Lighthouse** 12.8, on the demo build served compressed, through user flows over twenty-one screens and dialogs of the four faces: accessibility, best practices and SEO 100 on every one; performance 91 on a phone and 100 on a desktop for the first load.
 
 ## Database
@@ -231,7 +231,7 @@ The schema lives in `supabase/migrations/`:
 
 - **Shops and profiles.** Every member belongs to one shop and holds one or more of `admin`, `cashier`, `waiter` and `kitchen`. Row-level security keeps each shop's rows to its own members.
 - **Catalog.** Categories and products, archived rather than deleted. `is_available` is the daily sold-out toggle; a product with `track_stock` counts its stock as the sum of append-only `stock_movements`, and most of a café's menu does not.
-- **The room.** `dining_tables`, taken out of service but never deleted, names unique within the café. `open_orders`, created by the server when the first item lands on a free table, one open order per table. `open_order_items`, stamped as they are sent, prepared, taken off with a reason, and paid — never deleted. `order_records` makes every order write replayable by its id and payload hash.
+- **The room.** `dining_tables`, taken out of service but never deleted, names unique within the café. `open_orders`, created by the server when the first item lands on a free table, one open order per table. `open_order_items`, stamped as they are sent, prepared, taken off with a reason, and paid — never deleted. A removal is stamped with the person its record names and, beside them, the login that sent it, and the removed-items report shows both when they differ. `order_records` makes every order write replayable by its id and payload hash.
 - **Terminals and cash sessions.** A terminal keeps `last_seq` and a registration `epoch`; a terminal has at most one open session, and a closed session cannot change.
 - **Sales ledger.** `sales` and `sale_lines` accept writes only through `record_sale`; nobody, including the service role, can update or delete them. A table payment names the order items it pays, and the server refuses it with `ORDER_CHANGED` if one of them was paid, taken off or changed in the meantime. Refunds are rows of kind `refund` that name the sale, with negative lines that each name the line they take back. `receipt_voids` lets an admin give up on a numbered record that can never be accepted, without leaving a gap.
 - **Legacy import.** `migration.kv_import` reads the original key-value store, with a dry run and a list of rejects.
@@ -308,7 +308,7 @@ Measured against the Figma Make export this started from (`d3cdb2c`, recorded in
 | Direct dependencies | 55                                                       | 19                                                                                                                                         |
 | Dev dependencies    | 4                                                        | 23                                                                                                                                         |
 | JavaScript          | 634 kB, one chunk                                        | the app's own code 216 kB (62 kB compressed); libraries in five chunks a release leaves cached; each backend in a chunk of its own         |
-| Tests               | none                                                     | 1,757 unit, page and contract tests, 232 database assertions, 2 Playwright specs                                                           |
+| Tests               | none                                                     | 1,761 unit, page and contract tests, 234 database assertions, 2 Playwright specs                                                           |
 | Lint and types      | neither; `typescript` not installed                      | ESLint with no warnings allowed, `tsc` strict                                                                                              |
 | Money               | floats, shown as `$12.50`                                | integer millimes, shown as `12,500 DT`                                                                                                     |
 | Recording a sale    | two requests against a key-value store anyone could edit | one transactional RPC into an append-only ledger, paying exactly the rows of the table it names                                            |
@@ -323,13 +323,11 @@ Two numbers went the other way, on purpose. `node_modules` grew from 188 MB to 4
 - **ESC/POS printing**, so kitchen tickets and receipts leave on paper.
 - **Splitting one item between payers.** Today an item is paid whole.
 - **Discarded order records reported to the back office from every device**, rather than listed only where they were discarded (see Known issues).
-- **The login that sent a record, beside its author, in the removed-items report**, so a record that names someone other than its sender stands out (see Known issues).
 
 ## Known issues
 
 - **A record the server refuses stops this device's queue.** Later records wait behind it until a person retries it, voids it (a receipt, admin only) or discards it with a reason (an order record) on the Conflicts screen. That is deliberate — nothing may reach the server out of order — but it needs someone to look.
 - **A discarded order record is listed only on the device that discarded it.** The dead-letter list is on the Conflicts screen of that phone or tablet; nothing reports it to the back office.
-- **The author of an order record is the device's word.** A record names the member signed in when it was written, and the server checks only that they belong to the café. A member who calls the API directly could name a colleague in the removed-items report; the database keeps the login that sent every record, but no screen shows it yet.
 - **A hosted project may still run the original edge function.** Its code is gone from this repo, but a deployed copy keeps its service role access, which bypasses row-level security, until you delete it ([runbook](docs/runbooks/kv-import.md), step 7).
 
 ## Credits

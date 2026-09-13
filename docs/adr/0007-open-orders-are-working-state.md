@@ -78,6 +78,14 @@ person, and `order_records.submitted_by` keeps the login that sent it. A record 
 nobody and is credited to its sender. This is the one place the payloads go beyond the spec
 (`OrderRecord.actor_user_id` in `contracts/openapi.yaml`).
 
+**The report shows the login a removal was sent under.** An author the server can only check against the
+shop is the device's word, and `order_records` did not say which item a record took off. Migration
+`20260913000015_removal_submitted_by.sql` stamps `removal_submitted_by` — the login that sent the removal or
+the cancel — on every item it takes off, and `removed_after_sent` returns it as `submitted_by` beside
+`removed_by`. The admin's report says "Synced under … login" on a row where the two differ: a phone passed on,
+or a record in somebody else's name. An item taken off before the migration has no login recorded, and the
+report says nothing about it.
+
 ## Consequences
 
 - The ledger holds money and only money. A thousand taps a day stay out of the receipt sequence, and the
@@ -95,8 +103,8 @@ nobody and is credited to its sender. This is the one place the payloads go beyo
   only on the device that discarded it.
 - Cost: the author of an order record is the device's word. The server checks only that the person it
   names belongs to the shop, as it does for the person on a cash session, so a member who calls the RPCs
-  directly could name a colleague in the removed-items report. `order_records.submitted_by` keeps the login that sent every
-  record, but no screen shows it.
+  directly can still name a colleague. What they cannot do is hide: the removal carries the login that sent
+  it, and the report prints that login beside the colleague's name.
 - Order rows accumulate like the ledger. `private.reset_demo_shop` frees the demo café's tables every night;
   a real café keeps its history.
 

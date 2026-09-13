@@ -544,7 +544,7 @@ describe('supabase orders: reads', () => {
 
   // The report goes through its RPC, not the tables: naming who took an item off means reading
   // other members' names, so the admin check has to be the server's and not this client's.
-  it('reports items removed after they were sent, newest first, with who removed them', async () => {
+  it('reports items removed after they were sent, newest first, with who removed them and whose login sent it', async () => {
     const { calls, orders } = setup(
       routes({
         'POST /rest/v1/rpc/removed_after_sent': () =>
@@ -560,7 +560,10 @@ describe('supabase orders: reads', () => {
               removed_by: 'user-waiter',
               removed_by_name: 'Sonia',
               removed_reason: 'Guest cancelled',
+              submitted_by: 'user-owner',
+              submitted_by_name: 'Leila',
             },
+            // Taken off before the login a removal was sent under was recorded.
             {
               item_id: 'i-early',
               table_name: 'Salle 2',
@@ -572,6 +575,8 @@ describe('supabase orders: reads', () => {
               removed_by: 'user-other',
               removed_by_name: 'Hedi',
               removed_reason: 'Spilled',
+              submitted_by: null,
+              submitted_by_name: null,
             },
           ]),
       }),
@@ -598,6 +603,8 @@ describe('supabase orders: reads', () => {
         removedBy: 'user-waiter',
         removedByName: 'Sonia',
         removedReason: 'Guest cancelled',
+        submittedBy: 'user-owner',
+        submittedByName: 'Leila',
       },
       {
         itemId: 'i-early',
@@ -610,6 +617,8 @@ describe('supabase orders: reads', () => {
         removedBy: 'user-other',
         removedByName: 'Hedi',
         removedReason: 'Spilled',
+        submittedBy: null,
+        submittedByName: null,
       },
     ]);
   });

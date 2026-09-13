@@ -199,4 +199,43 @@ test.describe('the café on one device', () => {
     await expect(tableRow(page, 'Café crème')).toBeVisible();
     await expect(tableRow(page, 'Thé à la menthe')).toHaveCount(0);
   });
+
+  test('a removal the queue sends after the tablet changed hands stays the waiter’s, and says whose login sent it', async ({
+    page,
+  }) => {
+    // The waiter puts a coffee on Salle 3, and the kitchen is told.
+    await continueAs(page, 'Waiter');
+    await openTable(page, 'Salle 3');
+    await addToTable(page, { product: 'Café express' });
+    await sendToKitchen(page, 1);
+    await expect(syncChip(page)).toHaveAccessibleName(/^Sync: Synced/);
+
+    // The next order is refused, so the tablet's queue stops there; the coffee the waiter then takes
+    // off waits behind it when the waiter's shift ends.
+    await armRefusal(page, 'orders.addItem', 'TABLE_INACTIVE');
+    await addToTable(page, { product: 'Citronnade' });
+    await expect(syncChip(page)).toHaveAccessibleName(/^Sync: 1 conflict/);
+    await page.getByRole('button', { name: 'Take Café express off the table' }).click();
+    await page.getByLabel('Why is it coming off?').fill('The guest sent it back');
+    await page.getByRole('button', { name: /Take it off/ }).click();
+    await expect(page.getByLabel('Why is it coming off?')).toBeHidden();
+    await signOut(page);
+
+    // The owner takes the tablet over, gives up on the refused order, and the removal goes out under
+    // the owner's login.
+    await continueAs(page, 'Owner');
+    const conflicts = await openConflicts(page);
+    await conflicts.getByRole('button', { name: 'Discard' }).click();
+    const discard = page.getByRole('dialog', { name: 'Discard this record' });
+    await discard.getByLabel('Why is it being discarded?').fill('The table was out of service');
+    await discard.getByRole('button', { name: 'Discard' }).click();
+    await expect(syncChip(page)).toHaveAccessibleName(/^Sync: Synced .*1 discarded/);
+
+    // The report credits the waiter who took it off, and names the login that synced it.
+    await page.getByRole('link', { name: 'Removed items', exact: true }).click();
+    await expect(page.getByRole('heading', { name: /^Demo Waiter/ })).toBeVisible();
+    const row = page.getByRole('row', { name: /Café express/ });
+    await expect(row).toContainText('The guest sent it back');
+    await expect(row).toContainText('Synced under Demo Owner’s login');
+  });
 });

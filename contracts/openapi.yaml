@@ -1180,6 +1180,8 @@ components:
           removed_by,
           removed_by_name,
           removed_reason,
+          submitted_by,
+          submitted_by_name,
         ]
       properties:
         item_id: { $ref: '#/components/schemas/Uuid' }
@@ -1189,9 +1191,19 @@ components:
         unit_price_millimes: { type: integer, format: int64, minimum: 0, maximum: 1000000000000 }
         sent_at: { $ref: '#/components/schemas/Timestamp' }
         removed_at: { $ref: '#/components/schemas/Timestamp' }
-        removed_by: { $ref: '#/components/schemas/Uuid' }
+        removed_by:
+          allOf: [{ $ref: '#/components/schemas/Uuid' }]
+          description: The person the removal names - its record's actor_user_id, or the caller when it named nobody.
         removed_by_name: { type: string }
         removed_reason: { type: string }
+        submitted_by:
+          oneOf: [{ $ref: '#/components/schemas/Uuid' }, { type: 'null' }]
+          description: |
+            The login the removal was sent under. The same person as removed_by unless a phone was passed on
+            or the record named someone else; null for an item taken off before this was recorded.
+        submitted_by_name:
+          type: [string, 'null']
+          description: The display name of submitted_by; null when submitted_by is.
 
     OrderRecord:
       type: object

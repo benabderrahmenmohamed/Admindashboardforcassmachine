@@ -5,6 +5,7 @@ import {
   dayBounds,
   isoDay,
   minutesBeforeRemoval,
+  otherSender,
   removalTotals,
   removalValue,
   removalsByWaiter,
@@ -21,6 +22,8 @@ function row(overrides: Partial<RemovedAfterSent> & { itemId: string }): Removed
     removedBy: 'waiter-1',
     removedByName: 'Amine',
     removedReason: 'guest left',
+    submittedBy: 'waiter-1',
+    submittedByName: 'Amine',
     ...overrides,
   };
 }
@@ -79,6 +82,23 @@ describe('removalsByWaiter', () => {
 
   it('has nothing to group in a clean period', () => {
     expect(removalsByWaiter([])).toEqual([]);
+  });
+});
+
+describe('otherSender', () => {
+  it('names the login a removal was sent under when it is not the person the removal names', () => {
+    expect(
+      otherSender(row({ itemId: 'a', submittedBy: 'owner-1', submittedByName: 'Leila' })),
+    ).toBe('Leila');
+  });
+
+  it('is an empty name for another login that has no display name, not nothing', () => {
+    expect(otherSender(row({ itemId: 'a', submittedBy: 'owner-1', submittedByName: '' }))).toBe('');
+  });
+
+  it('says nothing when the same person sent it, or when the login was never recorded', () => {
+    expect(otherSender(row({ itemId: 'a' }))).toBeNull();
+    expect(otherSender(row({ itemId: 'b', submittedBy: null, submittedByName: null }))).toBeNull();
   });
 });
 
