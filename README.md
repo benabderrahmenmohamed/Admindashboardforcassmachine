@@ -35,7 +35,7 @@ A person can hold several roles — the owner is admin and cashier — and switc
 
 ## What it does differently
 
-- **Offline-first.** Everything done during service — an item put on a table or taken off, a send, a dish marked prepared, an order cancelled, a payment or a refund, a session opened or closed — is a record written to IndexedDB before any request. One queue per device drains in the order records were written, one at a time, under a Web Lock, retrying without limit and stopping at the first record the server refuses. The screens draw that queue over the server's last read, so a tap shows at once, flagged until it is synced. What the server has taken is cleared from the device after a week. The back office — products, tables, settings — needs the network.
+- **Offline-first.** Everything done during service — an item put on a table or taken off, a send, a dish marked prepared, an order cancelled, a payment or a refund, a session opened or closed — is a record written to IndexedDB before any request. One queue per device drains in the order records were written, one at a time, under a Web Lock, retrying without limit and stopping at the first record the server refuses. The screens draw that queue over the server's last read, so a tap shows at once, flagged until it is synced. A record names the person who made it, so a phone passed from one waiter to the next still credits each with their own taps. What the server has taken is cleared from the device after a week. The back office — products, tables, settings — needs the network.
 - **Money done right.** Integer millimes everywhere, never a float. A discount on the whole payment is rounded once and shared across its lines by largest remainder, so the lines add up to the total exactly. Receipts are numbered per terminal — `C1-17` is the counter's seventeenth — in the same IndexedDB transaction that queues the sale, and the server accepts only the next number. Sales are never updated or deleted: a refund is a new document, and a receipt that can never be accepted is voided with a reason, not skipped.
 - **Backend-swappable.** The screens call hooks, the hooks call eight ports, and one composition root chooses the adapter. One contract suite holds the memory, REST and Supabase adapters to the same answers, down to the error code.
 
@@ -221,7 +221,7 @@ The tests against the local stack read these from the environment, never from `.
 ## Testing
 
 - **Unit, page and contract tests** (Vitest, Testing Library, fake-indexeddb, MSW): the rules of every feature as plain modules — the cart, the payment, the room drawn over the queue, the kitchen tickets, the outbox and its retention — each screen behind the guard the app puts in front of it, on the memory backend the demo runs, and the port contract suite on the memory and REST adapters. With `CONTRACT_BACKEND=supabase` the same suite, and the security tests, run against a local stack.
-- **Database tests** (pgTAP, `supabase/tests/database`): the ledger's immutability and refund limits, the import, the demo reset, the order RPCs, sales with and without a table, and table names.
+- **Database tests** (pgTAP, `supabase/tests/database`): the ledger's immutability and refund limits, the import, the demo reset, the order RPCs, sales with and without a table, table names, and who an order record credits.
 - **End to end** (Playwright): the café on one device against the demo — an order taken with no network, prepared, paid while the payment's answer is lost, and the drawer closed balanced; an order the server refuses and a waiter discards; and every target on every screen of the waiter's phone measured at 44 px or more. With `E2E_BACKEND=supabase`, the waiter's phone, the kitchen and the counter as three devices on a local stack, each screen changing because another device wrote something.
 - **Lighthouse** 12.8, on the demo build served compressed, through user flows over twenty-one screens and dialogs of the four faces: accessibility, best practices and SEO 100 on every one; performance 91 on a phone and 100 on a desktop for the first load.
 
@@ -308,7 +308,7 @@ Measured against the Figma Make export this started from (`d3cdb2c`, recorded in
 | Direct dependencies | 55                                                       | 19                                                                                                                                         |
 | Dev dependencies    | 4                                                        | 23                                                                                                                                         |
 | JavaScript          | 634 kB, one chunk                                        | the app's own code 216 kB (62 kB compressed); libraries in five chunks a release leaves cached; each backend in a chunk of its own         |
-| Tests               | none                                                     | 1,749 unit, page and contract tests, 223 database assertions, 2 Playwright specs                                                           |
+| Tests               | none                                                     | 1,757 unit, page and contract tests, 232 database assertions, 2 Playwright specs                                                           |
 | Lint and types      | neither; `typescript` not installed                      | ESLint with no warnings allowed, `tsc` strict                                                                                              |
 | Money               | floats, shown as `$12.50`                                | integer millimes, shown as `12,500 DT`                                                                                                     |
 | Recording a sale    | two requests against a key-value store anyone could edit | one transactional RPC into an append-only ledger, paying exactly the rows of the table it names                                            |
@@ -323,13 +323,13 @@ Two numbers went the other way, on purpose. `node_modules` grew from 188 MB to 4
 - **ESC/POS printing**, so kitchen tickets and receipts leave on paper.
 - **Splitting one item between payers.** Today an item is paid whole.
 - **Discarded order records reported to the back office from every device**, rather than listed only where they were discarded (see Known issues).
-- **An author on every order record**, so a removal is credited to the person who made it even if someone else signs in before it is sent (see Known issues).
+- **The login that sent a record, beside its author, in the removed-items report**, so a record that names someone other than its sender stands out (see Known issues).
 
 ## Known issues
 
 - **A record the server refuses stops this device's queue.** Later records wait behind it until a person retries it, voids it (a receipt, admin only) or discards it with a reason (an order record) on the Conflicts screen. That is deliberate — nothing may reach the server out of order — but it needs someone to look.
 - **A discarded order record is listed only on the device that discarded it.** The dead-letter list is on the Conflicts screen of that phone or tablet; nothing reports it to the back office.
-- **Order records are credited to whoever is signed in when they are sent.** They carry no author, as the spec's payloads have none. On a shared tablet, a removal one waiter queued offline and another waiter's session sent appears under the second waiter in the removed-items report.
+- **The author of an order record is the device's word.** A record names the member signed in when it was written, and the server checks only that they belong to the café. A member who calls the API directly could name a colleague in the removed-items report; the database keeps the login that sent every record, but no screen shows it yet.
 - **A hosted project may still run the original edge function.** Its code is gone from this repo, but a deployed copy keeps its service role access, which bypasses row-level security, until you delete it ([runbook](docs/runbooks/kv-import.md), step 7).
 
 ## Credits

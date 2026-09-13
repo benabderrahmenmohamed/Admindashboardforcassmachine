@@ -13,6 +13,7 @@ import {
   type RemovedAfterSent,
   type Role,
 } from '@/ports';
+import { requireMember } from './ledger';
 import type { MemoryProfile } from './seed';
 import {
   orderCancelInput,
@@ -235,6 +236,20 @@ export function createMemoryOrders(context: MemoryContext): OrdersPort {
     return new AppError('ORDER_CLOSED', 'This table has no open order any more.', {
       details: orderId === null ? { tableId } : { tableId, orderId },
     });
+  }
+
+  /**
+   * Who a record says did the work, as private.order_actor: a member of the caller's shop, or
+   * FORBIDDEN. A record that names nobody — queued before records named their author — is the
+   * caller's, as every record was then.
+   */
+  function actorOf(profile: MemoryProfile, actorUserId: string | undefined): string {
+    if (actorUserId === undefined) {
+      return profile.userId;
+    }
+    const actor = parseUuid(actorUserId, 'actor_user_id');
+    requireMember(store, profile.shopId, actor);
+    return actor;
   }
 
   /** What every order record is recognised by, with its id in the form the database stores. */
@@ -488,6 +503,7 @@ export function createMemoryOrders(context: MemoryContext): OrdersPort {
           throw invalidField('qty', 'A quantity is at least one.');
         }
         const addedAt = parseTimestamp(input.createdAt, 'added_at');
+        const addedBy = actorOf(profile, input.actorUserId);
 
         // The table's order, or a new one. A closed order means the table is free again, so an add
         // that arrives after the caisse paid opens the next order with that item rather than
@@ -516,7 +532,7 @@ export function createMemoryOrders(context: MemoryContext): OrdersPort {
           unitPriceMillimes: product.priceMillimes,
           qty: input.qty,
           note: input.note,
-          addedBy: profile.userId,
+          addedBy,
           addedAt,
           sentAt: null,
           preparedAt: null,
@@ -559,6 +575,7 @@ export function createMemoryOrders(context: MemoryContext): OrdersPort {
         if (order.status !== 'open') {
           throw orderClosed(order.tableId, order.id);
         }
+        const removedBy = actorOf(profile, input.actorUserId);
         // Taking off an item that is already off the table changes nothing, and must never stop a
         // waiter's queue: the first removal, with its reason and its author, is the one that counts.
         const affected = item.removedAt === null ? 1 : 0;
@@ -567,7 +584,7 @@ export function createMemoryOrders(context: MemoryContext): OrdersPort {
           store.openOrderItems.set(item.id, {
             ...item,
             removedAt: context.now().toISOString(),
-            removedBy: profile.userId,
+            removedBy,
             removedReason: reason,
           });
           // Taking the last unpaid item off a table that has paid for the rest frees it, exactly as
@@ -669,6 +686,7 @@ export function createMemoryOrders(context: MemoryContext): OrdersPort {
         if (paid) {
           throw orderChanged('Part of this order has already been paid for.', paid, order);
         }
+        const removedBy = actorOf(profile, input.actorUserId);
         // Everything still on the table is taken off it, with the cancel's reason: a cancelled
         // order that had been sent still reaches the removed-after-sent report.
         const removedAt = context.now().toISOString();
@@ -677,7 +695,7 @@ export function createMemoryOrders(context: MemoryContext): OrdersPort {
           store.openOrderItems.set(item.id, {
             ...item,
             removedAt,
-            removedBy: profile.userId,
+            removedBy,
             removedReason: reason,
           });
         }

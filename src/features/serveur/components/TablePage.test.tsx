@@ -25,8 +25,8 @@ afterEach(() => {
   Reflect.deleteProperty(window.navigator, 'onLine');
 });
 
-function showTable(harness: Harness, tableId: string): void {
-  harness.renderScreen(<TablePage />, {
+function showTable(harness: Harness, tableId: string) {
+  return harness.renderScreen(<TablePage />, {
     allow: ['waiter'],
     allowOffline: true,
     path: '/serveur/table/:tableId',
@@ -192,5 +192,50 @@ describe('a table on the waiter’s phone', () => {
       expect(row?.removedAt).not.toBeNull();
       expect(row?.removedReason).toBe('guest changed their mind');
     });
+  });
+
+  it('credits a removal to the waiter who made it, even when someone else is signed in when it syncs', async () => {
+    const harness = await createHarness({ signedInAs: 'Waiter' });
+    const waiterId = harness.user?.id;
+    const table = await firstTable(harness.backend);
+    const [product] = await harness.backend.catalog.listProducts();
+    const item = await addToTable(harness.backend, table.id, product);
+    await sendTable(harness.backend, table.id);
+
+    const view = showTable(harness, table.id);
+    fireEvent.click(
+      await screen.findByRole('button', { name: `Take ${product.name} off the table` }),
+    );
+    const dialog = await screen.findByRole('dialog');
+    fireEvent.change(within(dialog).getByLabelText('Why is it coming off?'), {
+      target: { value: 'guest changed their mind' },
+    });
+    setOnline(false);
+    fireEvent.click(within(dialog).getByRole('button', { name: /Take it off/ }));
+    await waitFor(async () => {
+      const records = await harness.outbox.list();
+      expect(records.map((record) => [record.kind, record.status, record.lastError?.code])).toEqual(
+        [['order_item_remove', 'pending', 'NETWORK_ERROR']],
+      );
+    });
+
+    // The waiter's shift is over. The phone finds its network, and the owner signs in on it before
+    // the queue has tried again.
+    view.unmount();
+    setOnline(true);
+    await harness.signInAs('Owner');
+    harness.schedule.goOnline();
+
+    await waitFor(async () => {
+      const [record] = await harness.outbox.list();
+      expect(record.status).toBe('acked');
+    });
+    const report = await harness.backend.orders.removedAfterSent({
+      from: new Date(Date.now() - 60 * 60_000).toISOString(),
+      to: new Date(Date.now() + 60_000).toISOString(),
+    });
+    expect(report).toMatchObject([
+      { itemId: item.id, removedBy: waiterId, removedByName: 'Demo Waiter' },
+    ]);
   });
 });

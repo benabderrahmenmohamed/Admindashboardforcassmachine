@@ -30,6 +30,7 @@ const ITEM_WITH_TABLE_COLUMNS = `${ITEM_COLUMNS},open_orders!inner(id,table_id,s
 /** What every record a device writes carries: who wrote it, where, and how to spot a replay. */
 const recordBase = {
   id: RECORD_ID,
+  actorUserId: 'user-waiter',
   deviceId: 'device-7',
   createdAt: '2026-09-12T10:00:00.000Z',
   payloadHash: HASH,
@@ -37,6 +38,7 @@ const recordBase = {
 
 const recordBaseJson = {
   id: RECORD_ID,
+  actor_user_id: 'user-waiter',
   device_id: 'device-7',
   created_at: '2026-09-12T10:00:00.000Z',
   payload_hash: HASH,
@@ -155,6 +157,34 @@ describe('supabase orders: records', () => {
       p: { ...recordBaseJson, item_id: 'i-1', reason: 'Client changed his mind' },
     });
     expect(result).toEqual({ status: 'created', orderId: 'o-1', affected: 1 });
+  });
+
+  it('sends no actor_user_id for a record queued before records named their author', async () => {
+    const { client, calls } = fakeSupabase(() =>
+      json({ status: 'created', order_id: 'o-1', affected: 1 }),
+    );
+    const { id, deviceId, createdAt, payloadHash } = recordBase;
+
+    await createSupabaseOrders(client).removeItem({
+      id,
+      deviceId,
+      createdAt,
+      payloadHash,
+      itemId: 'i-1',
+      reason: 'Client changed his mind',
+    });
+
+    // The server credits whoever sends it: all anyone knew about the record when it was written.
+    expect(calls[0].body).toEqual({
+      p: {
+        id: RECORD_ID,
+        device_id: 'device-7',
+        created_at: '2026-09-12T10:00:00.000Z',
+        payload_hash: HASH,
+        item_id: 'i-1',
+        reason: 'Client changed his mind',
+      },
+    });
   });
 
   it('sends a table to the kitchen with sent_at alongside the record', async () => {

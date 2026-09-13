@@ -86,6 +86,14 @@ export type KitchenTicket = z.infer<typeof kitchenTicketSchema>;
 /** What every order record carries: who wrote it, on which device, and how to recognise a replay. */
 const orderRecordBase = {
   id: recordIdSchema,
+  /**
+   * Who did it: the person signed in when the record was written, who need not be the one signed in
+   * when it is sent — a phone passed from one waiter to the next sends the first one's records under
+   * the second one's login. Checked against the shop and stamped where a record stamps a person: the
+   * item an add creates, the items a removal or a cancel takes off. A record queued before records
+   * named their author has none, and is credited to whoever sends it.
+   */
+  actorUserId: z.string().min(1).optional(),
   deviceId: z.string().min(1),
   createdAt: timestampSchema,
   payloadHash: payloadHashSchema,

@@ -184,7 +184,7 @@ describe('paying a table', () => {
     const [table] = await harness.backend.orders.listTables();
     const [first, second] = await harness.backend.catalog.listProducts();
     await addToTable(harness.backend, table.id, first);
-    await queueAddToTable(harness.outbox, table.id, second);
+    await queueAddToTable(harness, table.id, second);
 
     await openCounter(harness);
     fireEvent.click(await screen.findByRole('button', { name: new RegExp(table.name) }));

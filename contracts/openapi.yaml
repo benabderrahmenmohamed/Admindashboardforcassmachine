@@ -1195,10 +1195,18 @@ components:
 
     OrderRecord:
       type: object
-      description: What every order event carries - the device that wrote it, possibly offline, and how a replay is recognised.
+      description: What every order event carries - who did it, the device that wrote it, possibly offline, and how a replay is recognised.
       required: [id, device_id, created_at, payload_hash]
       properties:
         id: { $ref: '#/components/schemas/Uuid' }
+        actor_user_id:
+          allOf: [{ $ref: '#/components/schemas/Uuid' }]
+          description: |
+            Who did it: the member signed in on the device when the record was written, who need not be the
+            caller - a phone passed between waiters sends one waiter's records under the next one's login.
+            FORBIDDEN when that person is not a member of the caller's shop. Stamped where the record stamps a
+            person: added_by on the item an add creates, removed_by on the items a removal or a cancel takes
+            off. Absent on a record written before records named their author, and the caller is credited.
         device_id: { type: string, minLength: 1 }
         created_at: { $ref: '#/components/schemas/Timestamp' }
         payload_hash: { $ref: '#/components/schemas/PayloadHash' }

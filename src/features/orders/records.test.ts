@@ -12,6 +12,7 @@ import {
 
 const envelope: OrderEnvelope = {
   id: '11111111-1111-4111-8111-111111111111',
+  actorUserId: 'waiter-1',
   deviceId: 'device-a',
   createdAt: '2026-09-12T10:00:00.000Z',
 };
@@ -82,6 +83,31 @@ describe('buildOrderItemRemoveRecord', () => {
     });
 
     expect(record.reason).toBe('guest changed their mind');
+  });
+
+  it('names who took it off, under the hash, so whoever sends it later cannot change whose it is', async () => {
+    const removal = { itemId: 'item-1', reason: 'guest changed their mind' };
+    const mine = await buildOrderItemRemoveRecord(envelope, removal);
+    const theirs = await buildOrderItemRemoveRecord(
+      { ...envelope, actorUserId: 'waiter-2' },
+      removal,
+    );
+
+    expect(mine.actorUserId).toBe('waiter-1');
+    const { payloadHash: hash, ...rest } = mine;
+    expect(hash).toBe(await payloadHash(rest));
+    expect(theirs.payloadHash).not.toBe(mine.payloadHash);
+  });
+
+  it('refuses a removal that names nobody as its author', async () => {
+    expect(
+      await codeOf(() =>
+        buildOrderItemRemoveRecord(
+          { ...envelope, actorUserId: '' },
+          { itemId: 'item-1', reason: 'guest changed their mind' },
+        ),
+      ),
+    ).toBe('VALIDATION_ERROR');
   });
 
   it('refuses a removal with no reason', async () => {

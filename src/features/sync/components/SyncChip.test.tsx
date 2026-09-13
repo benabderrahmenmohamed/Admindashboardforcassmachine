@@ -1,6 +1,7 @@
 import { screen, within } from '@testing-library/react';
 import type { RouteObject } from 'react-router';
 import { describe, expect, it } from 'vitest';
+import { orderEnvelope } from '@/features/orders/__fixtures__/seedOrders';
 import { buildOrderItemAddRecord } from '@/features/orders/records';
 import { AppError } from '@/lib/errors';
 import { createHarness, type Harness } from '@/test/harness';
@@ -68,11 +69,13 @@ describe('SyncChip', () => {
       throw new AppError('NOT_FOUND', 'The demo café needs a table taken out of service.');
     }
     // An item for a table taken out of service: refused, then given up on with a reason.
-    const stale = await harness.outbox.appendOrder('order_item_add', () =>
-      buildOrderItemAddRecord(
-        { id: crypto.randomUUID(), deviceId: 'waiter-phone', createdAt: new Date().toISOString() },
-        { tableId: retired.id, productId: product.id, qty: 1, note: '' },
-      ),
+    const stale = await harness.outbox.appendOrder('order_item_add', async () =>
+      buildOrderItemAddRecord(await orderEnvelope(harness.backend, 'waiter-phone'), {
+        tableId: retired.id,
+        productId: product.id,
+        qty: 1,
+        note: '',
+      }),
     );
     await harness.runtime.sync();
     await harness.outbox.discard(stale.id, {

@@ -311,13 +311,21 @@ export function deviceId(label = 'a'): string {
 /**
  * An order record as a device writes it: the fields of its kind inside the envelope every kind
  * carries. The hash is over the whole record, so a replay is recognised by id and hash alike.
+ * `actorUserId` names who did it; without one the record is what a device queued before records
+ * named their author, and the caller is credited.
  */
 export function orderRecord<Fields extends object>(
   fields: Fields,
-  options: { readonly id?: string; readonly deviceId?: string; readonly createdAt?: string } = {},
+  options: {
+    readonly id?: string;
+    readonly actorUserId?: string;
+    readonly deviceId?: string;
+    readonly createdAt?: string;
+  } = {},
 ): Promise<Fields & { id: string; deviceId: string; createdAt: string; payloadHash: string }> {
   return withPayloadHash({
     id: options.id ?? newId(),
+    ...(options.actorUserId === undefined ? {} : { actorUserId: options.actorUserId }),
     deviceId: options.deviceId ?? deviceId(),
     createdAt: options.createdAt ?? timestamp(),
     ...fields,

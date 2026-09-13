@@ -1,6 +1,7 @@
 import { fireEvent, screen, waitFor, within } from '@testing-library/react';
 import type { RouteObject } from 'react-router';
 import { describe, expect, it } from 'vitest';
+import { orderEnvelope } from '@/features/orders/__fixtures__/seedOrders';
 import { useTables } from '@/features/orders/hooks/useOrders';
 import { buildOrderItemAddRecord } from '@/features/orders/records';
 import { useProducts } from '@/features/products/hooks/useProducts';
@@ -156,11 +157,13 @@ function putOnTable(
   productId: string,
   qty: number,
 ): Promise<OrderOutboxRecord> {
-  return harness.outbox.appendOrder('order_item_add', () =>
-    buildOrderItemAddRecord(
-      { id: crypto.randomUUID(), deviceId: 'waiter-phone', createdAt: new Date().toISOString() },
-      { tableId, productId, qty, note: '' },
-    ),
+  return harness.outbox.appendOrder('order_item_add', async () =>
+    buildOrderItemAddRecord(await orderEnvelope(harness.backend, 'waiter-phone'), {
+      tableId,
+      productId,
+      qty,
+      note: '',
+    }),
   );
 }
 

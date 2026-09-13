@@ -1,6 +1,7 @@
 import { screen, within } from '@testing-library/react';
 import { describe, expect, it } from 'vitest';
 import type { FacePath } from '@/features/auth/roles';
+import { orderEnvelope } from '@/features/orders/__fixtures__/seedOrders';
 import { buildOrderCancelRecord } from '@/features/orders/records';
 import { AppError } from '@/lib/errors';
 import { createHarness, type DemoLabel } from '@/test/harness';
@@ -43,11 +44,11 @@ describe('the back office', () => {
     if (!table) {
       throw new AppError('NOT_FOUND', 'The demo café has no tables.');
     }
-    const stale = await harness.outbox.appendOrder('order_cancel', () =>
-      buildOrderCancelRecord(
-        { id: crypto.randomUUID(), deviceId: 'owner-till', createdAt: new Date().toISOString() },
-        { tableId: table.id, reason: 'The guests left' },
-      ),
+    const stale = await harness.outbox.appendOrder('order_cancel', async () =>
+      buildOrderCancelRecord(await orderEnvelope(harness.backend, 'owner-till'), {
+        tableId: table.id,
+        reason: 'The guests left',
+      }),
     );
     await harness.runtime.sync();
     await harness.outbox.discard(stale.id, {

@@ -79,6 +79,8 @@ export function meta(overrides: Partial<OutboxMeta> = {}): OutboxMeta {
 export const DEVICE_ID = 'device-outbox-test';
 export const TABLE_ID = uuid(90_006);
 export const ITEM_ID = uuid(90_007);
+/** Who wrote the order records: the waiter holding the phone. */
+export const WAITER_ID = uuid(90_008);
 
 export interface FakeClock extends Clock {
   advance(ms: number): void;
@@ -325,7 +327,7 @@ export async function storedOpen(
 // Order records, built as the waiter's phone and the kitchen screen build them.
 
 function orderEnvelope(id: string, createdAt: string) {
-  return { id, deviceId: DEVICE_ID, createdAt };
+  return { id, actorUserId: WAITER_ID, deviceId: DEVICE_ID, createdAt };
 }
 
 /** The payload of an order record of `kind`, on table TABLE_ID or item ITEM_ID. */

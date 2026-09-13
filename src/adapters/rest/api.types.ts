@@ -744,9 +744,17 @@ export interface components {
             removed_by_name: string;
             removed_reason: string;
         };
-        /** @description What every order event carries - the device that wrote it, possibly offline, and how a replay is recognised. */
+        /** @description What every order event carries - who did it, the device that wrote it, possibly offline, and how a replay is recognised. */
         OrderRecord: {
             id: components["schemas"]["Uuid"];
+            /**
+             * @description Who did it: the member signed in on the device when the record was written, who need not be the
+             *     caller - a phone passed between waiters sends one waiter's records under the next one's login.
+             *     FORBIDDEN when that person is not a member of the caller's shop. Stamped where the record stamps a
+             *     person: added_by on the item an add creates, removed_by on the items a removal or a cancel takes
+             *     off. Absent on a record written before records named their author, and the caller is credited.
+             */
+            actor_user_id?: components["schemas"]["Uuid"];
             device_id: string;
             created_at: components["schemas"]["Timestamp"];
             payload_hash: components["schemas"]["PayloadHash"];

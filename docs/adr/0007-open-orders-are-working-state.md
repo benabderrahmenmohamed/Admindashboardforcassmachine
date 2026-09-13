@@ -2,7 +2,7 @@
 
 **Status:** Accepted. Landed with the café model in v3 Phase 3 (`65fc141`); the device's side of it —
 order records in the outbox, drawn over the server's reads — in v3 Phase 4 (`5b44149`); table management
-and cancelling at the counter in `2e063e1`.
+and cancelling at the counter in `2e063e1`; the author on every order record after Phase 6.
 
 ## Context
 
@@ -65,6 +65,19 @@ stop a waiter's phone for ever.
 cover it stale (`useRealtimeRefresh`). Supabase uses a Realtime channel on those four tables, the memory
 backend an in-process emitter, the REST adapter a poll of `GET /api/v1/open-orders?since=<cursor>`.
 
+### What was revised
+
+**An order record names who did it.** The café model first sent order records without an author, as the
+spec's payloads have none, and the server stamped `added_by` and `removed_by` with whoever sent the record. On a
+phone passed between waiters that is the wrong person: a removal one waiter queued with no network, sent after
+the next one signed in, was reported under the second — in the one report written to catch removals. Every
+order record now carries `actorUserId`, the member signed in when it was written (`useOrderWrites`), under the
+payload hash, so a replay cannot change whose it is. `private.order_actor` already accepted it: the server
+checks that the person belongs to the shop (`FORBIDDEN` otherwise), stamps them where the record stamps a
+person, and `order_records.submitted_by` keeps the login that sent it. A record queued before the change names
+nobody and is credited to its sender. This is the one place the payloads go beyond the spec
+(`OrderRecord.actor_user_id` in `contracts/openapi.yaml`).
+
 ## Consequences
 
 - The ledger holds money and only money. A thousand taps a day stay out of the receipt sequence, and the
@@ -80,10 +93,10 @@ backend an in-process emitter, the REST adapter a poll of `GET /api/v1/open-orde
   `src/features/caisse/payment.ts`).
 - Cost: a discarded order record is a tap that never happened at the table, and the dead-letter list exists
   only on the device that discarded it.
-- Cost: order records carry no author, so the server stamps `added_by` and `removed_by` with whoever is
-  signed in when the record is sent. On a shared tablet, a removal queued by one person and sent after
-  another signs in is reported under the second. `private.order_actor` already accepts an `actor_user_id`;
-  the app does not send one, because the spec's payloads have none.
+- Cost: the author of an order record is the device's word. The server checks only that the person it
+  names belongs to the shop, as it does for the person on a cash session, so a member who calls the RPCs
+  directly could name a colleague in the removed-items report. `order_records.submitted_by` keeps the login that sent every
+  record, but no screen shows it.
 - Order rows accumulate like the ledger. `private.reset_demo_shop` frees the demo café's tables every night;
   a real café keeps its history.
 

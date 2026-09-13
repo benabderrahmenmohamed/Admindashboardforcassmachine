@@ -301,6 +301,108 @@ export function describeOrdersPortContract(makeFixture: MakeFixture): void {
       ).resolves.toEqual([]);
     });
 
+    it('credits the person a record names, who need not be the one who sends it', async () => {
+      const table = await fixture.newTable();
+      const product = await createProduct(fixture, 'Express', 1_900);
+      const waiter = fixture.waiterUser;
+
+      // The waiter handed the phone over before it had a network again: what the waiter did
+      // reaches the server under the admin's login, and stays the waiter's.
+      const added = await fixture.admin.orders.addItem(
+        await orderRecord(
+          { tableId: table.id, productId: product.id, qty: 1, note: '' },
+          { actorUserId: waiter.id },
+        ),
+      );
+      await fixture.admin.orders.send(
+        await orderRecord(
+          { tableId: table.id },
+          { actorUserId: waiter.id, createdAt: minutesAgo(10) },
+        ),
+      );
+      await fixture.admin.orders.removeItem(
+        await orderRecord(
+          { itemId: added.itemId, reason: 'The guest sent it back' },
+          { actorUserId: waiter.id },
+        ),
+      );
+
+      expect(await itemOnTable(fixture, table, added.itemId)).toMatchObject({
+        addedBy: waiter.id,
+        removedBy: waiter.id,
+      });
+
+      // A cancel takes everything still on the table off in the name of whoever cancelled.
+      const left = await addToTable(fixture, table, product);
+      await fixture.waiter.orders.send(
+        await orderRecord({ tableId: table.id }, { createdAt: minutesAgo(5) }),
+      );
+      await fixture.admin.orders.cancelOrder(
+        await orderRecord(
+          { tableId: table.id, reason: 'The guests left' },
+          { actorUserId: fixture.cashierUser.id },
+        ),
+      );
+
+      const report = await fixture.admin.orders.removedAfterSent({
+        from: minutesAgo(60),
+        to: timestamp(),
+      });
+      expect(report.find((line) => line.itemId === added.itemId)).toMatchObject({
+        removedBy: waiter.id,
+        removedByName: waiter.name,
+      });
+      expect(report.find((line) => line.itemId === left.id)).toMatchObject({
+        removedBy: fixture.cashierUser.id,
+        removedByName: fixture.cashierUser.name,
+      });
+    });
+
+    it('refuses an author from outside the shop, and credits the sender of a record that names nobody', async () => {
+      const table = await fixture.newTable();
+      const product = await createProduct(fixture, 'Express', 1_900);
+      const addFields = { tableId: table.id, productId: product.id, qty: 1, note: '' };
+      const stranger = newId();
+
+      const outsider = await failure(
+        fixture.admin.orders.addItem(await orderRecord(addFields, { actorUserId: stranger })),
+        'FORBIDDEN',
+      );
+      expect(outsider.details).toMatchObject({ actorUserId: stranger });
+      await expect(fixture.waiter.orders.openOrder(table.id)).resolves.toBeNull();
+
+      // A record queued before records named their author: the caller did it, as far as anyone
+      // can tell.
+      const unnamed = await fixture.cashier.orders.addItem(await orderRecord(addFields));
+      expect((await itemOnTable(fixture, table, unnamed.itemId))?.addedBy).toBe(
+        fixture.cashierUser.id,
+      );
+
+      const refusedRemoval = await failure(
+        fixture.admin.orders.removeItem(
+          await orderRecord(
+            { itemId: unnamed.itemId, reason: 'The guest sent it back' },
+            { actorUserId: stranger },
+          ),
+        ),
+        'FORBIDDEN',
+      );
+      expect(refusedRemoval.details).toMatchObject({ actorUserId: stranger });
+      await failure(
+        fixture.admin.orders.cancelOrder(
+          await orderRecord(
+            { tableId: table.id, reason: 'The guests left' },
+            { actorUserId: stranger },
+          ),
+        ),
+        'FORBIDDEN',
+      );
+      expect(await itemOnTable(fixture, table, unnamed.itemId)).toMatchObject({
+        removedAt: null,
+        removedBy: null,
+      });
+    });
+
     it('leaves the order open when a table pays in parts, and closes it when nothing is owed', async () => {
       const table = await fixture.newTable();
       const coffee = await createProduct(fixture, 'Express', 1_900);

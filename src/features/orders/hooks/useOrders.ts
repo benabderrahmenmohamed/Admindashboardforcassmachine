@@ -1,6 +1,7 @@
 import { useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useCallback, useMemo, useState } from 'react';
 import { toast } from 'sonner';
+import { useCurrentUser } from '@/features/auth/hooks/useAuth';
 import { useProducts } from '@/features/products/hooks/useProducts';
 import { useOutbox, useOutboxRecords } from '@/features/sync/hooks/useOutbox';
 import { useBackend } from '@/lib/backend-context';
@@ -220,8 +221,13 @@ function newRecordId(): string {
   return crypto.randomUUID();
 }
 
-function envelope(): OrderEnvelope {
-  return { id: newRecordId(), deviceId: deviceId(), createdAt: new Date().toISOString() };
+function envelope(actorUserId: string): OrderEnvelope {
+  return {
+    id: newRecordId(),
+    actorUserId,
+    deviceId: deviceId(),
+    createdAt: new Date().toISOString(),
+  };
 }
 
 export interface AddItemInput {
@@ -259,10 +265,15 @@ export interface OrderWrites {
  * Only this device can refuse at this point — no https to take an id from, a record that does not
  * validate, a queue that could not be written — and that is toasted, worded by the error's code.
  * What the server refuses arrives later as a conflict the queue stops at, which the sync chip shows.
+ *
+ * Every record names the person signed in when it is written. The queue may send it later under
+ * somebody else's login — the phone was passed on — and the server credits the record's author, not
+ * the sender: it is what the report of items removed after they were sent is about.
  */
 export function useOrderWrites(): OrderWrites {
   // Kept whole rather than destructured: the outbox's methods are called on it, like a port's.
   const runtime = useOutbox();
+  const { id: actorUserId } = useCurrentUser();
   const [writing, setWriting] = useState(0);
 
   const write = useCallback(
@@ -272,7 +283,7 @@ export function useOrderWrites(): OrderWrites {
     ): Promise<boolean> => {
       setWriting((count) => count + 1);
       try {
-        await append(envelope());
+        await append(envelope(actorUserId));
         return true;
       } catch (error) {
         toast.error(orderErrorMessage(error, action));
@@ -281,7 +292,7 @@ export function useOrderWrites(): OrderWrites {
         setWriting((count) => count - 1);
       }
     },
-    [],
+    [actorUserId],
   );
 
   return useMemo<OrderWrites>(

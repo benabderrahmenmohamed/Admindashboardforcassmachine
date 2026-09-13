@@ -98,6 +98,8 @@ export const voidReceiptInput = z.object({
 
 const orderRecordInput = {
   id: recordIdSchema,
+  /** Absent on a record queued before records named their author: its sender is credited. */
+  actorUserId: z.string().optional(),
   deviceId: z.string(),
   createdAt: z.string(),
   payloadHash: payloadHashSchema,

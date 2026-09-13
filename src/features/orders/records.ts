@@ -22,9 +22,11 @@ import {
   type OrderSendRecord,
 } from '@/ports';
 
-/** What every order record takes from the device: its id, which device, and when it happened. */
+/** What every order record takes from the device: its id, who did it, which device, and when. */
 export interface OrderEnvelope {
   readonly id: string;
+  /** Whoever is signed in when it happens, which is not always whoever is signed in when it syncs. */
+  readonly actorUserId: string;
   readonly deviceId: string;
   readonly createdAt: string;
 }
