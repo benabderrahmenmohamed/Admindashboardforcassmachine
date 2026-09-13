@@ -32,7 +32,10 @@ values
    '{"provider":"email","providers":["email"]}', '{"name":"Other Admin"}', now(), now(), '', '', '', ''),
   ('00000000-0000-0000-0000-000000000000', 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb2', 'authenticated', 'authenticated',
    'other-cashier@demo.local', extensions.crypt('other-cashier-2026', extensions.gen_salt('bf')), now(),
-   '{"provider":"email","providers":["email"]}', '{"name":"Other Cashier"}', now(), now(), '', '', '', '');
+   '{"provider":"email","providers":["email"]}', '{"name":"Other Cashier"}', now(), now(), '', '', '', ''),
+  ('00000000-0000-0000-0000-000000000000', 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb3', 'authenticated', 'authenticated',
+   'other-waiter@demo.local', extensions.crypt('other-waiter-2026', extensions.gen_salt('bf')), now(),
+   '{"provider":"email","providers":["email"]}', '{"name":"Other Waiter"}', now(), now(), '', '', '', '');
 
 insert into auth.identities (id, user_id, provider_id, identity_data, provider, last_sign_in_at, created_at, updated_at)
 select gen_random_uuid(), u.id, u.id::text,
@@ -43,7 +46,8 @@ where u.id in (
   'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1', 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa2',
   'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa3', 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa4',
   'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa5',
-  'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb1', 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb2'
+  'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb1', 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb2',
+  'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb3'
 );
 
 insert into public.shops (id, name) values
@@ -59,7 +63,9 @@ insert into public.profiles (user_id, shop_id, roles, display_name) values
   ('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa4', '11111111-1111-4111-8111-111111111111', array['kitchen'], 'Demo Kitchen'),
   ('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa5', '11111111-1111-4111-8111-111111111111', array['admin', 'cashier'], 'Demo Owner'),
   ('bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb1', '22222222-2222-4222-8222-222222222222', array['admin'], 'Other Admin'),
-  ('bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb2', '22222222-2222-4222-8222-222222222222', array['cashier'], 'Other Cashier');
+  ('bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb2', '22222222-2222-4222-8222-222222222222', array['cashier'], 'Other Cashier'),
+  -- src/adapters/supabase/security.test.ts: a waiter of shop B reads nothing of shop A's room.
+  ('bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb3', '22222222-2222-4222-8222-222222222222', array['waiter'], 'Other Waiter');
 
 insert into public.shop_settings (shop_id, receipt_footer) values
   ('11111111-1111-4111-8111-111111111111', 'Merci pour votre visite !'),

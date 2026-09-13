@@ -169,6 +169,7 @@ npm run dev
 | `kitchen@demo.local`       | `demo-kitchen-2026`  | kitchen, demo café           |
 | `other-admin@demo.local`   | `other-admin-2026`   | admin, other shop            |
 | `other-cashier@demo.local` | `other-cashier-2026` | cashier, other shop          |
+| `other-waiter@demo.local`  | `other-waiter-2026`  | waiter, other shop           |
 
 These accounts exist only in the local database.
 
