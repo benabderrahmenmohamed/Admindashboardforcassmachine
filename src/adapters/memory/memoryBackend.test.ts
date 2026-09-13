@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { addItem, emptyCart } from '@/features/pos/cart';
+import { addItem, emptyCart } from '@/features/caisse/cart';
 import { buildSaleRecord } from '@/features/sales/records';
 import { buildCloseSessionRecord, buildOpenSessionRecord } from '@/features/sessions/records';
 import { AppError, isAppError, type ErrorCode } from '@/lib/errors';

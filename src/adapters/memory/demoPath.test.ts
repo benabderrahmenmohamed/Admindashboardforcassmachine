@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { addItem, emptyCart, type CartProduct } from '@/features/pos/cart';
+import { addItem, emptyCart, type CartProduct } from '@/features/caisse/cart';
 import { posGate } from '@/features/pos/gate';
 import {
   isNumbered,
