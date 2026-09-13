@@ -33,14 +33,6 @@ import { DeadLetterList } from './DeadLetters';
 import { useRecordNames } from './useRecordNames';
 
 /**
- * The dialog primitive draws its close button as a 16 px icon. Every target on this screen is 44 px,
- * because the waiter's phone opens it, so the button is grown from outside: it is the content's only
- * direct button child.
- */
-const TOUCH_CLOSE =
-  '[&>button:last-child]:flex [&>button:last-child]:size-11 [&>button:last-child]:items-center [&>button:last-child]:justify-center [&>button:last-child]:top-1.5 [&>button:last-child]:right-1.5';
-
-/**
  * The queue of this device where it has stopped: the record the server refused, everything held up
  * behind it, and the ways out. Anyone can send a record again once the cause is gone. Anyone can give
  * up on an order record, saying why, because a stale item on a table the caisse already closed must
@@ -387,7 +379,7 @@ interface VoidDialogProps {
 function VoidDialog({ record, isVoiding, onCancel, onConfirm }: VoidDialogProps) {
   return (
     <Dialog open onOpenChange={(open) => !open && onCancel()}>
-      <DialogContent className={TOUCH_CLOSE}>
+      <DialogContent>
         <DialogHeader>
           <DialogTitle>Void this receipt</DialogTitle>
           <DialogDescription>{voidQuestion(record)}</DialogDescription>
@@ -419,7 +411,7 @@ interface DiscardDialogProps {
 function DiscardDialog({ row, isDiscarding, onCancel, onConfirm }: DiscardDialogProps) {
   return (
     <Dialog open onOpenChange={(open) => !open && onCancel()}>
-      <DialogContent className={TOUCH_CLOSE}>
+      <DialogContent>
         <DialogHeader>
           <DialogTitle>Discard this record</DialogTitle>
           <DialogDescription>

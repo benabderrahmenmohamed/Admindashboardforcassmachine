@@ -28,8 +28,23 @@ function CardHeader({ className, ...props }: React.ComponentProps<'div'>) {
   );
 }
 
-function CardTitle({ className, ...props }: React.ComponentProps<'div'>) {
-  return <h4 data-slot="card-title" className={cn('leading-none', className)} {...props} />;
+/**
+ * A card's title is a heading one level below the page's own title, which every screen draws as its
+ * h1, so the outline a screen reader walks has no gap in it. A card that is the page itself — the
+ * login — passes `as="h1"`. The size stays what it was whatever the level.
+ */
+function CardTitle({
+  className,
+  as: Heading = 'h2',
+  ...props
+}: React.ComponentProps<'h2'> & { as?: 'h1' | 'h2' | 'h3' }) {
+  return (
+    <Heading
+      data-slot="card-title"
+      className={cn('text-base font-medium leading-none', className)}
+      {...props}
+    />
+  );
 }
 
 function CardDescription({ className, ...props }: React.ComponentProps<'div'>) {

@@ -211,6 +211,65 @@ export async function closeSheet(page: Page, sheet: Locator): Promise<void> {
   await expect(sheet).toBeHidden();
 }
 
+// Touch targets
+
+/** The smallest a target may be, each way, on the waiter's phone. */
+export const MIN_TARGET_PX = 44;
+
+/**
+ * Fails unless every target a person can reach on screen now is at least MIN_TARGET_PX wide and tall.
+ * A target is anything focusable or pressable: links, buttons, form fields, switches. What an open
+ * dialog hides from the accessibility tree is not reachable, so it is not counted; neither are the
+ * toasts, which no one taps, nor the invisible focus guards around a dialog.
+ */
+export async function expectTouchTargets(page: Page, where: string): Promise<void> {
+  const small = await page.evaluate(async (min) => {
+    // A dialog zooms in from 95 %: measured mid-animation, a 44 px button reads 43. What runs for
+    // ever — a spinning sync icon — is left out of the wait.
+    const finite = document
+      .getAnimations()
+      .filter((animation) => animation.effect?.getComputedTiming().iterations !== Infinity);
+    await Promise.all(finite.map((animation) => animation.finished.catch(() => undefined)));
+    const selector = [
+      'a[href]',
+      'button',
+      'input:not([type="hidden"])',
+      'select',
+      'textarea',
+      '[role="button"]',
+      '[role="switch"]',
+      '[role="checkbox"]',
+      '[role="link"]',
+      '[tabindex]:not([tabindex="-1"])',
+    ].join(',');
+    const reachable = (element: Element): boolean => {
+      if (element.closest('[aria-hidden="true"], [inert], [data-sonner-toaster]')) {
+        return false;
+      }
+      if (element.hasAttribute('data-radix-focus-guard')) {
+        return false;
+      }
+      const style = getComputedStyle(element);
+      const box = element.getBoundingClientRect();
+      return style.visibility !== 'hidden' && style.display !== 'none' && box.width > 0;
+    };
+    return [...document.querySelectorAll(selector)].filter(reachable).flatMap((element) => {
+      const box = element.getBoundingClientRect();
+      if (box.width >= min && box.height >= min) {
+        return [];
+      }
+      const label =
+        element.getAttribute('aria-label') ??
+        element.textContent?.trim().slice(0, 40) ??
+        element.tagName.toLowerCase();
+      return [
+        `${label || element.tagName.toLowerCase()}: ${Math.round(box.width)}×${Math.round(box.height)}`,
+      ];
+    });
+  }, MIN_TARGET_PX);
+  expect(small, `targets smaller than ${MIN_TARGET_PX} px on ${where}`).toEqual([]);
+}
+
 // The queue
 
 /** Follows the sync chip to the face's Conflicts screen. */

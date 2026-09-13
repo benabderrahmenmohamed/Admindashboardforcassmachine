@@ -5,6 +5,7 @@ import {
   closeSheet,
   confirmPayment,
   continueAs,
+  expectTouchTargets,
   openApp,
   openConflicts,
   openSales,
@@ -121,6 +122,49 @@ test.describe('the café on one device', () => {
     await expect(report).toContainText('balanced');
   });
 
+  test.describe('on a phone', () => {
+    test.use({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
+
+    // Everything a waiter taps is at least 44 px each way: the person holding the phone is standing,
+    // often with a tray. Checked screen by screen, dialogs included, because a dialog's close button
+    // is the kind of target that shrinks without anyone noticing.
+    test('every target on the waiter’s phone is at least 44 px, on every screen', async ({
+      page,
+    }) => {
+      await continueAs(page, 'Waiter');
+      await expect(tableTile(page, 'Salle 1')).toBeVisible();
+      await expectTouchTargets(page, 'the room');
+
+      await openTable(page, 'Salle 1');
+      await expectTouchTargets(page, 'an empty table');
+
+      await page.getByRole('button', { name: 'Add', exact: true }).click();
+      const menu = page.getByRole('dialog', { name: 'Add to the table' });
+      await expect(menu.getByRole('button', { name: /^Café express/ })).toBeVisible();
+      await expectTouchTargets(page, 'the menu');
+      await menu.getByRole('button', { name: /^Café express/ }).click();
+      await expect(menu.getByLabel('Note for the kitchen')).toBeVisible();
+      await expectTouchTargets(page, 'an item being added');
+      await menu.getByRole('button', { name: 'Add to the table' }).click();
+      await page.keyboard.press('Escape');
+      await expect(menu).toBeHidden();
+      await expectTouchTargets(page, 'a table with an item on it');
+
+      await page.getByRole('button', { name: 'Take Café express off the table' }).click();
+      await expect(page.getByLabel('Why is it coming off?')).toBeVisible();
+      await expectTouchTargets(page, 'taking an item off');
+      await page.getByRole('button', { name: 'Keep it' }).click();
+
+      await page.getByRole('link', { name: 'Room' }).click();
+      await page.getByRole('link', { name: 'Menu of the day' }).click();
+      await expect(page.getByRole('heading', { name: 'Menu of the day' })).toBeVisible();
+      await expectTouchTargets(page, 'the menu of the day');
+
+      await openConflicts(page);
+      await expectTouchTargets(page, 'the Conflicts screen');
+    });
+  });
+
   test('an order the server refuses stops the phone until it is discarded with a reason', async ({
     page,
   }) => {
@@ -143,7 +187,7 @@ test.describe('the café on one device', () => {
     await discard.getByRole('button', { name: 'Discard' }).click();
 
     // The record behind it goes out, and the one given up on stays on the phone for the admin.
-    await expect(syncChip(page)).toHaveAccessibleName(/^Sync: Synced, .*1 discarded/);
+    await expect(syncChip(page)).toHaveAccessibleName(/^Sync: Synced .*1 discarded/);
     await expect(conflicts).toContainText('Nothing needs a decision');
     const deadLetters = page.getByRole('region', { name: 'Discarded on this device' });
     await expect(deadLetters).toContainText('The table was out of service');

@@ -65,6 +65,7 @@ export function MenuOfTheDayPage() {
         products={productsQuery.data}
         categories={categoriesQuery.data}
         emptyText="Nothing on the menu yet: the admin adds the café’s products."
+        headingLevel={3}
       />
     </div>
   );

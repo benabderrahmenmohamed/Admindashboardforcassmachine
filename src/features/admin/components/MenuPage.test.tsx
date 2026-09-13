@@ -18,14 +18,20 @@ function rowOf(name: string): HTMLElement {
   return row;
 }
 
+/** The switch of one item, named by the item and its visible label. */
+function switchOf(name: string): Promise<HTMLElement> {
+  return screen.findByRole('switch', { name: `${name} On the menu` });
+}
+
 describe('the admin’s menu', () => {
-  it('groups the menu by category, in the admin’s own order', async () => {
+  it('groups the menu by category, in the admin’s own order, under the screen’s title', async () => {
     const harness = await createHarness({ signedInAs: 'Owner' });
 
     harness.renderScreen(<MenuPage />, { allow: ['admin'] });
 
     expect(await screen.findByText('Boissons fraîches')).toBeDefined();
-    const headings = screen.getAllByRole('heading', { level: 4 }).map((node) => node.textContent);
+    // One level below the page's own heading, so a screen reader's outline has no gap in it.
+    const headings = screen.getAllByRole('heading', { level: 2 }).map((node) => node.textContent);
     expect(headings.indexOf('Boissons fraîches')).toBeLessThan(headings.indexOf('Snacks'));
   });
 
@@ -40,10 +46,9 @@ describe('the admin’s menu', () => {
     expect(
       await screen.findByText(new RegExp(`${soldOut.length} of ${products.length} sold`)),
     ).toBeDefined();
+    expect((await switchOf(soldOut[0].name)).getAttribute('aria-checked')).toBe('false');
     const row = rowOf(soldOut[0].name);
-    expect(
-      within(row).getByRole('button', { name: `Put ${soldOut[0].name} back on` }),
-    ).toBeDefined();
+    expect(within(row).getByText('Sold out')).toBeDefined();
     // textContent, not a text matcher: the money text carries a narrow no-break space that
     // Testing Library's normaliser eats, and the point here is the exact money text.
     expect(row.textContent).toContain(formatTND(soldOut[0].priceMillimes));
@@ -56,9 +61,13 @@ describe('the admin’s menu', () => {
     );
 
     harness.renderScreen(<MenuPage />, { allow: ['admin'] });
-    fireEvent.click(await screen.findByRole('button', { name: `Mark ${onSale.name} sold out` }));
+    const onTheMenu = await switchOf(onSale.name);
+    expect(onTheMenu.getAttribute('aria-checked')).toBe('true');
+    fireEvent.click(onTheMenu);
 
-    expect(await screen.findByRole('button', { name: `Put ${onSale.name} back on` })).toBeDefined();
+    await waitFor(async () => {
+      expect((await switchOf(onSale.name)).getAttribute('aria-checked')).toBe('false');
+    });
     await waitFor(async () => {
       const after = (await harness.backend.catalog.listProducts()).find(
         (product) => product.id === onSale.id,
@@ -73,10 +82,10 @@ describe('the admin’s menu', () => {
     const [soldOut] = await soldOutProducts(harness);
 
     harness.renderScreen(<MenuPage />, { allow: ['admin'] });
-    fireEvent.click(await screen.findByRole('button', { name: `Put ${soldOut.name} back on` }));
+    fireEvent.click(await switchOf(soldOut.name));
 
-    expect(
-      await screen.findByRole('button', { name: `Mark ${soldOut.name} sold out` }),
-    ).toBeDefined();
+    await waitFor(async () => {
+      expect((await switchOf(soldOut.name)).getAttribute('aria-checked')).toBe('true');
+    });
   });
 });

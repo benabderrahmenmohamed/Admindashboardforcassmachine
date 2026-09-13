@@ -51,7 +51,9 @@ export function LoginPage() {
               <ShoppingCart className="w-8 h-8 text-white" />
             </div>
           </div>
-          <CardTitle className="text-2xl font-bold">POS System</CardTitle>
+          <CardTitle as="h1" className="text-2xl font-bold">
+            POS System
+          </CardTitle>
           <CardDescription>Flexible Point of Sale for All Businesses</CardDescription>
         </CardHeader>
         <CardContent className="space-y-6">

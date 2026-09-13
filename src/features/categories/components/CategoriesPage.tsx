@@ -105,6 +105,7 @@ export function CategoriesPage() {
                       <Button
                         variant="ghost"
                         size="sm"
+                        aria-label={`Delete ${category.name}`}
                         onClick={() => void handleDelete(category.id)}
                         disabled={deletingIds.has(category.id)}
                         className="text-red-600 hover:text-red-700 hover:bg-red-50"

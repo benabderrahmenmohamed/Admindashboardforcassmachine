@@ -88,7 +88,7 @@ describe('SyncChip', () => {
     );
 
     // The queue is through, so the chip says so, and counts what was discarded beside it.
-    const chip = await screen.findByRole('link', { name: /^Sync: Synced, .*, 1 discarded\./ });
+    const chip = await screen.findByRole('link', { name: /^Sync: Synced .* 1 discarded\./ });
     expect(chip.getAttribute('href')).toBe('/serveur/conflicts');
     expect(within(chip).getByText('1')).toBeDefined();
     expect(within(chip).getByText('discarded')).toBeDefined();

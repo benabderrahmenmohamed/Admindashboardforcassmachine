@@ -282,9 +282,9 @@ function HeldItems({ items }: { readonly items: readonly RoomItem[] }) {
   return (
     <section aria-labelledby={titleId} className="space-y-2">
       <div>
-        <h4 id={titleId} className="text-sm font-semibold text-gray-900">
+        <h3 id={titleId} className="text-sm font-semibold text-gray-900">
           Not payable yet
-        </h4>
+        </h3>
         <p className="text-sm text-gray-600">Changed on this device, not on the server yet.</p>
       </div>
       <ul className="space-y-2">

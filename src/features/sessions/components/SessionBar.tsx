@@ -24,9 +24,12 @@ export function SessionBar({
     <Card className="mb-4">
       <CardContent className="px-4 py-3 [&:last-child]:pb-3 flex flex-wrap items-center justify-between gap-3">
         <dl className="flex flex-wrap items-center gap-x-6 gap-y-1 text-sm">
+          {/* A list of terms holds only terms and definitions, so the icon goes inside the term. */}
           <div className="flex items-center gap-2">
-            <Monitor className="w-4 h-4 text-gray-500" />
-            <dt className="text-gray-500">Terminal</dt>
+            <dt className="flex items-center gap-2 text-gray-500">
+              <Monitor className="w-4 h-4" aria-hidden="true" />
+              Terminal
+            </dt>
             <dd className="font-semibold text-gray-900">{terminalCode}</dd>
           </div>
           <div className="flex items-center gap-2">

@@ -102,7 +102,8 @@ function TicketCard({
   return (
     <article className={`rounded-xl border-2 p-3 ${waitStyle(ticket.waitedMinutes)}`}>
       <header className="flex items-baseline justify-between mb-2">
-        <h3 className="text-lg font-bold text-gray-900">{ticket.tableName}</h3>
+        {/* The board's own heading is the kitchen's header, an h1: each ticket is one level below. */}
+        <h2 className="text-lg font-bold text-gray-900">{ticket.tableName}</h2>
         <span className="text-sm font-medium text-gray-700">{ticket.waitedMinutes} min</span>
       </header>
 

@@ -49,6 +49,7 @@ export function MenuPage() {
         products={productsQuery.data}
         categories={categoriesQuery.data}
         emptyText="Nothing on the menu yet. Add the café’s products first."
+        headingLevel={2}
       />
     </div>
   );

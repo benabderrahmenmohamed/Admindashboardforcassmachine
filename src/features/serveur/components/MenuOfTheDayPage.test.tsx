@@ -16,8 +16,13 @@ function showMenu(harness: Harness): void {
   });
 }
 
-async function productNamed(harness: Harness, id: string): Promise<Product | undefined> {
+async function productWithId(harness: Harness, id: string): Promise<Product | undefined> {
   return (await harness.backend.catalog.listProducts()).find((product) => product.id === id);
+}
+
+/** The switch of one item, named by the item and its visible label. */
+function switchOf(name: string): Promise<HTMLElement> {
+  return screen.findByRole('switch', { name: `${name} On the menu` });
 }
 
 describe('the waiter’s menu of the day', () => {
@@ -28,11 +33,13 @@ describe('the waiter’s menu of the day', () => {
     );
 
     showMenu(harness);
-    fireEvent.click(await screen.findByRole('button', { name: `Mark ${onSale.name} sold out` }));
+    fireEvent.click(await switchOf(onSale.name));
 
-    expect(await screen.findByRole('button', { name: `Put ${onSale.name} back on` })).toBeDefined();
     await waitFor(async () => {
-      const after = await productNamed(harness, onSale.id);
+      expect((await switchOf(onSale.name)).getAttribute('aria-checked')).toBe('false');
+    });
+    await waitFor(async () => {
+      const after = await productWithId(harness, onSale.id);
       expect(after?.isAvailable).toBe(false);
       expect(after?.priceMillimes).toBe(onSale.priceMillimes);
     });
@@ -46,13 +53,16 @@ describe('the waiter’s menu of the day', () => {
 
     showMenu(harness);
     expect(await screen.findByText('1 item is sold out.', { exact: false })).toBeDefined();
-    fireEvent.click(await screen.findByRole('button', { name: `Put ${soldOut.name} back on` }));
+    // A category's heading sits under the screen's own, which sits under the phone's header.
+    expect(screen.getByRole('heading', { level: 2, name: 'Menu of the day' })).toBeDefined();
+    expect(screen.getAllByRole('heading', { level: 3 }).length).toBeGreaterThan(0);
+    fireEvent.click(await switchOf(soldOut.name));
 
-    expect(
-      await screen.findByRole('button', { name: `Mark ${soldOut.name} sold out` }),
-    ).toBeDefined();
     await waitFor(async () => {
-      expect((await productNamed(harness, soldOut.id))?.isAvailable).toBe(true);
+      expect((await switchOf(soldOut.name)).getAttribute('aria-checked')).toBe('true');
+    });
+    await waitFor(async () => {
+      expect((await productWithId(harness, soldOut.id))?.isAvailable).toBe(true);
     });
   });
 

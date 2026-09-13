@@ -220,12 +220,18 @@ export function ProductsPage() {
                       <TableCell className="font-mono text-sm">{product.barcode || '-'}</TableCell>
                       <TableCell>
                         <div className="flex gap-2">
-                          <Button variant="outline" size="sm" onClick={() => handleEdit(product)}>
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            aria-label={`Edit ${product.name}`}
+                            onClick={() => handleEdit(product)}
+                          >
                             <Pencil className="w-4 h-4" />
                           </Button>
                           <Button
                             variant="outline"
                             size="sm"
+                            aria-label={`Archive ${product.name}`}
                             disabled={deletingIds.has(product.id)}
                             onClick={() => void handleDelete(product.id)}
                           >
