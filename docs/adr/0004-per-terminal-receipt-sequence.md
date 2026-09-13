@@ -15,12 +15,12 @@ refuses is sitting in the queue.
 "the last receipt number used by this terminal, across sales, refunds and voided receipts", and `epoch`,
 "bumped by every registration". A receipt number is `code || '-' || seq`, for example `T1-7`.
 
-**The device allocates, inside the transaction that queues the record.** `append` in
-`src/features/sync/outbox.ts` reads the meta row, takes `seq = meta.lastSeq + 1`, builds the record with that
-number, and calls `storage.appendIfUnchanged({ lastSeq, nextOrdinal }, record, next)`: one transaction that
-stores the record and the new counters, or changes nothing. If another context allocated in between it retries
-with fresh numbers, up to `APPEND_ATTEMPTS` (5), then fails with "Could not reserve the next receipt number."
-So no number is used twice and none is skipped on the device.
+**The device allocates, inside the transaction that queues the record.** `appendSale` in
+`src/features/sync/outbox.ts` reads the queue's meta row, takes `seq = terminal.lastSeq + 1`, builds the record
+with that number, and calls `storage.appendIfUnchanged(stored, record, next)`: one transaction that stores the
+record and the new counters, or changes nothing. If another context allocated in between it retries with
+fresh numbers, up to `APPEND_ATTEMPTS` (5), then fails with "Could not reserve a place in the queue." So no
+number is used twice and none is skipped on the device.
 
 The counters live in the outbox's meta store beside the records for exactly that reason.
 `src/features/terminal/terminalStore.ts` states it: "a counter kept anywhere else could hand the same number
@@ -36,8 +36,8 @@ key `(terminal_id, seq)` on `sales` — and the same on `receipt_voids` — is t
 conflict, bumps `epoch`, and returns the counter and epoch for the new device to adopt. Every record carries
 its `epoch`, and `private.require_epoch` raises `TERMINAL_SUPERSEDED` with `{ terminal_code, current_epoch }`
 at step 4 — before the session and before the numbering — so a device that was superseded stops rather than
-fights over numbers. On the device, `assertCanRegister` refuses to register while records are still
-unfinished, and `registerTerminal` never lowers `lastSeq` for the same terminal row.
+fights over numbers. On the device, `assertCanRegister` refuses to register while a sale, refund or session
+record is still unfinished, and `registerTerminal` never lowers `lastSeq` for the same terminal row.
 
 **A record that can never be accepted is voided, not skipped.** `void_receipt` is admin-only and audited: it
 writes a `receipt_voids` row holding the whole payload, its hash, the error code and a required reason, then
@@ -50,6 +50,20 @@ in `REFUSALS` — `FORBIDDEN`, `NOT_FOUND`, `VALIDATION_ERROR`, `IDEMPOTENCY_CON
 and `UNKNOWN` are deliberately absent: they may hide a record that did arrive. If one did,
 `void_receipt` answers `recorded` for the same id and hash, `replayed` if it was already voided, and
 `IDEMPOTENCY_CONFLICT` for a different payload under that id.
+
+### What was revised
+
+**The café model put the terminal inside the device's queue, and a table between the number and the
+write.** The counters now sit in `OutboxMeta.terminal`, one field of a queue every device has, because a
+waiter's phone queues records too and is never registered (ADR 0008). And a table payment has one more way
+to be refused: `record_sale` checks every line that names an order item in step 7 — active, unpaid, on the
+table's open order, same product, quantity and price — and raises `ORDER_CHANGED` otherwise. That comes
+after the number is checked but before anything is written, so nothing is recorded and `last_seq` stays where
+it was; the port contract suite pins it ("refuses a payment whose line no longer matches the table:
+ORDER_CHANGED, and the number is still free"). The record itself can never match again, so the four order
+codes — `ORDER_CHANGED`, `ORDER_CLOSED`, `ITEM_NOT_FOUND`, `TABLE_INACTIVE` — joined the refusals `canVoid`
+offers a void for: an admin voids it, its number goes to a void row, and the counter reads the table again
+and takes the payment under the next number.
 
 ## Consequences
 

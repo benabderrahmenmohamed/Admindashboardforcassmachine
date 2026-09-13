@@ -34,9 +34,10 @@ In the SQL editor, create the shop and give each real person a profile. Choose m
 ```sql
 insert into public.shops (name) values ('<shop name>') returning id;
 
--- Once per person; check that one row comes back each time.
-insert into public.profiles (user_id, shop_id, role, display_name)
-select u.id, '<shop-id>', 'admin', '<name>' from auth.users u where u.id = '<user-id>'
+-- Once per person; check that one row comes back each time. A member holds one or more of admin,
+-- cashier, waiter and kitchen: the owner who also works the counter is array['admin', 'cashier'].
+insert into public.profiles (user_id, shop_id, roles, display_name)
+select u.id, '<shop-id>', array['admin'], '<name>' from auth.users u where u.id = '<user-id>'
 returning user_id;
 ```
 

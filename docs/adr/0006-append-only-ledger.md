@@ -1,6 +1,7 @@
 # 6. The sales ledger is append-only
 
-**Status:** Accepted. Landed in Phase 3 (`ecc42fe`); the audited demo-reset exception in Phase 5 (`2a9a438`).
+**Status:** Accepted. Landed in Phase 3 (`ecc42fe`); the audited demo-reset exception in Phase 5 (`2a9a438`);
+tables and order items joined it in v3 Phase 3 (`65fc141`).
 
 ## Context
 
@@ -18,7 +19,8 @@ in one place.
    plain client writes anywhere in the schema are `insert (name, color)` and `delete` on `categories` and
    `update (receipt_footer)` on `shop_settings`. Row-level security policies keep each shop's rows to its own
    members. Everything else goes through a `security definer` RPC, and `execute` is granted to `authenticated`
-   on exactly ten functions.
+   on those functions and no others — ten in the first plan, nineteen once the café model added the order
+   writes, the menu of the day, stock adjustment, the removed-after-sent report and the room's tables.
 2. **The service role loses its write privileges.** `insert`, `update`, `delete` and `truncate` are revoked
    from `service_role` on `sales`, `sale_lines`, `stock_movements` and `receipt_voids`. It keeps `select`,
    which tests and support use. A leaked service key can read the ledger; it cannot rewrite it. The old edge
@@ -39,9 +41,11 @@ and refuses a refund of a line's last units that does not pay exactly what remai
 touched: `SaleLineView.refundedQty` and `refundedMillimes` are computed from the refunds pointing at it. A
 numbered record the server can never accept is voided rather than edited away (ADR 0004).
 
-**Stock moves only through movements.** `products.stock` has exactly one writer, `private.move_stock`, which
-inserts a `stock_movements` row in the same call; the movements table is append-only alongside the ledger. A
-product's stock is the sum of its deltas, with reasons `opening`, `adjustment`, `sale`, `refund`. The product
+**Stock moves only through movements.** `products.stock_qty` has exactly one writer, `private.move_stock`,
+which inserts a `stock_movements` row in the same call; the movements table is append-only alongside the
+ledger. A product's stock is the sum of its deltas, with reasons `opening`, `adjustment`, `sale`, `refund`, and
+since the café model only a product with `track_stock` on moves at all — coffee is made to order and not
+counted. The product
 form sends `stockDelta` — counted minus what was shown when the form opened — not a new total
 (`toProductUpdateInput`), so a sale recorded while the form was open is not undone. Stock may go negative: a
 sale that happened is never refused for stock. Products are archived (`archived_at`), never deleted, so sale
@@ -62,6 +66,22 @@ update or delete a sale or its lines, and the rows stay exactly as they were" �
 cashier, the admin **and the service role**, then re-reads the rows and compares them.
 `supabase/tests/database/03_demo_reset.test.sql` covers what the reset keeps, what it removes, and that the
 same deletes are still refused outside it.
+
+### What was revised
+
+**The café model tied the ledger to the room without loosening it.** A sale may name the table it paid
+(`sales.table_id`), and a line the order item it paid (`sale_lines.open_order_item_id`, unique, so an item
+is paid once); the item points back with `paid_sale_id` (ADR 0007). A line gained an id of its own, and a
+refund line points at the line it refunds by that id instead of by line number.
+
+That last change needed the switch once more, in a migration rather than at run time:
+`20260911000010_cafe_schema.sql` turns `pos.ledger_maintenance` on for one `update`, which points every
+refund line written before the café model at the line it refunds, turns it off again, and only then drops the
+old line-number column. It changes no amount and no count, and every earlier receipt reads back as it did.
+
+The nightly reset learned about tables (`20260911000012_demo_reset_orders.sql`): it frees the demo café's
+tables of what was left on them, and keeps an order item together with its order whenever a sale the reset
+keeps paid for it, because that item is part of the document.
 
 ## Consequences
 

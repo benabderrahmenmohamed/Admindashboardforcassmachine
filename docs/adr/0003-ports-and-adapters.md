@@ -1,7 +1,8 @@
 # 3. The UI reaches a backend only through ports
 
 **Status:** Accepted. Ports and the memory and Supabase adapters landed in Phase 2 (`1758053`); the error
-contract and the shared contract suite in Phase 3 (`ecc42fe`); the REST adapter in Phase 5 (`2a9a438`).
+contract and the shared contract suite in Phase 3 (`ecc42fe`); the REST adapter in Phase 5 (`2a9a438`); the
+orders and realtime ports with the café model, v3 Phase 3 (`65fc141`).
 
 ## Context
 
@@ -12,11 +13,11 @@ project is meant to move to.
 
 ## Decision
 
-**Ports.** `src/ports` holds `AuthPort`, `CatalogPort`, `SalesPort`, `SessionsPort`, `SettingsPort` and
-`TerminalsPort`, gathered as `Backend` in `src/ports/index.ts`. Their types are Zod schemas, so an adapter
-parses what it returns rather than asserting it.
+**Ports.** `src/ports` holds `AuthPort`, `CatalogPort`, `OrdersPort`, `RealtimePort`, `SalesPort`,
+`SessionsPort`, `SettingsPort` and `TerminalsPort`, gathered as `Backend` in `src/ports/index.ts`. Their
+types are Zod schemas, so an adapter parses what it returns rather than asserting it.
 
-**One error vocabulary.** Every failure crossing a port is an `AppError` carrying one of the fourteen codes in
+**One error vocabulary.** Every failure crossing a port is an `AppError` carrying one of the eighteen codes in
 `src/lib/errors.ts`, documented in [contracts/errors.md](../../contracts/errors.md). Callers decide from the
 code alone, never the message. `errorClass` maps each code to `retriable`, `auth` or `conflict`, which is
 exactly what the outbox acts on (ADR 0005).
@@ -34,12 +35,13 @@ from `VITE_BACKEND` and `await import()`s one, so a build downloads only the bac
 `src/lib/backend-context.tsx` hands the result to the tree and features reach it through `useBackend`.
 
 **One contract suite for all three.** `src/ports/__contracts__` exports `describeBackendContract(makeFixture)`,
-which runs the auth, catalog, terminals, sessions and sales suites. Each adapter runs it unchanged —
+which runs the auth, catalog, orders, terminals, sessions and sales suites. Each adapter runs it unchanged —
 `src/adapters/memory/contract.test.ts`, `src/adapters/supabase/contract.test.ts`,
-`src/adapters/rest/contract.test.ts`. The suite builds its records with the register's own builders
-(`buildSaleRecord`, `buildRefundRecord`, `buildOpenSessionRecord`), so it sends the payloads the app actually
-writes. Its header states the rule: the database defines the semantics, and each adapter must pass the suite
-unchanged.
+`src/adapters/rest/contract.test.ts`. The fixture signs one backend in per role — admin, cashier, waiter and
+kitchen — because what a role may do is part of the contract. The suite builds its records with the app's own
+builders (`buildSaleRecord`, `buildRefundRecord`, `buildOpenSessionRecord`, the order record builders), so it
+sends the payloads the app actually writes. Its header states the rule: the database defines the semantics,
+and each adapter must pass the suite unchanged.
 
 **Lint enforces the arrangement.** `eslint.config.js`:
 
@@ -49,7 +51,7 @@ unchanged.
 - `src/app`, `src/components`, `src/features` and `src/routes` have `fetch`, `XMLHttpRequest`, `WebSocket` and
   `EventSource` as restricted globals: screens make no requests of their own.
 - Adapters never import each other; what they share lives in `src/lib` or `src/ports`.
-- `src/lib/money.ts` and `src/features/pos/cart.ts` additionally may not import React, the router, TanStack,
+- `src/lib/money.ts` and `src/features/caisse/cart.ts` additionally may not import React, the router, TanStack,
   the backend modules or `@/lib/env`, and may not call `new Date()`, `Date.now`, `Math.random`,
   `crypto.randomUUID` or `crypto.getRandomValues`, or touch `localStorage`, `sessionStorage` or `indexedDB`.
 
@@ -67,11 +69,23 @@ It had to change because the same suite now runs against both: the memory backen
 database refuses, with the same code and the same `details` keys. That is what makes it a reference
 implementation instead of a stub.
 
+**The café model added two ports and four codes.** `OrdersPort` carries the room — tables, the grid,
+each table's open order, the kitchen's tickets, the removed-after-sent report and the five order writes
+(ADR 0007) — and `RealtimePort.subscribe(shopId, listener)` says which kind of row another device changed.
+Each adapter answers it its own way: a Supabase Realtime channel, an in-process emitter in the memory
+backend, and in the REST adapter a poll of `GET /api/v1/open-orders?since=<cursor>` with backoff. The codes
+`ORDER_CHANGED`, `ORDER_CLOSED`, `ITEM_NOT_FOUND` and `TABLE_INACTIVE` joined the vocabulary, all of the
+conflict class. A behaviour the suite has no case for can still drift apart: a duplicate table name reached
+the app from Supabase as a bare constraint violation, `UNKNOWN`, while the memory backend accepted it. It was
+found by reading, and fixed the way everything else here is — `20260913000014_dining_table_names.sql` and
+the memory backend both answer `VALIDATION_ERROR` on the name, and the suite now has the case.
+
 ## Consequences
 
 - Three implementations of every behaviour. A new port method is three adapters plus a case in the suite.
-- The credential-free demo and the Playwright offline spec are possible at all, because the memory backend is
-  a real backend with faults and connectivity (`createFaultInjector`, `defaultConnectivity`).
+- The credential-free demo and the Playwright specs are possible at all, because the memory backend is a real
+  backend with faults, connectivity and live updates (`createFaultInjector`, `defaultConnectivity`, its
+  realtime emitter).
 - Cost: the contract suite is the slowest part of the test run, and two of its three runs need something
   outside the process — a local Supabase stack (`CONTRACT_BACKEND=supabase`) or MSW. CI runs the Supabase one
   only on pull requests to `main`.
@@ -85,8 +99,8 @@ implementation instead of a stub.
 
 - **Call Supabase from hooks and mock it in tests.** A mock drifts from the database and cannot be run against
   it; a credential-free demo would then be a second mock, drifting separately.
-- **One `ApiClient` interface instead of six ports.** Sales, sessions and the catalog have different shapes
-  and different callers. Six small ports keep a test fixture small.
+- **One `ApiClient` interface instead of eight ports.** Sales, sessions, the room and the catalog have
+  different shapes and different callers. Small ports keep a test fixture small.
 - **A folder convention with no lint rules.** A single `import { supabase }` in a component silently undoes the
   arrangement; Phase 2 added the rules for that reason.
 - **Generated clients as the port type.** The port types are what the UI wants to work with.

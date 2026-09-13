@@ -1,6 +1,7 @@
 # 5. Records are queued on the device before any network call
 
-**Status:** Accepted. Landed in Phase 4 (`8c57cf9`, "sell with no network, drain exactly once").
+**Status:** Accepted. Landed in Phase 4 (`8c57cf9`, "sell with no network, drain exactly once"); one queue
+per device, order records and discarding in v3 Phase 4 (`5b44149`); retention in `45322ff`.
 
 ## Context
 
@@ -17,8 +18,8 @@ record to the outbox, shows the receipt with `recordedMessage`, invalidates the 
 nothing on a screen ever waits for the server.
 
 **Every record has an ordinal.** `OutboxRecord` carries `ordinal` (drain order across sales, refunds, session
-opens and closes), `status`, `attempts`, `nextAttemptAt`, `lastError`, `result`, `ackedAt`, and the payload
-exactly as it was written and hashed.
+opens and closes, and the five order kinds of the café model), `status`, `attempts`, `nextAttemptAt`,
+`lastError`, `result`, `ackedAt`, and the payload exactly as it was written and hashed.
 
 **Drain in ordinal order, stopping at the first record that cannot go.** `pass()` takes
 `storage.firstUnfinished()` — the lowest ordinal that is pending, sending or in conflict — and loops. Nothing
@@ -39,14 +40,15 @@ that died left marked `sending`.
 - **auth** — the queue pauses. The record and its attempt count are untouched, so a wrong password costs
   nothing; the pass resumes when there is a session again.
 - **conflict** — the record becomes `conflict` and the queue stops there (`{ state: 'blocked', recordId }`).
-  Later records stay pending behind it until a person retries or voids it.
+  Later records stay pending behind it until a person retries it, voids it (a numbered record, admin only) or
+  discards it with a reason (an order record only — see What was revised).
 
 **Reconnecting brings a waiting retry forward.** `schedule.onOnline` calls `outbox.wakeNow()`, which sets
 `nextAttemptAt = now` on every pending record still waiting, then drains. Attempt counts are left as they are,
 so a record that fails again waits as long as it had earned.
 
 The other triggers are app start, every `DRAIN_INTERVAL_MS` (30 s), every change the outbox makes — an append,
-a retry, a resolved void — and a timer for the earliest `retryAt`.
+a retry, a resolved void, a discard, a prune — and a timer for the earliest `retryAt`.
 
 **Storage** is IndexedDB for a backend with a server behind it and memory for the demo, whose data starts empty
 on every reload anyway (`createOutboxStorage`).
@@ -70,6 +72,14 @@ registration is dropped, because its terminal and epoch are unknown. Both keys a
 registered, so the meta row became `OutboxMeta { nextOrdinal, terminal: TerminalMeta | null }` and the drain
 lock is the one name `DRAIN_LOCK_NAME = 'outbox'`. Sales, refunds and session records still need the
 registration; order records do not.
+
+**An order record may be given up on; a ledger record never.** The outbox gained `discard(id, { reason,
+discardedBy, discardedByName })`, which refuses anything but an order record in conflict and a blank reason,
+and moves the record to `discarded`: out of the queue's way, kept on the device in its dead-letter list, with
+who gave up on it by name, because a phone has no staff list to look an account up in. A sale, a refund or a
+session record is only ever retried or voided. The screens draw the queue's order records over the server's
+reads (ADR 0007), so a tap shows on the table at once and a queued table payment keeps its rows from being
+charged twice.
 
 **Records the server has had for a week are deleted.** Every tap of a busy café is a record and every screen
 reads the whole queue on each change, so a queue that only grew would slow a cheap phone down within weeks.
@@ -109,8 +119,9 @@ queue's state.
   ledger's order would become the network's order.
 - **Skip a conflicting record and keep sending.** Later records carry later numbers; accepting them leaves a
   gap that nothing explains (ADR 0004). The queue stops instead, and a person decides.
-- **A retry limit, or a dead-letter queue.** A dropped sale is money the shop cannot account for. Retriable
-  failures are, by definition, ones that can succeed later.
+- **A retry limit, or a dead-letter queue for every kind of record.** A dropped sale is money the shop cannot
+  account for, and retriable failures are, by definition, ones that can succeed later. The dead-letter list
+  the café model added is for order records only, and only a person puts a record there, with a reason.
 - **`BroadcastChannel` or a hand-rolled leader election instead of Web Locks.** A Web Lock is released when the
   tab dies; an elected leader that crashes holds the queue until something notices.
 - **Service worker background sync.** Not available in every browser the shop may use, and the register is open

@@ -1,6 +1,7 @@
 # 2. Money is integer millimes
 
-**Status:** Accepted. Landed in Phase 2 (`1758053`). `src/lib/money.ts` has not changed since.
+**Status:** Accepted. Landed in Phase 2 (`1758053`). `src/lib/money.ts` has not changed since; what the
+ledger stores of a discount was revised for the ledger in Phase 3 and for the café in v3 Phase 3 (below).
 
 ## Context
 
@@ -49,17 +50,30 @@ the discounts and the document totals.
 
 ### What was revised
 
-**The cart discount is allocated across lines, not applied once on the subtotal.** `Cart.discountBasisPoints`
-is still documented as "applied once to the subtotal" — that comment is a leftover and is wrong. `totals()`
-rounds once on the subtotal with `pct`, then shares that single rounded amount across lines with `allocate`,
-weighted by each line's net, and `CartTotals` documents it that way.
+**The cart discount is allocated across lines, not applied once on the subtotal.** `totals()` in
+`src/features/caisse/cart.ts` rounds once on the subtotal with `pct`, then shares that single rounded amount
+across the lines with `allocate`, weighted by each line's net, and `Cart` and `CartTotals` document it that
+way.
 
 The ledger forced the change. Phase 2's port had no discount at all: `RecordSaleInput` was
-`{ lines, paymentMethod }`. Phase 3 gave `saleLineSchema` a `cartDiscountShareMillimes`, gave `sale_lines` a
-`cart_discount_share_millimes` column, and made `record_sale` recompute the document's discount as the sum of
-the line shares (`v_discount := v_discount + v_share`) before comparing it with the claimed
-`discount_millimes`. A discount that existed only on the subtotal would not match its lines, and the record
-would be refused.
+`{ lines, paymentMethod }`. Phase 3 gave every sale line its share of the cart discount and made
+`record_sale` recompute the document's discount as the sum of the line shares before comparing it with the
+claimed one. A discount that existed only on the subtotal would not match its lines, and the record would be
+refused.
+
+**The café model gave a line a discount of its own, with a reason.** An "offert" — a coffee given away
+because the kitchen got it wrong — is money taken off one line at payment, which the spec allows a cashier
+or an admin and only with a reason. `saleLineSchema` now carries `lineDiscountMillimes` and
+`lineDiscountReason` (refused when the discount is non-zero and the reason is blank), then
+`allocatedDiscountMillimes`, the line's share of the cart discount, and `netMillimes`, which is
+`qty × unit price − line discount − allocated discount`; the lines' nets add up to the document's total
+exactly. The columns were renamed rather than re-created (`20260911000010_cafe_schema.sql`):
+`cart_discount_share_millimes` became `allocated_discount_millimes` and `sales.discount_millimes` became
+`cart_discount_millimes`, while the column behind `netMillimes` kept its name, `line_total_millimes`, so
+every earlier receipt reads back the same. The cart keeps its own words for the
+same amounts: its `cartDiscountShareMillimes` and `totalMillimes` are the ledger's
+`allocatedDiscountMillimes` and `netMillimes` (`buildSaleRecord` maps one to the other). A line discount can
+only be set through `offerLine`, which refuses a missing reason.
 
 Refunds split a line by a different rule, for the same reason. `refundShare` in
 `src/features/sales/records.ts` uses cumulative floor, `C(x) = floor(net × x / units)`, so however a line is

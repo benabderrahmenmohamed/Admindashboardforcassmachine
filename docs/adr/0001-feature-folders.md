@@ -27,28 +27,39 @@ src/features/<feature>/
 src/ports/      the interfaces the UI may call (ADR 0003)
 src/adapters/   the implementations: memory, supabase, rest
 src/lib/        cross-feature helpers: money, errors, payloadHash, env, query, backend
-src/routes/     router.tsx, ProtectedRoute, the two layouts
+src/routes/     appRoutes.tsx, ProtectedRoute, a layout per face
 src/components/ui/  shared shadcn/ui components
 ```
 
-The ten features are `auth`, `categories`, `dashboard`, `pos`, `products`, `sales`, `sessions`, `settings`,
-`sync` and `terminal`. The rules of a feature sit at its root as ordinary modules and are unit-tested
-directly: `src/features/pos/cart.ts`, `gate.ts`, `queue.ts`, `recording.ts`, `selling.ts`,
-`src/features/sales/records.ts`, `src/features/sessions/zReport.ts`, `src/features/sync/outbox.ts`. Each one
-says in its header that it runs without a DOM.
+The sixteen features are `admin`, `auth`, `caisse`, `categories`, `dashboard`, `kitchen`, `menu`, `orders`,
+`pos`, `products`, `sales`, `serveur`, `sessions`, `settings`, `sync` and `terminal`. The rules of a feature
+sit at its root as ordinary modules and are unit-tested directly: `src/features/caisse/cart.ts` and
+`payment.ts`, `src/features/orders/overlay.ts`, `tableOrder.ts` and `board.ts`, `src/features/pos/gate.ts`,
+`queue.ts` and `recording.ts`, `src/features/sales/records.ts`, `src/features/sessions/zReport.ts`,
+`src/features/sync/outbox.ts` and `retention.ts`. Each one says in its header that it runs without a DOM.
 
-Routing moved out of the features: `src/routes/router.tsx` composes the routes and wraps them in
-`ProtectedRoute`, which is where `allow={['admin']}` and `allow={['cashier']}` live.
+Routing stays out of the features: `src/routes/appRoutes.tsx` composes the four faces — `/admin`,
+`/caisse`, `/serveur`, `/kitchen` — and wraps each in `ProtectedRoute` with the roles that
+`FACES` in `src/features/auth/roles.ts` allows it.
+
+### What was revised
+
+**The café model added six features and turned two layouts into four faces.** `orders` holds the room — what
+is on each table, drawn over the server's read (ADR 0007); `caisse`, `serveur` and `kitchen` are three of
+the four faces; `menu` is the menu of the day both the back office and the waiter's phone draw; `admin`
+holds the back office's café screens. The two layouts became one per face. The register's cart moved from
+`pos` to `caisse`, where the spec puts it, and its old path was deleted once nothing imported it; `pos`
+kept what every till shares — the queue's view of a register, the gate, the wording of a record's state.
 
 ## Consequences
 
-- A screen's rules are testable without rendering it. `cart.test.ts`, `gate.test.ts`, `queue.test.ts`,
-  `zReport.test.ts` and `outbox.test.ts` run in the node environment.
-- The POS is now eighteen source modules under `src/features/pos` where it was one file. That is more files
+- A screen's rules are testable without rendering it. `cart.test.ts`, `payment.test.ts`, `overlay.test.ts`,
+  `gate.test.ts`, `queue.test.ts`, `zReport.test.ts` and `outbox.test.ts` run in the node environment.
+- The export's one POS file is now spread across `caisse`, `pos`, `sales` and `sessions`. That is more files
   to open and more imports to follow, and the cost is real for a small change.
 - Features import each other: `src/features/pos/queue.ts` pulls from `@/features/sessions/zReport` and
   `@/features/sync/types`. Nothing enforces a dependency direction between features — the only boundaries
-  ESLint checks are ports/adapters and the purity of `src/lib/money.ts` and `src/features/pos/cart.ts`
+  ESLint checks are ports/adapters and the purity of `src/lib/money.ts` and `src/features/caisse/cart.ts`
   (ADR 0003). Feature coupling is a review question, not a build error.
 - `src/features/*/types.ts` is mostly a re-export of port types. It is a second thin layer to keep in step
   with `src/ports`.
