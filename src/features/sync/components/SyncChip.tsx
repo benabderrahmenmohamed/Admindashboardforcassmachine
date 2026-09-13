@@ -51,18 +51,20 @@ export function SyncChip({ conflictsPath }: { readonly conflictsPath: string }) 
       // The words on the chip, in the order they are shown and with nothing between them, then the
       // sentence behind them: whoever can read the chip hears the same words first.
       aria-label={`Sync: ${view.label} ${view.lastAck}${discarded}. ${view.detail}`}
-      className={`inline-flex min-h-11 items-center gap-2 rounded-lg border px-3 py-2 transition-colors ${TONE_STYLES[view.tone]}`}
+      // Wraps between its parts and never inside one: where it is narrow, as in the admin's sidebar,
+      // the badge goes under the state instead of squeezing "last sent just now" word by word.
+      className={`inline-flex min-h-11 flex-wrap items-center gap-x-2 gap-y-1 rounded-lg border px-3 py-2 transition-colors ${TONE_STYLES[view.tone]}`}
     >
       <Icon
         className={`w-4 h-4 shrink-0 ${view.tone === 'working' ? 'animate-spin' : ''}`}
         aria-hidden="true"
       />
       {/* The spaces are for whatever reads the text in one run; the flex gap does the layout. */}
-      <span className="text-sm font-semibold">{view.label}</span>{' '}
-      <span className="hidden sm:inline text-xs">{view.lastAck}</span>{' '}
+      <span className="whitespace-nowrap text-sm font-semibold">{view.label}</span>{' '}
+      <span className="hidden whitespace-nowrap text-xs sm:inline">{view.lastAck}</span>{' '}
       {view.discarded && (
         // Grey whatever the tone, so a dead-letter list never reads louder than a live conflict.
-        <span className="inline-flex items-center gap-1 rounded-full border border-gray-300 bg-white px-1.5 text-xs font-medium text-gray-700">
+        <span className="inline-flex items-center gap-1 whitespace-nowrap rounded-full border border-gray-300 bg-white px-1.5 text-xs font-medium text-gray-700">
           <Archive className="h-3 w-3" aria-hidden="true" />
           {view.discarded.count}
           <span className="hidden sm:inline"> discarded</span>
