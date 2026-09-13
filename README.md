@@ -30,7 +30,7 @@ Point-of-sale screen and back-office dashboard for a cash register in a Tunisian
 - React Router 7, TanStack Query, react-hook-form with Zod
 - Ports and adapters: an in-memory backend for tests and the demo, and a Supabase backend over tables with row-level security and transactional RPCs
 - Supabase CLI for the local stack, pgTAP for database tests
-- ESLint (typescript-eslint, react-hooks), Prettier, Vitest with Testing Library, MSW for the REST contract tests, Playwright for the offline end-to-end spec
+- ESLint (typescript-eslint, react-hooks), Prettier, Vitest with Testing Library, MSW for the REST contract tests, Playwright for the end-to-end specs (one device on the in-browser demo, three devices on a local Supabase stack)
 
 ## Architecture
 
@@ -98,12 +98,16 @@ npm install
 npm run dev:demo
 ```
 
-Open http://localhost:5173. The backend lives in the browser and starts empty again on every reload.
+Open http://localhost:5173. The backend lives in the browser and starts empty again on every reload. The demo accounts take the one device in turn, as a small café's tablet is passed round:
 
-1. **Continue as Admin**, open **Settings** and register this device as terminal `T1`. Log out.
-2. **Continue as Cashier**, open a session with an opening float, sell, refund from **Sales**, and close the session to see the Z-report.
+1. **Continue as Owner** (admin and cashier), open **Settings** and register this device as terminal `T1`. Log out.
+2. **Continue as Waiter**, open a table, add from the menu and **Send** it to the kitchen. Log out.
+3. **Continue as Kitchen** and mark what was sent prepared. Log out.
+4. **Continue as Cashier**, open a session with an opening float, pay the table, and close the session to see the Z-report.
 
-A reload starts the whole device over: the backend, the queue and this device's terminal registration all go, because the demo clears them at boot rather than replay records into a shop that no longer exists. Repeat step 1 to register `T1` before selling again.
+Switch the browser to offline at any step: taps and payments are kept on the device and go out when the connection is back.
+
+A reload starts the whole device over: the backend, the queue and this device's terminal registration all go, because the demo clears them at boot rather than replay records into a café that no longer exists. Repeat step 1 to register `T1` before paying again.
 
 ### Local Supabase
 
@@ -114,19 +118,22 @@ npm run db:start
 npm run db:reset
 ```
 
-`db:reset` applies `supabase/migrations/` and loads `supabase/seed.sql`: a demo shop with a dozen products, and a second shop the isolation tests use. Copy the API URL and anon key printed by `npx supabase status` into `.env`:
+`db:reset` applies `supabase/migrations/` and loads `supabase/seed.sql`: a demo café with eight tables, two terminals and a dozen things on the menu, and a second shop the isolation tests use. Copy the API URL and anon key printed by `npx supabase status` into `.env`:
 
 ```bash
 cp .env.example .env
 npm run dev
 ```
 
-| Account                    | Password             | Role                |
-| -------------------------- | -------------------- | ------------------- |
-| `admin@demo.local`         | `demo-admin-2026`    | admin, demo shop    |
-| `cashier@demo.local`       | `demo-cashier-2026`  | cashier, demo shop  |
-| `other-admin@demo.local`   | `other-admin-2026`   | admin, other shop   |
-| `other-cashier@demo.local` | `other-cashier-2026` | cashier, other shop |
+| Account                    | Password             | Roles                        |
+| -------------------------- | -------------------- | ---------------------------- |
+| `owner@demo.local`         | `demo-owner-2026`    | admin and cashier, demo café |
+| `admin@demo.local`         | `demo-admin-2026`    | admin, demo café             |
+| `cashier@demo.local`       | `demo-cashier-2026`  | cashier, demo café           |
+| `waiter@demo.local`        | `demo-waiter-2026`   | waiter, demo café            |
+| `kitchen@demo.local`       | `demo-kitchen-2026`  | kitchen, demo café           |
+| `other-admin@demo.local`   | `other-admin-2026`   | admin, other shop            |
+| `other-cashier@demo.local` | `other-cashier-2026` | cashier, other shop          |
 
 These accounts exist only in the local database.
 
@@ -145,32 +152,34 @@ Never run migrations against a hosted project from a script in this repo. To mov
 
 Vite inlines these values at build time, so a change needs a rebuild. `.env.demo` sets `VITE_BACKEND=memory` for `npm run dev:demo`.
 
-The contract and security tests against the local stack read these from the environment, never from `.env`:
+The tests against the local stack read these from the environment, never from `.env`:
 
 | Variable                    | Description                                                                                        |
 | --------------------------- | -------------------------------------------------------------------------------------------------- |
 | `CONTRACT_BACKEND`          | Set to `supabase` to run the Supabase contract and security tests.                                 |
+| `E2E_BACKEND`               | Set to `supabase` to add the three-device Playwright spec (it reads the two variables below too).  |
 | `SUPABASE_URL`              | Local API URL from `npx supabase status`.                                                          |
 | `SUPABASE_ANON_KEY`         | Local anon key.                                                                                    |
 | `SUPABASE_SERVICE_ROLE_KEY` | Local service role key: re-reads rows and tries the writes nobody may make, in the security tests. |
 
 ## Scripts
 
-| Command             | What it does                                                                  |
-| ------------------- | ----------------------------------------------------------------------------- |
-| `npm run dev`       | Start the dev server with the backend from `.env`.                            |
-| `npm run dev:demo`  | Start the dev server with the in-memory demo backend.                         |
-| `npm run build`     | Build for production into `dist/`.                                            |
-| `npm run preview`   | Serve the production build locally.                                           |
-| `npm run lint`      | Run ESLint (no warnings allowed) and Prettier check.                          |
-| `npm run format`    | Format the codebase with Prettier.                                            |
-| `npm run typecheck` | Type-check with `tsc --noEmit`.                                               |
-| `npm test`          | Run the Vitest suite, including the contract suite on the memory backend.     |
-| `npm run db:start`  | Start the local Supabase stack (Docker).                                      |
-| `npm run db:stop`   | Stop it.                                                                      |
-| `npm run db:reset`  | Re-create the local database from the migrations and the seed.                |
-| `npm run db:test`   | Run the pgTAP tests in `supabase/tests/database`.                             |
-| `npm run db:types`  | Regenerate `src/adapters/supabase/database.types.ts` from the local database. |
+| Command             | What it does                                                                                                                                                                       |
+| ------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `npm run dev`       | Start the dev server with the backend from `.env`.                                                                                                                                 |
+| `npm run dev:demo`  | Start the dev server with the in-memory demo backend.                                                                                                                              |
+| `npm run build`     | Build for production into `dist/`.                                                                                                                                                 |
+| `npm run preview`   | Serve the production build locally.                                                                                                                                                |
+| `npm run lint`      | Run ESLint (no warnings allowed) and Prettier check.                                                                                                                               |
+| `npm run format`    | Format the codebase with Prettier.                                                                                                                                                 |
+| `npm run typecheck` | Type-check with `tsc --noEmit`.                                                                                                                                                    |
+| `npm test`          | Run the Vitest suite, including the contract suite on the memory backend.                                                                                                          |
+| `npm run test:e2e`  | Run the Playwright specs: the café on one device against the in-browser demo, and with `E2E_BACKEND=supabase` the waiter, kitchen and counter as three devices on the local stack. |
+| `npm run db:start`  | Start the local Supabase stack (Docker).                                                                                                                                           |
+| `npm run db:stop`   | Stop it.                                                                                                                                                                           |
+| `npm run db:reset`  | Re-create the local database from the migrations and the seed.                                                                                                                     |
+| `npm run db:test`   | Run the pgTAP tests in `supabase/tests/database`.                                                                                                                                  |
+| `npm run db:types`  | Regenerate `src/adapters/supabase/database.types.ts` from the local database.                                                                                                      |
 
 ## Database
 
@@ -220,9 +229,9 @@ docker build \
 
 Nothing comes from `.env`: `.dockerignore` keeps it out of the build context, along with the host's `node_modules`, which are built for the wrong platform.
 
-`index.html` and `sw.js` are served with `no-cache`, so a release is picked up on the next visit and a browser never holds an old service worker. `/assets/` is immutable, because those file names change whenever their contents do. Every other path falls back to the app shell.
+`index.html`, `sw.js` and `manifest.webmanifest` are served with `no-cache`, so a release is picked up on the next visit and a browser never holds an old service worker; the manifest goes out as `application/manifest+json`, which nginx does not know by itself. `/assets/` is immutable, because those file names change whenever their contents do. Every other path — `/serveur`, `/caisse`, `/kitchen`, `/admin` and everything under them — falls back to the app shell.
 
-`.github/workflows/ci.yml` runs lint, typecheck, the Vitest suite and a build on every push, the Playwright offline-selling spec after it, and — only on pull requests to `main` — the pgTAP tests and the port contract suite against a local Supabase stack.
+`.github/workflows/ci.yml` runs lint, typecheck, the Vitest suite and a build on every push, then the Playwright spec of the café on one device. On pull requests to `main`, and when started by hand, it also brings up a local Supabase stack with realtime and runs the pgTAP tests, the port contract suite and the three-device Playwright spec against it.
 
 ### Deploy it to a static host
 
@@ -239,7 +248,7 @@ The app is static files, so any host that can serve `dist/` works. Whatever you 
 
 The **public demo** is what `VITE_BACKEND=memory` builds, and what the container image and the Netlify site serve by default. Each visitor gets their own backend, starting empty; a reload empties it again. There is no account to create, no server to reach and nothing anyone can break for anyone else.
 
-The **Supabase demo** is a real shop in a hosted project, published with a cashier and an admin login so the ledger, the Z-reports and the sync behaviour can be seen against a real database. Because the sales ledger is append-only — nobody, not even the service role, can update or delete a row — a demo shop needs a way back to its starting state. `private.reset_demo_shop` is it: it removes the trading history of the shop's closed sessions and recomputes stock from the movements that are left. It keeps the open session and everything in it, any sale a kept refund points at, and the terminals' `last_seq`, so receipt numbering never repeats. It is the only path allowed to delete ledger rows, and it refuses any shop not listed in `private.demo_shops`.
+The **Supabase demo** is a real café in a hosted project, published with a login for each role — owner, waiter, kitchen, cashier — so the faces can be opened on different devices at once and the room, the ledger, the Z-reports and the sync behaviour seen against a real database. Because the sales ledger is append-only — nobody, not even the service role, can update or delete a row — a demo café needs a way back to its starting state. `private.reset_demo_shop` is it: it removes the trading history of the shop's closed sessions, frees the tables of what was left on them, and recomputes stock from the movements that are left. It keeps the open session and everything in it, any sale a kept refund points at together with the order items it paid, and the terminals' `last_seq`, so receipt numbering never repeats. It is the only path allowed to delete ledger rows, and it refuses any shop not listed in `private.demo_shops`.
 
 To schedule it, run `supabase/scripts/schedule_demo_reset.sql` once in the SQL editor of the demo project, with the demo shop's id filled in. It needs the `pg_cron` extension, and it belongs on a demo project only — never on a shop's real project. `supabase/tests/database/03_demo_reset.test.sql` covers what the reset keeps, what it removes, and that the same deletes are still refused outside it.
 

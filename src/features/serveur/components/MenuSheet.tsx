@@ -4,7 +4,7 @@ import { ErrorState, LoadingState } from '@/components/feedback';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Sheet, SheetContent } from '@/components/ui/sheet';
+import { Sheet, SheetContent, SheetTitle } from '@/components/ui/sheet';
 import { useCategories } from '@/features/categories/hooks/useCategories';
 import { availableProducts, filterProducts } from '@/features/menu/menu';
 import { useProducts } from '@/features/products/hooks/useProducts';
@@ -67,22 +67,23 @@ export function MenuSheet({
   };
 
   const body = () => {
-    if (productsQuery.isPending || categoriesQuery.isPending) {
+    if (productsQuery.isPending) {
       return <LoadingState />;
     }
-    if (productsQuery.isLoadingError || categoriesQuery.isLoadingError) {
+    if (productsQuery.isLoadingError) {
       return (
         <ErrorState
           title="Failed to load the menu"
-          error={productsQuery.error ?? categoriesQuery.error}
-          onRetry={() => {
-            if (productsQuery.isError) void productsQuery.refetch();
-            if (categoriesQuery.isError) void categoriesQuery.refetch();
-          }}
+          error={productsQuery.error}
+          onRetry={() => void productsQuery.refetch()}
         />
       );
     }
 
+    // The chips wait for the categories; the menu does not. A phone that went offline before it ever
+    // opened the menu has the products — the room reads them — but may never have read a category,
+    // and a waiter must still be able to put something on the table.
+    const categories = categoriesQuery.data ?? [];
     const menu = filterProducts(availableProducts(productsQuery.data), search, categoryId);
     if (chosen) {
       return (
@@ -113,7 +114,7 @@ export function MenuSheet({
             isActive={categoryId === null}
             onClick={() => setCategoryId(null)}
           />
-          {categoriesQuery.data.map((category) => (
+          {categories.map((category) => (
             <CategoryChip
               key={category.id}
               label={category.name}
@@ -148,8 +149,13 @@ export function MenuSheet({
 
   return (
     <Sheet open={open} onOpenChange={close}>
-      <SheetContent side="bottom" className="h-[85vh] flex flex-col gap-2 p-3">
-        <h2 className="text-lg font-bold text-gray-900">Add to the table</h2>
+      {/* The title names the sheet for a screen reader; there is no description to point at. */}
+      <SheetContent
+        side="bottom"
+        className="h-[85vh] flex flex-col gap-2 p-3"
+        aria-describedby={undefined}
+      >
+        <SheetTitle className="text-lg font-bold text-gray-900">Add to the table</SheetTitle>
         {body()}
       </SheetContent>
     </Sheet>

@@ -1,5 +1,5 @@
 import { fireEvent, screen, waitFor, within } from '@testing-library/react';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { addToTable, sendTable } from '@/features/orders/__fixtures__/seedOrders';
 import { itemStage } from '@/features/orders/tableOrder';
 import type { Backend, DiningTable } from '@/ports';
@@ -113,6 +113,21 @@ describe('a table on the waiter’s phone', () => {
     expect(order?.items.map((item) => [item.id, item.nameSnapshot])).toEqual([
       [record.id, 'Café express'],
     ]);
+  });
+
+  it('opens the menu on a phone that never read the categories, chips aside', async () => {
+    const harness = await createHarness({ signedInAs: 'Waiter' });
+    const table = await firstTable(harness.backend);
+    // The phone lost its network before it ever opened the menu: the categories never arrive.
+    vi.spyOn(harness.backend.catalog, 'listCategories').mockReturnValue(new Promise(() => {}));
+
+    showTable(harness, table.id);
+    fireEvent.click(await screen.findByRole('button', { name: /Add/ }));
+
+    const sheet = await screen.findByRole('dialog', { name: 'Add to the table' });
+    expect(await within(sheet).findByRole('button', { name: /Café express/ })).toBeDefined();
+    expect(within(sheet).getByRole('button', { name: 'All' })).toBeDefined();
+    expect(within(sheet).queryByRole('button', { name: 'Boissons chaudes' })).toBeNull();
   });
 
   it('does not offer something that has sold out', async () => {
