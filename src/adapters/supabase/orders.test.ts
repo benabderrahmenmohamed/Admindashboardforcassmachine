@@ -496,6 +496,73 @@ describe('supabase orders: reads', () => {
     await expect(orders.openOrder('t-2')).resolves.toBeNull();
   });
 
+  // PostgREST writes a timestamptz as `…08:00:00.123456+00:00`. The device wrote that instant as
+  // `…08:00:00.123Z`, and every adapter answers in that form, so text compares as time does.
+  it('answers every timestamp it reads in the form the device and the other adapters write', async () => {
+    const { orders } = setup(
+      routes({
+        'GET /rest/v1/open_orders': () =>
+          json([
+            {
+              id: 'o-1',
+              table_id: 't-1',
+              status: 'open',
+              opened_at: '2026-09-12T08:00:00.123456+00:00',
+              closed_at: null,
+              open_order_items: [
+                itemRow({
+                  added_at: '2026-09-12T08:00:00.123456+00:00',
+                  sent_at: '2026-09-12T10:05:00+01:00',
+                  prepared_at: '2026-09-12T09:10:00.5+00:00',
+                }),
+              ],
+            },
+          ]),
+        'GET /rest/v1/open_order_items': () =>
+          json([itemWithTable({ sent_at: '2026-09-12T09:05:00.000001+00:00' })]),
+        'POST /rest/v1/rpc/removed_after_sent': () =>
+          json([
+            {
+              item_id: 'i-1',
+              table_name: 'Terrasse 1',
+              product_name: 'Express',
+              qty: 1,
+              unit_price_millimes: 1500,
+              sent_at: '2026-09-12T09:05:00+00:00',
+              removed_at: '2026-09-12T11:00:00.654321+00:00',
+              removed_by: 'user-waiter',
+              removed_by_name: 'Sonia',
+              removed_reason: 'Spilled',
+              submitted_by: 'user-waiter',
+              submitted_by_name: 'Sonia',
+            },
+          ]),
+      }),
+    );
+
+    const order = await orders.openOrder('t-1');
+    expect(order?.openedAt).toBe('2026-09-12T08:00:00.123Z');
+    expect(order?.items[0]).toMatchObject({
+      addedAt: '2026-09-12T08:00:00.123Z',
+      sentAt: '2026-09-12T09:05:00.000Z',
+      preparedAt: '2026-09-12T09:10:00.500Z',
+      removedAt: null,
+    });
+    const [ticket] = await orders.kitchenTickets();
+    expect([ticket.sentAt, ticket.items[0].sentAt]).toEqual([
+      '2026-09-12T09:05:00.000Z',
+      '2026-09-12T09:05:00.000Z',
+    ]);
+    const [line] = await orders.removedAfterSent({
+      from: '2026-09-12T00:00:00.000Z',
+      to: '2026-09-12T23:59:59.999Z',
+    });
+    expect([line.sentAt, line.removedAt]).toEqual([
+      '2026-09-12T09:05:00.000Z',
+      '2026-09-12T11:00:00.654Z',
+    ]);
+  });
+
   it('groups sent, unprepared items into one ticket per send, oldest ticket first', async () => {
     const { calls, orders } = setup(
       routes({

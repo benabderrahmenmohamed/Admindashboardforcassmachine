@@ -27,7 +27,7 @@ import type { SupabaseDatabaseClient } from './client';
 import type { Tables } from './database.types';
 import { unwrap } from './errors';
 import { parseInput, parseOutput } from './validate';
-import { fromWire, toWire } from './wire';
+import { fromWire, isoTimestamp, isoTimestampOrNull, toWire } from './wire';
 
 const TABLE_COLUMNS = 'id, name, sort_order, is_active';
 
@@ -79,10 +79,10 @@ function toOpenOrderItem(row: ItemRow): OpenOrderItem {
       qty: row.qty,
       note: row.note,
       addedBy: row.added_by,
-      addedAt: row.added_at,
-      sentAt: row.sent_at,
-      preparedAt: row.prepared_at,
-      removedAt: row.removed_at,
+      addedAt: isoTimestamp(row.added_at),
+      sentAt: isoTimestampOrNull(row.sent_at),
+      preparedAt: isoTimestampOrNull(row.prepared_at),
+      removedAt: isoTimestampOrNull(row.removed_at),
       removedBy: row.removed_by,
       removedReason: row.removed_reason,
       paidSaleId: row.paid_sale_id,
@@ -105,8 +105,8 @@ function toOpenOrder(row: OrderRow): OpenOrder {
       id: row.id,
       tableId: row.table_id,
       status: row.status,
-      openedAt: row.opened_at,
-      closedAt: row.closed_at,
+      openedAt: isoTimestamp(row.opened_at),
+      closedAt: isoTimestampOrNull(row.closed_at),
       items: [...row.open_order_items].sort(byAddedAt).map((item) => toOpenOrderItem(item)),
     },
     `order ${row.id}`,
@@ -187,7 +187,7 @@ function toKitchenTickets(rows: readonly ItemWithTableRow[]): KitchenTicket[] {
         orderId: ticket.order.id,
         tableId: ticket.order.table_id,
         tableName: ticket.order.dining_tables?.name ?? '',
-        sentAt: ticket.sentAt,
+        sentAt: isoTimestamp(ticket.sentAt),
         items: [...ticket.items].sort(byAddedAt).map((item) => toOpenOrderItem(item)),
       },
       `the kitchen ticket of order ${ticket.order.id}`,
@@ -284,7 +284,13 @@ export function createSupabaseOrders(client: SupabaseDatabaseClient): OrdersPort
       // The report goes through its RPC rather than the tables: naming who took an item off means
       // reading other members' names, so the admin check has to be the server's, not this client's.
       const data = await unwrap(client.rpc('removed_after_sent', { p_from: from, p_to: to }));
-      return fromWire(z.array(removedAfterSentSchema), data, 'the removed items report');
+      return fromWire(z.array(removedAfterSentSchema), data, 'the removed items report').map(
+        (row) => ({
+          ...row,
+          sentAt: isoTimestamp(row.sentAt),
+          removedAt: isoTimestamp(row.removedAt),
+        }),
+      );
     },
 
     async addItem(record) {
