@@ -35,9 +35,31 @@ C:/Users/shini/pgsql/bin/pg_ctl.exe -D C:/Users/shini/pgdata stop
 ```bash
 composer install
 php bin/console doctrine:migrations:migrate   # the schema
+php bin/console app:seed-demo                 # the demo café, its members and its menu
 php bin/phpunit                               # the tests
 php -S 127.0.0.1:8000 -t public               # the server
 ```
+
+## Two roles, on purpose
+
+| Connection | Role | For |
+| --- | --- | --- |
+| `default` (`DATABASE_URL`) | `cafe_app` | every request; row-level security applies to it |
+| `admin` (`DATABASE_ADMIN_URL`) | the owner | migrations and fixtures, nothing else |
+
+A request tells the database who it is for with `set_config('app.user_id', …)`, and the policies do
+the rest: a member reads their own café and no other, and nobody writes the ledger by hand — not even
+this API, which records a sale by calling `record_sale`. `tests/Database/RowLevelSecurityTest.php`
+holds those promises down.
+
+## Where the schema comes from
+
+`migrations/sql/0001_schema.sql` is the café's schema in one file, derived from the 16 Supabase
+migrations by `migrations/sql/build_from_supabase.py`, which replays them in order and changes three
+things: `auth.users` becomes `public.users`, `auth.uid()` becomes `private.current_user_id()` reading
+`app.user_id`, and Supabase's three API roles become the single `cafe_app`. The key-value import of
+the old app, the nightly demo reset and the Realtime publication are left behind. Run the script
+again after changing anything under `supabase/migrations` if both backends must stay in step.
 
 `DATABASE_URL` lives in `.env` for local work and is overridden by `.env.local` or a real environment
 variable anywhere else. `.env.test` points at `cafe_test`, which the tests are free to empty.

@@ -1,4 +1,6 @@
 doctrine_migrations:
+    # The schema belongs to its owner, not to the role the API connects as.
+    connection: admin
     migrations_paths:
         # namespace is arbitrary but should be different from App\Migrations
         # as migrations classes should NOT be autoloaded

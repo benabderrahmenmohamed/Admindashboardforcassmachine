@@ -1,13 +1,17 @@
 doctrine:
     dbal:
-        url: '%env(resolve:DATABASE_URL)%'
-
-        # IMPORTANT: You MUST configure your server version,
-        # either here or in the DATABASE_URL env var (see .env file)
-        #server_version: '16'
-
-        profiling_collect_backtrace: '%kernel.debug%'
-        use_savepoints: true
+        default_connection: default
+        connections:
+            # What every request uses: the role row-level security applies to. It reads only the
+            # shop of the member the API has put in `app.user_id`.
+            default:
+                url: '%env(resolve:DATABASE_URL)%'
+                profiling_collect_backtrace: '%kernel.debug%'
+                use_savepoints: true
+            # The owner of the schema. Migrations run here, and nothing else does.
+            admin:
+                url: '%env(resolve:DATABASE_ADMIN_URL)%'
+                use_savepoints: true
     orm:
         auto_generate_proxy_classes: true
         enable_lazy_ghost_objects: true
@@ -30,8 +34,12 @@ doctrine:
 when@test:
     doctrine:
         dbal:
-            # "TEST_TOKEN" is typically set by ParaTest
-            dbname_suffix: '_test%env(default::TEST_TOKEN)%'
+            connections:
+                # "TEST_TOKEN" is typically set by ParaTest
+                default:
+                    dbname_suffix: '_test%env(default::TEST_TOKEN)%'
+                admin:
+                    dbname_suffix: '_test%env(default::TEST_TOKEN)%'
 
 when@prod:
     doctrine:

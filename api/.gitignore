@@ -1,3 +1,7 @@
+# The repo root ignores every .env; Symfony's own two hold no secret and belong in git.
+!/.env
+!/.env.test
+
 
 ###> symfony/framework-bundle ###
 /.env.local
