@@ -4205,3 +4205,6 @@ grant execute on function public.save_product(jsonb) to cafe_app;
 -- role the API connects as may ask which member it is acting for. It reads a setting that role put
 -- there itself, so there is nothing to hide, and a support session can see who a connection is.
 grant execute on function private.current_user_id() to cafe_app;
+
+-- The shape of a product on the wire is one function, so a read and a save answer the same thing.
+grant execute on function private.product_json(public.products) to cafe_app;
