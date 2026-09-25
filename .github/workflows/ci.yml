@@ -107,6 +107,10 @@ jobs:
           DATABASE_URL="postgresql://cafe_app:cafe_app@127.0.0.1:5432/cafe?serverVersion=17&charset=utf8"
           DATABASE_ADMIN_URL="postgresql://postgres:postgres@127.0.0.1:5432/cafe?serverVersion=17&charset=utf8"
           ENV
+          # Symfony ignores .env.local in the test environment on purpose, so that a developer's
+          # local overrides cannot change what the tests do. The tests need saying to as well, and
+          # .env.test.local is where. The `_test` suffix is doctrine.yaml's (when@test).
+          cp .env.local .env.test.local
       - name: the keys that sign the tokens
         working-directory: api
         run: php bin/console lexik:jwt:generate-keypair --no-interaction

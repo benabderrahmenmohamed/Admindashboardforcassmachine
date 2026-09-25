@@ -7,7 +7,8 @@ replaces Supabase behind them.
 
 ## What it needs
 
-- PHP 8.2 or newer with `pdo_pgsql`, `pgsql`, `intl`, `zip` and `sodium`
+- PHP 8.2 or newer with `pdo_pgsql`, `intl` and `zip` — what `Dockerfile` installs and CI enables;
+  the rest of what `composer.json` asks for is in any stock build
 - Composer 2
 - PostgreSQL 17
 
@@ -73,7 +74,9 @@ Anywhere else, put it in `.env.local` rather than in the environment. Symfony re
 from `$_ENV` and `$_SERVER`, never from `getenv()`, and not every SAPI fills those from the process
 environment: PHP's built-in server fills neither, so a server started with `DATABASE_URL` exported
 uses the one in `.env` and says nothing about it. `.env.local` is read the same way by all of them,
-which is why CI writes one and why the container's entrypoint writes what it was told into one.
+which is why CI writes one and why the container's entrypoint writes what it was told into one. A
+test run needs `.env.test.local` as well, because Symfony ignores `.env.local` in the test
+environment on purpose: a developer's local overrides must not change what the tests do.
 
 ## Live screens, without a live connection
 
