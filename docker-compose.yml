@@ -1,6 +1,14 @@
 # Runs the production build locally at http://localhost:8080.
 # The register needs a secure context (crypto.subtle, Web Locks, service worker): localhost is one.
 # To serve other devices on the shop network, put this behind TLS instead of publishing plain HTTP.
+#
+# `docker compose up --build` is the app alone, with the backend in the browser and nothing else to
+# run. The whole café — the Symfony service in api/ and its database — is the `cafe` profile:
+#
+#   VITE_BACKEND=rest VITE_API_BASE_URL=http://localhost:8000 \
+#     docker compose --profile cafe up --build
+#
+# The demo café is seeded on first start, so the logins of supabase/seed.sql work straight away.
 services:
   web:
     build:
@@ -13,3 +21,43 @@ services:
     ports:
       - '127.0.0.1:8080:8080'
     restart: unless-stopped
+
+  api:
+    profiles: ['cafe']
+    build:
+      context: ./api
+    environment:
+      APP_SECRET: ${APP_SECRET:-dev-only-not-a-secret}
+      # The role row-level security applies to, and the owner that migrations run as (api/README.md).
+      DATABASE_URL: postgresql://cafe_app:cafe_app@db:5432/cafe?serverVersion=17&charset=utf8
+      DATABASE_ADMIN_URL: postgresql://postgres:postgres@db:5432/cafe?serverVersion=17&charset=utf8
+      # The passphrase of the keypair this container makes at first start. A café that means it
+      # mounts its own keys at /var/www/html/config/jwt and sets this to their passphrase.
+      JWT_PASSPHRASE: ${JWT_PASSPHRASE:-dev-only-not-a-secret}
+      # Where the app is served from. `$$` is a literal `$` here: compose reads `$` as a variable.
+      CORS_ALLOW_ORIGIN: ${CORS_ALLOW_ORIGIN:-^https?://(localhost|127\.0\.0\.1)(:[0-9]+)?$$}
+      SEED_DEMO: ${SEED_DEMO:-1}
+    depends_on:
+      db:
+        condition: service_healthy
+    ports:
+      - '127.0.0.1:8000:80'
+    restart: unless-stopped
+
+  db:
+    profiles: ['cafe']
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: cafe
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U postgres -d cafe']
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    volumes:
+      - cafe-db:/var/lib/postgresql/data
+    restart: unless-stopped
+
+volumes:
+  cafe-db:

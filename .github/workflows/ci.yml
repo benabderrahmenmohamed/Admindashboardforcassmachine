@@ -61,6 +61,112 @@ jobs:
           if-no-files-found: ignore
           retention-days: 7
 
+  symfony:
+    name: the Symfony service, its tests, the contract suite and the café on three devices
+    runs-on: ubuntu-latest
+    needs: ci
+    timeout-minutes: 30
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: cafe
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      # 5432 here, 5433 in api/.env: that one is the port the developer's local cluster listens on.
+      DATABASE_URL: postgresql://cafe_app:cafe_app@127.0.0.1:5432/cafe?serverVersion=17&charset=utf8
+      DATABASE_ADMIN_URL: postgresql://postgres:postgres@127.0.0.1:5432/cafe?serverVersion=17&charset=utf8
+      API_BASE_URL: http://127.0.0.1:8000
+    steps:
+      - uses: actions/checkout@v4
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.3'
+          extensions: pdo_pgsql, intl, zip
+          coverage: none
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - name: install the server's dependencies
+        working-directory: api
+        run: composer install --no-interaction --prefer-dist
+      - name: the keys that sign the tokens
+        working-directory: api
+        run: php bin/console lexik:jwt:generate-keypair --no-interaction
+      # The role the API connects as is created by the first migration, so the owner goes first.
+      - name: the schema, and the demo café in it
+        working-directory: api
+        run: |
+          php bin/console doctrine:migrations:migrate --no-interaction
+          php bin/console app:seed-demo --no-interaction
+      # Its own database, created by the owner because the API's role may not create one, and filled
+      # with the schema and the café by the test bootstrap itself.
+      - name: the server's own tests
+        working-directory: api
+        run: |
+          php bin/console doctrine:database:create --no-interaction --if-not-exists --connection=admin --env=test
+          php bin/phpunit
+      - name: start the server
+        working-directory: api
+        run: |
+          nohup php -S 127.0.0.1:8000 -t public > "$RUNNER_TEMP/server.log" 2>&1 &
+          for _ in $(seq 1 30); do
+            # 401 is the contract's answer to a request with no token, and takes the whole server
+            # to say it: waiting for a 2xx here would wait for ever.
+            if [ "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8000/api/v1/products)" = "401" ]; then
+              echo 'the API answers 401 without a token'
+              exit 0
+            fi
+            sleep 1
+          done
+          echo 'the server did not come up' >&2
+          cat "$RUNNER_TEMP/server.log" >&2
+          exit 1
+      - name: the port contract suite, against the running server
+        run: npx vitest run live.contract
+        env:
+          CONTRACT_BACKEND: rest
+      - name: the café on three devices (Playwright)
+        run: npx playwright test --project=rest
+        env:
+          E2E_BACKEND: rest
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: playwright-report-rest
+          path: playwright-report
+          if-no-files-found: ignore
+          retention-days: 7
+      # The delivery path itself: the image, its entrypoint - keys, migrations, the demo café - and a
+      # database of its own behind it. The port the server above was on, once it has let go of it.
+      - name: the container serves the same café
+        run: |
+          pkill -f 'php -S 127.0.0.1:8000' || true
+          docker compose --profile cafe up --build --detach db api
+          for _ in $(seq 1 60); do
+            [ "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8000/api/v1/products)" = "401" ] && break
+            sleep 2
+          done
+          token=$(curl -sS -X POST http://127.0.0.1:8000/api/v1/auth/token \
+            -H 'Content-Type: application/json' \
+            -d '{"email":"owner@demo.local","password":"demo-owner-2026"}' | jq -r .access_token)
+          if [ -z "$token" ] || [ "$token" = null ]; then
+            docker compose --profile cafe logs api >&2
+            echo 'the container would not sign the owner in' >&2
+            exit 1
+          fi
+          curl -sSf http://127.0.0.1:8000/api/v1/me -H "Authorization: Bearer $token" | jq -e '.roles | index("admin")'
+      - if: always()
+        run: docker compose --profile cafe down --volumes
+
   supabase:
     name: database, contract suite and the café on three devices, on local Supabase
     runs-on: ubuntu-latest

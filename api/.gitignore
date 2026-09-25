@@ -17,6 +17,9 @@
 /config/jwt/*.pem
 ###< lexik/jwt-authentication-bundle ###
 
+# OpenSSL leaves this behind on Windows when it makes the keypair above.
+/.rnd
+
 ###> phpunit/phpunit ###
 /phpunit.xml
 /.phpunit.cache/

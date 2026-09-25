@@ -2,7 +2,7 @@
 
 An offline-first point of sale for a Tunisian café, in one React app with four faces: the waiter's phone, the counter, the kitchen screen and the back office.
 
-> **Status:** this started as a Figma Make export — a register screen and an admin dashboard over a key-value store — and is now the café the [spec](docs/spec.md) describes. Waiters keep taking orders and the counter keeps taking money when the network drops: every order and every payment is queued on the device and reaches the server exactly once, in order. Money is exact to the millime, receipts are numbered per terminal without gaps, and the sales ledger is append-only. The UI reaches its backend only through ports, so the same app runs on an in-browser demo, on Supabase, and on a REST adapter written against [contracts/openapi.yaml](contracts/openapi.yaml) for the service that will implement it.
+> **Status:** this started as a Figma Make export — a register screen and an admin dashboard over a key-value store — and is now the café the [spec](docs/spec.md) describes. Waiters keep taking orders and the counter keeps taking money when the network drops: every order and every payment is queued on the device and reaches the server exactly once, in order. Money is exact to the millime, receipts are numbered per terminal without gaps, and the sales ledger is append-only. The UI reaches its backend only through ports, so the same app runs on an in-browser demo, on Supabase, and on the Symfony service in [`api/`](api/README.md), which serves [contracts/openapi.yaml](contracts/openapi.yaml) over the same Postgres schema.
 
 ## The four faces
 
@@ -37,7 +37,7 @@ A person can hold several roles — the owner is admin and cashier — and switc
 
 - **Offline-first.** Everything done during service — an item put on a table or taken off, a send, a dish marked prepared, an order cancelled, a payment or a refund, a session opened or closed — is a record written to IndexedDB before any request. One queue per device drains in the order records were written, one at a time, under a Web Lock, retrying without limit and stopping at the first record the server refuses. The screens draw that queue over the server's last read, so a tap shows at once, flagged until it is synced. A record names the person who made it, so a phone passed from one waiter to the next still credits each with their own taps. What the server has taken is cleared from the device after a week. The back office — products, tables, settings — needs the network.
 - **Money done right.** Integer millimes everywhere, never a float. A discount on the whole payment is rounded once and shared across its lines by largest remainder, so the lines add up to the total exactly. Receipts are numbered per terminal — `C1-17` is the counter's seventeenth — in the same IndexedDB transaction that queues the sale, and the server accepts only the next number. Sales are never updated or deleted: a refund is a new document, and a receipt that can never be accepted is voided with a reason, not skipped.
-- **Backend-swappable.** The screens call hooks, the hooks call eight ports, and one composition root chooses the adapter. One contract suite holds the memory, REST and Supabase adapters to the same answers, down to the error code.
+- **Backend-swappable.** The screens call hooks, the hooks call eight ports, and one composition root chooses the adapter. One contract suite holds the memory, REST and Supabase adapters to the same answers, down to the error code — and the same suite, unchanged, is run against the Symfony service over HTTP.
 
 ## Stack
 
@@ -46,6 +46,7 @@ A person can hold several roles — the owner is admin and cashier — and switc
 - React Router 7, TanStack Query 5 with its cache kept in IndexedDB per user, react-hook-form with Zod 4
 - An outbox in IndexedDB, drained under the Web Locks API
 - Ports and adapters: an in-memory backend for the demo and the tests, a Supabase backend over tables with row-level security, transactional RPCs and Realtime, and a REST adapter written against [contracts/openapi.yaml](contracts/openapi.yaml)
+- [`api/`](api/README.md): PHP 8.3 and Symfony 7 with Doctrine DBAL and migrations, Lexik JWT, PHPUnit — the service that answers that contract, over the same schema
 - Supabase CLI for the local stack, pgTAP for database tests
 - ESLint (typescript-eslint, react-hooks) and Prettier; Vitest with Testing Library, fake-indexeddb and MSW; Playwright for the end-to-end specs; Lighthouse for accessibility and performance
 
@@ -73,7 +74,7 @@ flowchart LR
   end
 
   postgres[("Postgres<br/>append-only ledger, open orders")]
-  service["Spring Boot service<br/>planned"]
+  service["Symfony service (api/)<br/>the same schema, the same rules"]
 
   cafe --> screens
   screens -->|"writes, before any request"| outbox
@@ -84,7 +85,8 @@ flowchart LR
   ports --> rest
   supabase --> postgres
   postgres -.->|"live: tables, orders, items, products"| supabase
-  rest -.-> service
+  rest --> service
+  service --> postgres
 ```
 
 An order taken with no network, and paid at the counter:
@@ -101,7 +103,7 @@ sequenceDiagram
   Q--xS: no network: kept, retried with backoff
   Q->>S: back online: order_item_add, then order_send
   S-->>Q: created — a repeat of the same record would answer "replayed"
-  S-)K: realtime: open_order_items changed
+  S--)K: it changed: told on Supabase, asked for every couple of seconds on Symfony
   K->>S: re-reads its tickets, marks the coffees prepared
   C->>S: record_sale C1-17, naming the items it pays
   S-->>C: created — the table closes when nothing is owed
@@ -111,16 +113,17 @@ sequenceDiagram
 
 The decisions worth arguing about, each with what it costs and what was rejected, are in [docs/adr](docs/adr):
 
-| ADR                                                    | Decision                                                                 |
-| ------------------------------------------------------ | ------------------------------------------------------------------------ |
-| [0001](docs/adr/0001-feature-folders.md)               | Feature folders, with ports, adapters and a layout per face beside them  |
-| [0002](docs/adr/0002-money-in-millimes.md)             | Money is an integer number of millimes, never a float                    |
-| [0003](docs/adr/0003-ports-and-adapters.md)            | The UI reaches a backend only through ports                              |
-| [0004](docs/adr/0004-per-terminal-receipt-sequence.md) | Receipt numbers are allocated per terminal and stay gapless              |
-| [0005](docs/adr/0005-offline-outbox.md)                | Records are queued on the device before any network call                 |
-| [0006](docs/adr/0006-append-only-ledger.md)            | Sales are never updated or deleted; a refund is a new document           |
-| [0007](docs/adr/0007-open-orders-are-working-state.md) | What is on the tables is working state beside the ledger, not part of it |
-| [0008](docs/adr/0008-terminals-are-payment-devices.md) | A terminal is a device that takes payment, not a person or a role        |
+| ADR                                                          | Decision                                                                 |
+| ------------------------------------------------------------ | ------------------------------------------------------------------------ |
+| [0001](docs/adr/0001-feature-folders.md)                     | Feature folders, with ports, adapters and a layout per face beside them  |
+| [0002](docs/adr/0002-money-in-millimes.md)                   | Money is an integer number of millimes, never a float                    |
+| [0003](docs/adr/0003-ports-and-adapters.md)                  | The UI reaches a backend only through ports                              |
+| [0004](docs/adr/0004-per-terminal-receipt-sequence.md)       | Receipt numbers are allocated per terminal and stay gapless              |
+| [0005](docs/adr/0005-offline-outbox.md)                      | Records are queued on the device before any network call                 |
+| [0006](docs/adr/0006-append-only-ledger.md)                  | Sales are never updated or deleted; a refund is a new document           |
+| [0007](docs/adr/0007-open-orders-are-working-state.md)       | What is on the tables is working state beside the ledger, not part of it |
+| [0008](docs/adr/0008-terminals-are-payment-devices.md)       | A terminal is a device that takes payment, not a person or a role        |
+| [0009](docs/adr/0009-the-server-is-symfony-over-postgres.md) | The service behind the REST contract is Symfony over the same schema     |
 
 ## Getting started
 
@@ -173,6 +176,26 @@ npm run dev
 
 These accounts exist only in the local database.
 
+### The Symfony service
+
+Needs PHP 8.2+ and PostgreSQL 17, or Docker. [`api/README.md`](api/README.md) has the whole of it; the short
+way, with the container:
+
+```bash
+VITE_BACKEND=rest VITE_API_BASE_URL=http://localhost:8000 docker compose --profile cafe up --build
+```
+
+That is Postgres, the Symfony service on http://localhost:8000 with the schema applied and the demo café
+seeded, and the app on http://localhost:8080 pointed at it. The accounts are the ones above — the same
+people, with the same passwords, as `supabase/seed.sql` — and a café started this way keeps what it is told
+until `docker compose --profile cafe down --volumes`.
+
+Without Docker, run the service from `api/` and point the dev server at it:
+
+```bash
+npm run dev  # with VITE_BACKEND=rest and VITE_API_BASE_URL=http://127.0.0.1:8000 in .env
+```
+
 ### A hosted Supabase project
 
 Never run migrations against a hosted project from a script in this repo. To move a project that still runs the original edge function, follow [docs/runbooks/kv-import.md](docs/runbooks/kv-import.md): apply the schema, create the shop and its members, dry-run the import and review the rejects, import, deploy, then delete the edge function.
@@ -190,40 +213,42 @@ Vite inlines these values at build time, so a change needs a rebuild. `.env.demo
 
 The tests against the local stack read these from the environment, never from `.env`:
 
-| Variable                    | Description                                                                                        |
-| --------------------------- | -------------------------------------------------------------------------------------------------- |
-| `CONTRACT_BACKEND`          | Set to `supabase` to run the Supabase contract and security tests.                                 |
-| `E2E_BACKEND`               | Set to `supabase` to add the three-device Playwright spec (it reads the two variables below too).  |
-| `SUPABASE_URL`              | Local API URL from `npx supabase status`.                                                          |
-| `SUPABASE_ANON_KEY`         | Local anon key.                                                                                    |
-| `SUPABASE_SERVICE_ROLE_KEY` | Local service role key: re-reads rows and tries the writes nobody may make, in the security tests. |
+| Variable                    | Description                                                                                                                     |
+| --------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
+| `CONTRACT_BACKEND`          | `supabase` runs the Supabase contract and security tests; `rest` runs the contract suite against the service at `API_BASE_URL`. |
+| `E2E_BACKEND`               | `supabase` or `rest` adds the three-device Playwright spec, against that backend.                                               |
+| `API_BASE_URL`              | Where the Symfony service is for those two, `http://127.0.0.1:8000` unless it is set.                                           |
+| `SUPABASE_URL`              | Local API URL from `npx supabase status`.                                                                                       |
+| `SUPABASE_ANON_KEY`         | Local anon key.                                                                                                                 |
+| `SUPABASE_SERVICE_ROLE_KEY` | Local service role key: re-reads rows and tries the writes nobody may make, in the security tests.                              |
 
 ## Scripts
 
-| Command                 | What it does                                                                                                                                                                       |
-| ----------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `npm run dev`           | Start the dev server with the backend from `.env`.                                                                                                                                 |
-| `npm run dev:demo`      | Start the dev server with the in-memory demo backend.                                                                                                                              |
-| `npm run build`         | Build for production into `dist/`.                                                                                                                                                 |
-| `npm run preview`       | Serve the production build locally.                                                                                                                                                |
-| `npm run lint`          | Run ESLint (no warnings allowed) and Prettier check.                                                                                                                               |
-| `npm run format`        | Format the codebase with Prettier.                                                                                                                                                 |
-| `npm run typecheck`     | Type-check with `tsc --noEmit`.                                                                                                                                                    |
-| `npm test`              | Run the Vitest suite, including the contract suite on the memory and REST backends.                                                                                                |
-| `npm run test:contract` | Run only the contract and security suites; with `CONTRACT_BACKEND=supabase`, against the local stack.                                                                              |
-| `npm run test:e2e`      | Run the Playwright specs: the café on one device against the in-browser demo, and with `E2E_BACKEND=supabase` the waiter, kitchen and counter as three devices on the local stack. |
-| `npm run api:types`     | Regenerate `src/adapters/rest/api.types.ts` from [contracts/openapi.yaml](contracts/openapi.yaml).                                                                                 |
-| `npm run db:start`      | Start the local Supabase stack (Docker).                                                                                                                                           |
-| `npm run db:stop`       | Stop it.                                                                                                                                                                           |
-| `npm run db:reset`      | Re-create the local database from the migrations and the seed.                                                                                                                     |
-| `npm run db:test`       | Run the pgTAP tests in `supabase/tests/database`.                                                                                                                                  |
-| `npm run db:types`      | Regenerate `src/adapters/supabase/database.types.ts` from the local database.                                                                                                      |
+| Command                 | What it does                                                                                                                                                                          |
+| ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `npm run dev`           | Start the dev server with the backend from `.env`.                                                                                                                                    |
+| `npm run dev:demo`      | Start the dev server with the in-memory demo backend.                                                                                                                                 |
+| `npm run build`         | Build for production into `dist/`.                                                                                                                                                    |
+| `npm run preview`       | Serve the production build locally.                                                                                                                                                   |
+| `npm run lint`          | Run ESLint (no warnings allowed) and Prettier check.                                                                                                                                  |
+| `npm run format`        | Format the codebase with Prettier.                                                                                                                                                    |
+| `npm run typecheck`     | Type-check with `tsc --noEmit`.                                                                                                                                                       |
+| `npm test`              | Run the Vitest suite, including the contract suite on the memory and REST backends.                                                                                                   |
+| `npm run test:contract` | Run only the contract and security suites; with `CONTRACT_BACKEND=supabase`, against the local stack.                                                                                 |
+| `npm run test:e2e`      | Run the Playwright specs: the café on one device against the in-browser demo, and with `E2E_BACKEND=supabase` or `rest` the waiter, kitchen and counter as three devices on a server. |
+| `npm run api:types`     | Regenerate `src/adapters/rest/api.types.ts` from [contracts/openapi.yaml](contracts/openapi.yaml).                                                                                    |
+| `npm run db:start`      | Start the local Supabase stack (Docker).                                                                                                                                              |
+| `npm run db:stop`       | Stop it.                                                                                                                                                                              |
+| `npm run db:reset`      | Re-create the local database from the migrations and the seed.                                                                                                                        |
+| `npm run db:test`       | Run the pgTAP tests in `supabase/tests/database`.                                                                                                                                     |
+| `npm run db:types`      | Regenerate `src/adapters/supabase/database.types.ts` from the local database.                                                                                                         |
 
 ## Testing
 
-- **Unit, page and contract tests** (Vitest, Testing Library, fake-indexeddb, MSW): the rules of every feature as plain modules — the cart, the payment, the room drawn over the queue, the kitchen tickets, the outbox and its retention — each screen behind the guard the app puts in front of it, on the memory backend the demo runs, and the port contract suite on the memory and REST adapters. With `CONTRACT_BACKEND=supabase` the same suite, and the security tests, run against a local stack.
+- **Unit, page and contract tests** (Vitest, Testing Library, fake-indexeddb, MSW): the rules of every feature as plain modules — the cart, the payment, the room drawn over the queue, the kitchen tickets, the outbox and its retention — each screen behind the guard the app puts in front of it, on the memory backend the demo runs, and the port contract suite on the memory and REST adapters. With `CONTRACT_BACKEND=supabase` the same suite, and the security tests, run against a local stack; with `CONTRACT_BACKEND=rest`, against the Symfony service over HTTP.
+- **The server's own tests** (PHPUnit, `api/tests`): every endpoint over HTTP against a real Postgres — signing in, the menu, the room, the five order records, the money and the drawer — and, under them, what row-level security shows a member and refuses the role the API connects as.
 - **Database tests** (pgTAP, `supabase/tests/database`): the ledger's immutability and refund limits, the import, the demo reset, the order RPCs, sales with and without a table, table names, who an order record credits, and saving whether a product is on the menu and counted.
-- **End to end** (Playwright): the café on one device against the demo — an order taken with no network, prepared, paid while the payment's answer is lost, and the drawer closed balanced; an order the server refuses and a waiter discards; a removal still queued when the tablet changes hands, reported under the waiter who made it and the owner's login that synced it; and every target on every screen of the waiter's phone measured at 44 px or more. With `E2E_BACKEND=supabase`, the waiter's phone, the kitchen and the counter as three devices on a local stack, each screen changing because another device wrote something.
+- **End to end** (Playwright): the café on one device against the demo — an order taken with no network, prepared, paid while the payment's answer is lost, and the drawer closed balanced; an order the server refuses and a waiter discards; a removal still queued when the tablet changes hands, reported under the waiter who made it and the owner's login that synced it; and every target on every screen of the waiter's phone measured at 44 px or more. With `E2E_BACKEND=supabase` or `E2E_BACKEND=rest`, the waiter's phone, the kitchen and the counter as three devices against a server — the same spec either way — each screen changing because another device wrote something.
 - **Lighthouse** 12.8, on the demo build served compressed, through user flows over twenty-one screens and dialogs of the four faces: accessibility, best practices and SEO 100 on every one; performance 91 on a phone and 100 on a desktop for the first load.
 
 ## Database
@@ -275,9 +300,17 @@ docker build \
 
 Nothing comes from `.env`: `.dockerignore` keeps it out of the build context, along with the host's `node_modules`, which are built for the wrong platform.
 
+The whole café — the app, the Symfony service and its database — is the `cafe` profile of the same file:
+
+```bash
+VITE_BACKEND=rest VITE_API_BASE_URL=http://localhost:8000 docker compose --profile cafe up --build
+```
+
+The service's image is [`api/Dockerfile`](api/Dockerfile): Composer installs its dependencies in one stage and Apache serves `public/` in the other, so nothing that installs anything ships. On start it makes a keypair if none is mounted, applies the migrations, and seeds the demo café when `SEED_DEMO=1`. A café that means it mounts its own keys at `/var/www/html/config/jwt` and sets `APP_SECRET`, `JWT_PASSPHRASE` and `CORS_ALLOW_ORIGIN`: keys made in the container live and die with it, so every restart would sign every device out.
+
 nginx compresses what it serves. `index.html`, `sw.js` and `manifest.webmanifest` go out with `no-cache`, so a release is picked up on the next visit and a browser never holds an old service worker; the manifest goes out as `application/manifest+json`, which nginx does not know by itself. `/assets/` is immutable, because those file names change whenever their contents do. Every other path — `/serveur`, `/caisse`, `/kitchen`, `/admin` and everything under them — falls back to the app shell.
 
-`.github/workflows/ci.yml` runs lint, typecheck, the Vitest suite and a build on every push, then the Playwright spec of the café on one device. On pull requests to `main`, and when started by hand, it also brings up a local Supabase stack with realtime and runs the pgTAP tests, the port contract suite and the three-device Playwright spec against it.
+`.github/workflows/ci.yml` runs lint, typecheck, the Vitest suite and a build on every push, then the Playwright spec of the café on one device, then the Symfony service: its own PHPUnit suite, the port contract suite and the three-device spec against it over HTTP, and finally the image built and asked to sign the owner in. On pull requests to `main`, and when started by hand, it also brings up a local Supabase stack with realtime and runs the pgTAP tests, the port contract suite and the three-device spec against that.
 
 ### Deploy it to a static host
 

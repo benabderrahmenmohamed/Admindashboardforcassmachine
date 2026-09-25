@@ -90,6 +90,22 @@ the way out, in one place, and `App\Db\Cafe` sets the connection to UTC so that 
 one spelling to fix. No query has to remember, which matters because the reads shape their JSON in
 the database and the record functions were written for Supabase.
 
+## In a container
+
+```bash
+# From the repository root: Postgres, this service on :8000, the app on :8080 pointed at it.
+VITE_BACKEND=rest VITE_API_BASE_URL=http://localhost:8000 docker compose --profile cafe up --build
+```
+
+`Dockerfile` installs the dependencies with Composer in one stage and serves `public/` with Apache in the
+other, so nothing that installs anything ships. The entrypoint makes a keypair if none is mounted, applies
+the migrations - retrying while the database is still starting - and seeds the demo café when `SEED_DEMO=1`.
+
+A café that means it sets its own `APP_SECRET`, `DATABASE_URL`, `DATABASE_ADMIN_URL`, `JWT_PASSPHRASE` and
+`CORS_ALLOW_ORIGIN`, and mounts its own keys at `/var/www/html/config/jwt`: keys made inside the container
+live and die with it, so every restart would sign every device out and two replicas would reject each
+other's tokens. `MIGRATE_ON_START=0` leaves the schema to whoever deploys it.
+
 ## How the app reaches it
 
 ```bash

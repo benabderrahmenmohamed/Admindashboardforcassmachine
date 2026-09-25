@@ -1,0 +1,27 @@
+# What `COPY . .` must not carry into the build.
+#
+# Two of these matter beyond image size. `vendor` is installed inside the build, for this image's
+# PHP: the host's copy would be whatever the developer happens to have. `.env.local` and the keys in
+# config/jwt are this machine's; a file copied into a layer stays readable to anyone who has the
+# image, and the keys that sign a café's tokens are the last thing to hand out.
+
+vendor
+var
+.env.local
+.env.*.local
+config/jwt
+
+# Test and tool output.
+.phpunit.cache
+tests
+phpunit.dist.xml
+
+# Version control.
+.git
+.gitignore
+
+# Editor and operating system files.
+.vscode
+.idea
+.DS_Store
+Thumbs.db
