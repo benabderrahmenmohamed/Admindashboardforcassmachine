@@ -70,6 +70,19 @@ final class Json
         return $value;
     }
 
+    /**
+     * A path segment that goes into a query as an id. Checked here rather than left to the cast,
+     * because a mistyped address is the client's mistake to fix and never something to retry.
+     */
+    public static function uuid(string $value, string $field): string
+    {
+        if (1 !== preg_match('/^[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}$/', $value)) {
+            throw ApiError::field($field, sprintf('%s must be a UUID.', $field));
+        }
+
+        return $value;
+    }
+
     /** A field that may be null, such as the category a product has none of. */
     public static function nullableString(array $body, string $field): ?string
     {

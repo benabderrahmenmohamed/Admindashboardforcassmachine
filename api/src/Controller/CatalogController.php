@@ -59,7 +59,7 @@ final readonly class CatalogController
     #[Route('/api/v1/products/{productId}', methods: ['DELETE'])]
     public function archiveProduct(string $productId): Response
     {
-        $this->cafe->value('select public.archive_product(cast(? as uuid))', [$productId]);
+        $this->cafe->value('select public.archive_product(cast(? as uuid))', [Json::uuid($productId, 'product_id')]);
 
         return new Response(status: Response::HTTP_NO_CONTENT);
     }
@@ -71,7 +71,7 @@ final readonly class CatalogController
 
         return new JsonResponse($this->cafe->json(
             'select public.set_product_availability(cast(? as uuid), cast(? as boolean))',
-            [$productId, $isAvailable ? 'true' : 'false'],
+            [Json::uuid($productId, 'product_id'), $isAvailable ? 'true' : 'false'],
         ));
     }
 
@@ -119,7 +119,10 @@ final readonly class CatalogController
     #[Route('/api/v1/categories/{categoryId}', methods: ['DELETE'])]
     public function deleteCategory(string $categoryId): Response
     {
-        $deleted = $this->cafe->run('delete from public.categories where id = cast(? as uuid)', [$categoryId]);
+        $deleted = $this->cafe->run(
+            'delete from public.categories where id = cast(? as uuid)',
+            [Json::uuid($categoryId, 'category_id')],
+        );
         if (0 === $deleted) {
             throw ApiError::notFound('That category does not exist.', ['category_id' => $categoryId]);
         }

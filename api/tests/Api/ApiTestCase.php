@@ -65,7 +65,7 @@ abstract class ApiTestCase extends WebTestCase
     }
 
     /** @return array<string, mixed>|list<mixed> the JSON body, decoded */
-    protected function call(string $method, string $uri, ?string $token = null, ?array $body = null): array
+    protected function call(string $method, string $uri, ?string $token = null, ?array $body = null, array $query = []): array
     {
         $headers = ['CONTENT_TYPE' => 'application/json'];
         if (null !== $token) {
@@ -77,7 +77,7 @@ abstract class ApiTestCase extends WebTestCase
         // this test runs inside.
         $this->db->beginTransaction();
         try {
-            $this->client->request($method, $uri, server: $headers, content: null === $body ? null : json_encode($body, JSON_THROW_ON_ERROR));
+            $this->client->request($method, $uri, $query, server: $headers, content: null === $body ? null : json_encode($body, JSON_THROW_ON_ERROR));
         } finally {
             $this->httpStatus() >= 400 ? $this->db->rollBack() : $this->db->commit();
         }
@@ -96,6 +96,17 @@ abstract class ApiTestCase extends WebTestCase
     protected function httpStatus(): int
     {
         return $this->client->getResponse()->getStatusCode();
+    }
+
+    /**
+     * The last answer as it came, for the endpoints whose answer is not an object: a free table's
+     * open order is `null`, and `call()` cannot tell that from an empty body.
+     */
+    protected function answer(): mixed
+    {
+        $content = $this->client->getResponse()->getContent();
+
+        return is_string($content) && '' !== $content ? json_decode($content, true) : null;
     }
 
     /** The code of the error that came back, for a test that expects a refusal. */

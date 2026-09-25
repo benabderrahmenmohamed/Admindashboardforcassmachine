@@ -16,8 +16,6 @@ use Symfony\Bundle\SecurityBundle\Security;
  */
 final class Cafe
 {
-    private ?string $acting = null;
-
     public function __construct(
         private readonly Connection $db,
         private readonly Security $security,
@@ -108,17 +106,22 @@ final class Cafe
     }
 
     /**
-     * Says who the request is for, once per connection. Every policy reads it, and a connection that
-     * has not been told sees nothing at all.
+     * Says who the request is for and in what zone the database answers, before every statement.
+     * Every policy reads the first, and a connection that has not been told sees nothing at all. The
+     * second is UTC because a timestamp on the wire is UTC (App\Api\WireTimestamps) and because the
+     * database this schema came from runs in UTC: a server in another zone must not answer
+     * differently from the same rows.
+     *
+     * Said again each time rather than remembered: a setting made inside a transaction is gone when
+     * that transaction rolls back, and a refusal rolls one back. One more round trip on a local
+     * socket is a small price for a connection that is never quietly nobody.
      */
     private function actAsTheMember(): void
     {
         $member = $this->member();
-        if ($this->acting === $member->userId) {
-            return;
-        }
-
-        $this->db->executeStatement('select set_config(?, ?, false)', ['app.user_id', $member->userId]);
-        $this->acting = $member->userId;
+        $this->db->executeStatement(
+            "select set_config('app.user_id', ?, false), set_config('timezone', 'UTC', false)",
+            [$member->userId],
+        );
     }
 }

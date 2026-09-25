@@ -61,8 +61,33 @@ things: `auth.users` becomes `public.users`, `auth.uid()` becomes `private.curre
 the old app, the nightly demo reset and the Realtime publication are left behind. Run the script
 again after changing anything under `supabase/migrations` if both backends must stay in step.
 
+`migrations/sql/0002_changes.sql` is this server's own: the one thing Supabase provided that a PHP
+server cannot. See below.
+
 `DATABASE_URL` lives in `.env` for local work and is overridden by `.env.local` or a real environment
 variable anywhere else. `.env.test` points at `cafe_test`, which the tests are free to empty.
+
+## Live screens, without a live connection
+
+Supabase pushed the names of the tables that changed down a websocket. This server holds no
+connections, so the app's REST client polls `GET /open-orders?since=<cursor>` every couple of seconds
+for the same four names — which is what `contracts/openapi.yaml` has always said that endpoint is.
+
+`private.shop_changes` is one row per café and topic, stamped by a trigger whenever a row of that
+topic changes, and the poll answers the names whose stamp is newer than the cursor. It carries no
+rows, exactly as the live version did: a screen that hears its topic reads again, so a missed poll or
+a repeated one costs a read and never a wrong screen. The stamp is `clock_timestamp()`, not `now()`,
+because two writes in one transaction must not share a moment, and the cursor is read before the
+changes, never after, so a change landing between the two is answered twice rather than never.
+
+## Timestamps
+
+Every timestamp leaves as `2026-09-25T14:03:11.250Z`: UTC, `Z`, three digits of a second — the form
+every client of this contract already writes, and compares against, to the letter. Postgres writes
+the same moment as `2026-09-25T14:03:11.25+00:00`, so `src/Api/WireTimestamps.php` re-renders them on
+the way out, in one place, and `App\Db\Cafe` sets the connection to UTC so that place only ever has
+one spelling to fix. No query has to remember, which matters because the reads shape their JSON in
+the database and the record functions were written for Supabase.
 
 ## How the app reaches it
 
