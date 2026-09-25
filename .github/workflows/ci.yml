@@ -114,22 +114,37 @@ jobs:
         run: |
           php bin/console doctrine:database:create --no-interaction --if-not-exists --connection=admin --env=test
           php bin/phpunit
-      - name: start the server
+      - name: start the server, and sign a member in
         working-directory: api
         run: |
           nohup php -S 127.0.0.1:8000 -t public > "$RUNNER_TEMP/server.log" 2>&1 &
+          up=
           for _ in $(seq 1 30); do
             # 401 is the contract's answer to a request with no token, and takes the whole server
             # to say it: waiting for a 2xx here would wait for ever.
             if [ "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8000/api/v1/products)" = "401" ]; then
-              echo 'the API answers 401 without a token'
-              exit 0
+              up=yes
+              break
             fi
             sleep 1
           done
-          echo 'the server did not come up' >&2
-          cat "$RUNNER_TEMP/server.log" >&2
-          exit 1
+          if [ -z "$up" ]; then
+            echo 'the server did not come up' >&2
+            cat "$RUNNER_TEMP/server.log" >&2
+            exit 1
+          fi
+          echo 'the API answers 401 without a token'
+          # And the first thing every device does, so that a server that cannot do it says why here
+          # rather than sixty tests later.
+          code=$(curl -s -o "$RUNNER_TEMP/token.json" -w '%{http_code}' \
+            -X POST http://127.0.0.1:8000/api/v1/auth/token \
+            -H 'Content-Type: application/json' \
+            -d '{"email":"admin@demo.local","password":"demo-admin-2026"}')
+          echo "signing in answers $code"
+          if [ "$code" != "200" ]; then
+            cat "$RUNNER_TEMP/token.json" >&2
+            exit 1
+          fi
       - name: the port contract suite, against the running server
         run: npx vitest run live.contract
         env:
@@ -138,6 +153,13 @@ jobs:
         run: npx playwright test --project=rest
         env:
           E2E_BACKEND: rest
+      # Whatever the server said to itself while the suites above were running.
+      - name: the server's log
+        if: failure()
+        working-directory: api
+        run: |
+          tail -n 200 "$RUNNER_TEMP/server.log" || true
+          tail -n 200 var/log/dev.log || true
       - uses: actions/upload-artifact@v4
         if: failure()
         with:

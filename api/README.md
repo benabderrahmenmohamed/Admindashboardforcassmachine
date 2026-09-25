@@ -62,8 +62,9 @@ things: `auth.users` becomes `public.users`, `auth.uid()` becomes `private.curre
 the old app, the nightly demo reset and the Realtime publication are left behind. Run the script
 again after changing anything under `supabase/migrations` if both backends must stay in step.
 
-`migrations/sql/0002_changes.sql` is this server's own: the one thing Supabase provided that a PHP
-server cannot. See below.
+Two migrations after it are this server's own. `0002_changes.sql` is the one thing Supabase provided
+that a PHP server cannot — see below — and `0003_reads.sql` is a single grant, so that the sessions
+this server lists and the sessions its functions answer with are shaped by the same code.
 
 `DATABASE_URL` lives in `.env` for local work and is overridden by `.env.local` or a real environment
 variable anywhere else. `.env.test` points at `cafe_test`, which the tests are free to empty.
