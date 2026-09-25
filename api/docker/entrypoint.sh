@@ -4,6 +4,21 @@ set -e
 
 cd /var/www/html
 
+# What this container was told, where Symfony will actually look for it.
+#
+# Symfony reads its configuration from $_ENV and $_SERVER, never getenv(), and not every SAPI fills
+# those from the process environment - the PHP built-in server fills neither. Writing them into
+# .env.local, which every SAPI reads the same way, is what makes `docker run -e DATABASE_URL=…`
+# mean what it says. Single quotes because a value may hold a `$`: CORS_ALLOW_ORIGIN is a regex.
+: > .env.local
+for name in APP_ENV APP_SECRET DATABASE_URL DATABASE_ADMIN_URL JWT_SECRET_KEY JWT_PUBLIC_KEY \
+            JWT_PASSPHRASE CORS_ALLOW_ORIGIN DEFAULT_URI; do
+    value=$(printenv "$name" || true)
+    if [ -n "$value" ]; then
+        printf "%s='%s'\n" "$name" "$value" >> .env.local
+    fi
+done
+
 # The keys that sign the tokens. A deployment mounts its own at config/jwt; keys made here live and
 # die with the container, so every restart signs every device out and two replicas reject each
 # other's tokens. Fine for a demo, and said plainly in api/README.md for anything else.
@@ -35,6 +50,6 @@ fi
 
 # Everything above ran as root, and Apache does not: the cache those commands warmed and the keys
 # they may have written have to belong to the user that serves the café.
-chown -R www-data:www-data var config/jwt
+chown -R www-data:www-data var config/jwt .env.local
 
 exec "$@"

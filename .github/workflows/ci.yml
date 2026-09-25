@@ -79,9 +79,6 @@ jobs:
           --health-timeout 5s
           --health-retries 10
     env:
-      # 5432 here, 5433 in api/.env: that one is the port the developer's local cluster listens on.
-      DATABASE_URL: postgresql://cafe_app:cafe_app@127.0.0.1:5432/cafe?serverVersion=17&charset=utf8
-      DATABASE_ADMIN_URL: postgresql://postgres:postgres@127.0.0.1:5432/cafe?serverVersion=17&charset=utf8
       API_BASE_URL: http://127.0.0.1:8000
     steps:
       - uses: actions/checkout@v4
@@ -98,6 +95,18 @@ jobs:
       - name: install the server's dependencies
         working-directory: api
         run: composer install --no-interaction --prefer-dist
+      # Not the job's `env:`. Symfony reads its configuration from $_ENV and $_SERVER, never
+      # getenv(), and PHP's built-in server fills neither from the process environment - so a server
+      # started with DATABASE_URL exported would quietly use the 5433 in .env, which is a port on
+      # the developer's machine and nothing here. .env.local is what a developer overrides .env
+      # with, and every SAPI reads it the same way.
+      - name: the database this run uses
+        working-directory: api
+        run: |
+          cat > .env.local <<'ENV'
+          DATABASE_URL="postgresql://cafe_app:cafe_app@127.0.0.1:5432/cafe?serverVersion=17&charset=utf8"
+          DATABASE_ADMIN_URL="postgresql://postgres:postgres@127.0.0.1:5432/cafe?serverVersion=17&charset=utf8"
+          ENV
       - name: the keys that sign the tokens
         working-directory: api
         run: php bin/console lexik:jwt:generate-keypair --no-interaction

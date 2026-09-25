@@ -66,8 +66,14 @@ Two migrations after it are this server's own. `0002_changes.sql` is the one thi
 that a PHP server cannot — see below — and `0003_reads.sql` is a single grant, so that the sessions
 this server lists and the sessions its functions answer with are shaped by the same code.
 
-`DATABASE_URL` lives in `.env` for local work and is overridden by `.env.local` or a real environment
-variable anywhere else. `.env.test` points at `cafe_test`, which the tests are free to empty.
+`DATABASE_URL` lives in `.env` for local work, and `.env.test` points at `cafe_test`, which the tests
+are free to empty.
+
+Anywhere else, put it in `.env.local` rather than in the environment. Symfony reads its configuration
+from `$_ENV` and `$_SERVER`, never from `getenv()`, and not every SAPI fills those from the process
+environment: PHP's built-in server fills neither, so a server started with `DATABASE_URL` exported
+uses the one in `.env` and says nothing about it. `.env.local` is read the same way by all of them,
+which is why CI writes one and why the container's entrypoint writes what it was told into one.
 
 ## Live screens, without a live connection
 
