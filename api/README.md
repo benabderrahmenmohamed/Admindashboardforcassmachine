@@ -98,3 +98,24 @@ VITE_BACKEND=rest VITE_API_BASE_URL=http://127.0.0.1:8000 npm run dev
 
 Nothing in the screens changes: the app reaches every backend through the same ports, and this one
 answers the REST contract.
+
+## What holds it to the contract
+
+`php bin/phpunit` is this server's own suite: the endpoints over HTTP, and the policies under them.
+It proves the server against the contract as this repo reads it. Two suites that already existed
+prove it against the app that has to use it, and neither was written for it — they are the ones the
+memory and Supabase backends pass, run unchanged:
+
+```bash
+# The port contract suite, 60 tests, against the server at API_BASE_URL.
+CONTRACT_BACKEND=rest API_BASE_URL=http://127.0.0.1:8000 npx vitest run live.contract
+
+# The waiter's phone, the kitchen screen and the counter, in three browsers at once.
+E2E_BACKEND=rest API_BASE_URL=http://127.0.0.1:8000 npx playwright test --project=rest
+```
+
+Both need the server running (`php -S 127.0.0.1:8000 -t public`) against a database that has been
+migrated and seeded. On Windows, PowerShell sets those variables with `$env:NAME='value';` first.
+
+They leave their tables, sessions and sales in the database, as a café does: every run takes a table
+and a terminal code of its own, so nothing has to be reset between them.

@@ -9,8 +9,13 @@ function testEnv(): TestEnv {
 }
 
 /** True when CONTRACT_BACKEND names `backend`: its runners then run next to the memory one. */
-export function contractBackendIs(backend: 'supabase'): boolean {
+export function contractBackendIs(backend: 'supabase' | 'rest'): boolean {
   return testEnv().CONTRACT_BACKEND === backend;
+}
+
+/** A variable an enabled runner can do without: its default is what a local run wants anyway. */
+export function testEnvOr(name: string, fallback: string): string {
+  return testEnv()[name] ?? fallback;
 }
 
 /** A variable an enabled runner needs; CONFIG_ERROR naming it when it is not set. */

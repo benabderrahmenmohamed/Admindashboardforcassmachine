@@ -8,7 +8,7 @@ import { describeTerminalsPortContract } from './terminals.contract';
 
 export { describeAuthPortContract } from './auth.contract';
 export { describeCatalogPortContract } from './catalog.contract';
-export { contractBackendIs, requireTestEnv } from './env';
+export { contractBackendIs, requireTestEnv, testEnvOr } from './env';
 export { freshTerminalCode } from './fixture';
 export type { ContractFixture, MakeFixture } from './fixture';
 export { describeOrdersPortContract } from './orders.contract';

@@ -18,14 +18,19 @@ import {
 } from './support/cafe';
 
 /**
- * The café on a local Supabase stack, three devices at once: the waiter's phone, the kitchen screen
- * and the counter, each a browser context of its own — its own sign-in, its own device id and its own
- * queue, as three real devices have. Nothing is handed from one to another but the database and its
- * realtime publication, so every screen here changes because another device wrote something.
+ * The café on a real server, three devices at once: the waiter's phone, the kitchen screen and the
+ * counter, each a browser context of its own — its own sign-in, its own device id and its own queue,
+ * as three real devices have. Nothing is handed from one to another but the server, so every screen
+ * here changes because another device wrote something.
+ *
+ * Which server is the run's business and not the spec's: `E2E_BACKEND=supabase` points the app at a
+ * local Supabase stack, where the screens are told what changed, and `E2E_BACKEND=rest` points it at
+ * the Symfony service in api/, where they ask every couple of seconds. The café is the same one
+ * either way — supabase/seed.sql and `php bin/console app:seed-demo` create the same people with the
+ * same passwords — and so is everything below.
  *
  * The run makes its own table and terminal, named after the moment it started, so it needs no reset
- * and leaves the seeded café as it found it: `npm run db:reset` is only for a stack that is not
- * seeded yet. Accounts are the ones supabase/seed.sql creates.
+ * and leaves the seeded café as it found it.
  */
 
 const OWNER = { email: 'owner@demo.local', password: 'demo-owner-2026' };
