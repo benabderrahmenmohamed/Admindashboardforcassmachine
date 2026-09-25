@@ -198,7 +198,15 @@ jobs:
             echo 'the container would not sign the owner in' >&2
             exit 1
           fi
-          curl -sSf http://127.0.0.1:8000/api/v1/me -H "Authorization: Bearer $token" | jq -e '.roles | index("admin")'
+          # And the token is worth something on the next request, which is the whole point of one.
+          code=$(curl -s -o "$RUNNER_TEMP/me.json" -w '%{http_code}'             http://127.0.0.1:8000/api/v1/me -H "Authorization: Bearer $token")
+          echo "the token is worth $code"
+          if [ "$code" != "200" ]; then
+            cat "$RUNNER_TEMP/me.json" >&2
+            docker compose --profile cafe logs api >&2
+            exit 1
+          fi
+          jq -e '.roles | index("admin")' "$RUNNER_TEMP/me.json"
       - if: always()
         run: docker compose --profile cafe down --volumes
 
