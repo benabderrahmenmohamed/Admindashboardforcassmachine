@@ -5,7 +5,6 @@ declare(strict_types=1);
 namespace App\Controller;
 
 use App\Api\ApiError;
-use App\Db\Cafe;
 use Symfony\Component\HttpFoundation\JsonResponse;
 use Symfony\Component\HttpFoundation\Request;
 use Symfony\Component\HttpFoundation\Response;
@@ -20,12 +19,8 @@ use Symfony\Component\Routing\Attribute\Route;
  * controller that also checked would be a second opinion on the same question, and the two would
  * drift.
  */
-final readonly class CatalogController
+final readonly class CatalogController extends ApiController
 {
-    public function __construct(private Cafe $cafe)
-    {
-    }
-
     #[Route('/api/v1/products', methods: ['GET'])]
     public function products(): JsonResponse
     {
@@ -88,7 +83,7 @@ final readonly class CatalogController
         ]);
 
         // A record that arrives twice answers what it answered the first time, and says so.
-        return new JsonResponse($answer, 'replayed' === ($answer['status'] ?? '') ? Response::HTTP_OK : Response::HTTP_CREATED);
+        return $this->written($answer);
     }
 
     #[Route('/api/v1/categories', methods: ['GET'])]

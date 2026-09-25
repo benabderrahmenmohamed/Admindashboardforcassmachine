@@ -13,20 +13,22 @@ use Doctrine\DBAL\Connection;
  * because most of them only read, and the ledger cannot be emptied anyway.
  *
  * The files are the migrations' own (migrations/sql), run here directly rather than through Doctrine:
- * a test needs the schema, not the record of how it got there. Each one is named with something it
- * creates, so a database that already has it is left alone and a new migration is one line.
+ * a test needs the schema, not the record of how it got there. Each one is named with a question that
+ * answers nothing until it has been applied, so a database that already has it is left alone and a new
+ * migration is one line.
  */
 trait CafeSchema
 {
     private const SCHEMA = [
-        '0001_schema.sql' => 'public.shops',
-        '0002_changes.sql' => 'private.shop_changes',
+        '0001_schema.sql' => "to_regclass('public.shops')",
+        '0002_changes.sql' => "to_regclass('private.shop_changes')",
+        '0003_reads.sql' => "nullif(has_function_privilege('cafe_app', 'private.session_json(public.cash_sessions)', 'execute'), false)",
     ];
 
     protected function applySchemaOnce(Connection $admin): void
     {
-        foreach (self::SCHEMA as $file => $creates) {
-            if (null !== $admin->fetchOne('select to_regclass(?)', [$creates])) {
+        foreach (self::SCHEMA as $file => $alreadyApplied) {
+            if (null !== $admin->fetchOne('select ' . $alreadyApplied)) {
                 continue;
             }
 

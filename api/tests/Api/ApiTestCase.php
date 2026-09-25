@@ -27,6 +27,10 @@ abstract class ApiTestCase extends WebTestCase
     protected KernelBrowser $client;
     protected Connection $db;
 
+    /** Counted for the whole run, so no two records of it are ever the same record. */
+    private static int $ids = 0;
+    private static int $hashes = 0;
+
     protected function setUp(): void
     {
         $this->client = self::createClient();
@@ -113,5 +117,37 @@ abstract class ApiTestCase extends WebTestCase
     protected function errorCode(array $answer): string
     {
         return $answer['error']['code'] ?? 'no error in the body';
+    }
+
+    /**
+     * The envelope every record a device writes carries. The hash is not a hash of anything here -
+     * the server stores and compares it, never recomputes it (contracts/errors.md) - so what these
+     * tests need of it is only that two different records never share one.
+     */
+    protected function record(array $fields, ?string $createdAt = null): array
+    {
+        return $fields + [
+            'id' => $this->nextId(),
+            'device_id' => 'phone-1',
+            'created_at' => $createdAt ?? $this->moment(),
+            'payload_hash' => $this->nextHash(),
+        ];
+    }
+
+    /** A moment in the form every client of this contract writes: UTC, three digits, Z. */
+    protected function moment(string $when = 'now'): string
+    {
+        return (new \DateTimeImmutable($when, new \DateTimeZone('UTC')))->format('Y-m-d\TH:i:s.v\Z');
+    }
+
+    /** An id no other row of this run has. */
+    protected function nextId(): string
+    {
+        return sprintf('eeeeeeee-eeee-4eee-8eee-%012d', ++self::$ids);
+    }
+
+    protected function nextHash(): string
+    {
+        return str_pad(dechex(++self::$hashes), 64, '0');
     }
 }

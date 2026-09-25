@@ -40,6 +40,20 @@ final class Json
         return $value;
     }
 
+    /**
+     * A field that has to be there but may be empty, such as what a café prints at the bottom of its
+     * receipts: a form that sends nothing at all must not be read as a form that cleared it.
+     */
+    public static function requiredText(array $body, string $field): string
+    {
+        $value = $body[$field] ?? null;
+        if (!is_string($value)) {
+            throw ApiError::field($field, sprintf('%s is required.', $field));
+        }
+
+        return $value;
+    }
+
     public static function text(array $body, string $field, string $fallback = ''): string
     {
         $value = $body[$field] ?? null;

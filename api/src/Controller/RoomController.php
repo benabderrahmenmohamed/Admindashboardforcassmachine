@@ -4,8 +4,6 @@ declare(strict_types=1);
 
 namespace App\Controller;
 
-use App\Api\ApiError;
-use App\Db\Cafe;
 use Symfony\Component\HttpFoundation\JsonResponse;
 use Symfony\Component\HttpFoundation\Request;
 use Symfony\Component\HttpFoundation\Response;
@@ -23,7 +21,7 @@ use Symfony\Component\Routing\Attribute\Route;
  * something the device never wrote. The functions validate every field and answer in the codes of
  * contracts/errors.md; a record that arrives twice answers what it answered the first time.
  */
-final readonly class RoomController
+final readonly class RoomController extends ApiController
 {
     /** The contract's OpenOrderItem, from a row of `i`. */
     private const ITEM = <<<'SQL'
@@ -40,10 +38,6 @@ final readonly class RoomController
     private const TABLE = <<<'SQL'
         json_build_object('id', t.id, 'name', t.name, 'sort_order', t.sort_order, 'is_active', t.is_active)
         SQL;
-
-    public function __construct(private Cafe $cafe)
-    {
-    }
 
     #[Route('/api/v1/dining-tables', methods: ['GET'])]
     public function tables(): JsonResponse
@@ -205,21 +199,22 @@ final readonly class RoomController
     #[Route('/api/v1/open-orders', methods: ['GET'])]
     public function changes(Request $request): JsonResponse
     {
+        $since = $this->moment($request, 'since', required: false);
+
         // Opaque, and to the microsecond: the wire's timestamps are rounded to the millisecond
         // (App\Api\WireTimestamps), and a cursor rounded down would answer the same change twice.
         $cursor = (string) $this->cafe->value(
             "select to_char(clock_timestamp() at time zone 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"')",
         );
-        $since = $request->query->get('since');
 
-        if (null === $since || '' === $since) {
+        if (null === $since) {
             // The first poll: what changed before a screen opened is already in what it read.
             return new JsonResponse(['cursor' => $cursor, 'topics' => []]);
         }
 
         $topics = $this->cafe->rows(
             'select topic from private.shop_changes where changed_at > cast(? as timestamptz) order by topic',
-            [$this->moment($since, 'since')],
+            [$since],
         );
 
         return new JsonResponse(['cursor' => $cursor, 'topics' => array_column($topics, 'topic')]);
@@ -231,7 +226,7 @@ final readonly class RoomController
     {
         return $this->answer(
             'select public.removed_after_sent(cast(? as timestamptz), cast(? as timestamptz))',
-            [$this->period($request, 'from'), $this->period($request, 'to')],
+            [$this->moment($request, 'from'), $this->moment($request, 'to')],
         );
     }
 
@@ -239,57 +234,5 @@ final readonly class RoomController
     private function tableInput(array $body): array
     {
         return array_intersect_key($body, array_flip(['name', 'sort_order', 'is_active']));
-    }
-
-    /** A record addressed to one item or table has to be about that one. */
-    private function mustBeAbout(string $field, string $fromTheAddress, array $record): void
-    {
-        $inTheRecord = $record[$field] ?? null;
-        if (is_string($inTheRecord) && strtolower($inTheRecord) !== strtolower($fromTheAddress)) {
-            throw ApiError::field($field, sprintf('This record is about another %s than the address it was sent to.', $field));
-        }
-    }
-
-    /** A record answers 201 the first time and 200 when the server has seen it before. */
-    private function written(array $stored): JsonResponse
-    {
-        return new JsonResponse(
-            $stored,
-            'replayed' === ($stored['status'] ?? '') ? Response::HTTP_OK : Response::HTTP_CREATED,
-        );
-    }
-
-    /** A query whose one column is already the contract's JSON. */
-    private function answer(string $sql, array $params = [], string $whenEmpty = '[]'): JsonResponse
-    {
-        $json = $this->cafe->value($sql, $params);
-
-        return JsonResponse::fromJsonString(is_string($json) ? $json : $whenEmpty);
-    }
-
-    /** One end of a report's period. Both are required, and a report is always of a named one. */
-    private function period(Request $request, string $field): string
-    {
-        $value = (string) $request->query->get($field, '');
-        if ('' === $value) {
-            throw ApiError::field($field, sprintf('%s is required.', $field));
-        }
-
-        return $this->moment($value, $field);
-    }
-
-    /**
-     * A timestamp from the query string, read here and passed on in one form, so the database is
-     * never handed free text to interpret.
-     */
-    private function moment(string $value, string $field): string
-    {
-        try {
-            $moment = new \DateTimeImmutable($value);
-        } catch (\Exception) {
-            throw ApiError::field($field, sprintf('%s must be an ISO 8601 timestamp.', $field));
-        }
-
-        return $moment->format('Y-m-d\TH:i:s.uP');
     }
 }

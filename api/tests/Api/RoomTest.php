@@ -404,26 +404,6 @@ final class RoomTest extends ApiTestCase
         ]));
     }
 
-    /** The envelope every order record carries, with a fresh id and a hash of its own. */
-    private function record(array $fields, ?string $createdAt = null): array
-    {
-        static $written = 0;
-        ++$written;
-
-        return $fields + [
-            'id' => sprintf('eeeeeeee-eeee-4eee-8eee-%012d', $written),
-            'device_id' => 'phone-1',
-            'created_at' => $createdAt ?? $this->moment(),
-            'payload_hash' => str_pad(dechex($written), 64, '0'),
-        ];
-    }
-
-    /** A moment in the form every client of this contract writes: UTC, three digits, Z. */
-    private function moment(string $when = 'now'): string
-    {
-        return (new \DateTimeImmutable($when, new \DateTimeZone('UTC')))->format('Y-m-d\TH:i:s.v\Z');
-    }
-
     private function openOrderOf(string $tableId, string $token): ?array
     {
         $this->call('GET', '/api/v1/dining-tables/' . $tableId . '/open-order', $token);

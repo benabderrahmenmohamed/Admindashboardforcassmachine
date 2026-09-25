@@ -1,8 +1,9 @@
 # api — the Symfony server
 
-The café's backend, written against [`../contracts/openapi.yaml`](../contracts/openapi.yaml): the same
-28 endpoints the REST adapter of the app already calls. The screens stay as they are — they are the
-part that keeps working with no network — and this server replaces Supabase behind them.
+The café's backend, written against [`../contracts/openapi.yaml`](../contracts/openapi.yaml): the
+same 28 paths — 35 operations — the REST adapter of the app already calls, all of them served. The
+screens stay as they are — they are the part that keeps working with no network — and this server
+replaces Supabase behind them.
 
 ## What it needs
 
