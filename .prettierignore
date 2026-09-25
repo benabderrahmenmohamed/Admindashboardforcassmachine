@@ -12,3 +12,6 @@ src/adapters/rest/api.types.ts
 
 # The spec as the owner pasted it, kept byte for byte so the next version can be diffed against it.
 docs/spec.md
+
+# The Symfony server: PHP tooling formats it, not Prettier.
+api

@@ -56,7 +56,7 @@ const DETERMINISTIC_MESSAGE =
   'Domain modules stay deterministic: take the time or a random value as an argument.';
 
 export default defineConfig([
-  globalIgnores(['dist', 'coverage']),
+  globalIgnores(['dist', 'coverage', 'api']),
   {
     files: ['**/*.{ts,tsx}'],
     extends: [
