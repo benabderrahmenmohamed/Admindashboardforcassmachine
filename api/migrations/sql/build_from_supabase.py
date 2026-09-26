@@ -2,9 +2,13 @@ import re, pathlib, sys
 
 REPO = pathlib.Path("C:/Users/shini/Desktop/pos-admin-dashboard")
 SRC = REPO / "supabase" / "migrations"
-OUT = REPO / "api" / "migrations" / "sql" / "0001_schema.sql"
+DIR = REPO / "api" / "migrations" / "sql"
+OUT = DIR / "0001_schema.sql"
 
-FILES = [
+# The schema this server started from, replayed into 0001_schema.sql. It is history: Doctrine has run
+# Version20260925000001 on every database this server has ever had, and will never run it again, so a
+# statement added here reaches a fresh database and no other. Never add a migration to this list.
+BASELINE = [
     "20260911000002_private_helpers.sql",
     "20260911000003_shops_and_profiles.sql",
     "20260911000004_catalog.sql",
@@ -17,7 +21,14 @@ FILES = [
     "20260913000014_dining_table_names.sql",
     "20260913000015_removal_submitted_by.sql",
     "20260913000016_save_product_cafe_fields.sql",
-    "20260926000017_malformed_payloads.sql",
+]
+
+# Every Supabase migration written after that, each converted into a file of its own. Each one also
+# needs a Doctrine migration (api/migrations/VersionYYYYMMDDNNNNNN.php) that runs its file, and a
+# line in api/tests/Support/CafeSchema.php, so that an existing database gets it the way Supabase's
+# does: as the next migration, once.
+LATER = [
+    ("20260926000017_malformed_payloads.sql", "0004_malformed_payloads.sql"),
 ]
 
 PREAMBLE = """-- The café's schema, for the Symfony server.
@@ -115,9 +126,11 @@ def convert(text: str) -> str:
     text = re.sub(r"\bfrom service_role\b", "from public", text)
     return text
 
-parts = [PREAMBLE]
 kept = dropped = 0
-for name in FILES:
+
+def replay(name: str) -> str:
+    """One Supabase migration, converted, with what belonged to Supabase left out."""
+    global kept, dropped
     body = (SRC / name).read_text(encoding="utf-8")
     chunk = [f"\n-- ---------------------------------------------------------------------------------------------\n-- from {name}\n"]
     for stmt in statements(body):
@@ -133,7 +146,11 @@ for name in FILES:
             continue
         chunk.append(convert(stmt))
         kept += 1
-    parts.append("".join(chunk))
+    return "".join(chunk)
+
+parts = [PREAMBLE]
+for name in BASELINE:
+    parts.append(replay(name))
     if name.endswith("private_helpers.sql"):
         parts.append(CURRENT_USER)
 
@@ -153,3 +170,17 @@ parts.append(FOOTER)
 OUT.parent.mkdir(parents=True, exist_ok=True)
 OUT.write_text("".join(parts), encoding="utf-8")
 print(f"kept {kept} statements, dropped {dropped}, wrote {OUT} ({OUT.stat().st_size} bytes)")
+
+LATER_HEADER = """-- {name}, for the Symfony server.
+--
+-- Converted by build_from_supabase.py exactly as 0001_schema.sql was: auth.users is public.users,
+-- auth.uid() is private.current_user_id(), and the API roles are cafe_app. A migration of its own
+-- rather than more lines in 0001_schema.sql, because Doctrine has already run that one everywhere
+-- and a database that has will never run it again.
+"""
+
+for name, target in LATER:
+    kept = dropped = 0
+    path = DIR / target
+    path.write_text(LATER_HEADER.format(name=name) + replay(name), encoding="utf-8")
+    print(f"kept {kept} statements, dropped {dropped}, wrote {path} ({path.stat().st_size} bytes)")

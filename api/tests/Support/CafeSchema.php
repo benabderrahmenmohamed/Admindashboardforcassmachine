@@ -23,6 +23,7 @@ trait CafeSchema
         '0001_schema.sql' => "to_regclass('public.shops')",
         '0002_changes.sql' => "to_regclass('private.shop_changes')",
         '0003_reads.sql' => "nullif(has_function_privilege('cafe_app', 'private.session_json(public.cash_sessions)', 'execute'), false)",
+        '0004_malformed_payloads.sql' => "(select 1 from pg_proc where proname = 'void_receipt' and prosrc like '%json_reason(p, ''error_code'')%')",
     ];
 
     protected function applySchemaOnce(Connection $admin): void

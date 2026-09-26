@@ -63,16 +63,24 @@ an identity and never by anything else a request carries; everything the request
 
 ## Where the schema comes from
 
-`migrations/sql/0001_schema.sql` is the café's schema in one file, derived from the 17 Supabase
-migrations by `migrations/sql/build_from_supabase.py`, which replays them in order and changes three
-things: `auth.users` becomes `public.users`, `auth.uid()` becomes `private.current_user_id()` reading
-`app.user_id`, and Supabase's three API roles become the single `cafe_app`. The key-value import of
-the old app, the nightly demo reset and the Realtime publication are left behind. Run the script
-again after changing anything under `supabase/migrations` if both backends must stay in step.
+`migrations/sql/0001_schema.sql` is the café's schema as this server started from it: the 16
+Supabase migrations of that day in one file, derived by `migrations/sql/build_from_supabase.py`,
+which replays them in order and changes three things: `auth.users` becomes `public.users`,
+`auth.uid()` becomes `private.current_user_id()` reading `app.user_id`, and Supabase's three API
+roles become the single `cafe_app`. The key-value import of the old app, the nightly demo reset and
+the Realtime publication are left behind.
 
-Two migrations after it are this server's own. `0002_changes.sql` is the one thing Supabase provided
-that a PHP server cannot — see below — and `0003_reads.sql` is a single grant, so that the sessions
-this server lists and the sessions its functions answer with are shaped by the same code.
+That file is history and is never added to. Doctrine has run it on every database this server has
+had and will not run it again, so a statement appended to it reaches a fresh database and no other.
+A Supabase migration written since becomes a file of its own, converted by the same script, with a
+Doctrine migration that runs it once: `0004_malformed_payloads.sql` is Supabase's migration 17, and
+`Version20260926000004` is how an existing database gets it. To add the next one, put it in the
+script's `LATER` list, run the script, and add its Doctrine migration and its line in
+`tests/Support/CafeSchema.php`.
+
+Two migrations are this server's own. `0002_changes.sql` is the one thing Supabase provided that a
+PHP server cannot — see below — and `0003_reads.sql` is a single grant, so that the sessions this
+server lists and the sessions its functions answer with are shaped by the same code.
 
 `DATABASE_URL` lives in `.env` for local work, and `.env.test` points at `cafe_test`, which the tests
 are free to empty.
