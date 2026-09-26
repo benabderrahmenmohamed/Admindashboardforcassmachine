@@ -397,6 +397,16 @@ describe('supabase sales', () => {
     expect(calls[0].query.has('limit')).toBe(false);
   });
 
+  it('filters by table, so a caisse reading back one table gets only what was paid there', async () => {
+    const { calls, sales } = salesServer([]);
+
+    await expect(sales.listSales({ tableId: 'table-4' })).resolves.toEqual([]);
+
+    expect(calls[0].query.get('table_id')).toBe('eq.table-4');
+    expect(calls[0].query.has('terminal_id')).toBe(false);
+    expect(calls[0].query.has('session_id')).toBe(false);
+  });
+
   it('looks refunds up 50 sale ids at a time', async () => {
     const rows = Array.from({ length: 120 }, (_, index) => ({
       ...saleRow,

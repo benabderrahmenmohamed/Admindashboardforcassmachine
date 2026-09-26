@@ -9,6 +9,7 @@ import {
 } from '@/ports';
 import type { ContractFixture, MakeFixture } from './fixture';
 import {
+  addToTable,
   cartOf,
   closeRecord,
   contextOf,
@@ -23,6 +24,7 @@ import {
   refundWith,
   rewrite,
   saleRecord,
+  tablePaymentRecord,
 } from './support';
 
 function receiptsOf(sales: readonly Sale[]): string[] {
@@ -650,6 +652,36 @@ export function describeSalesPortContract(makeFixture: MakeFixture): void {
       const bySession = await fixture.admin.sales.listSales({ sessionId: other.sessionId });
       expect(receiptsOf(bySession)).toEqual([receipt(other, 1)]);
       await expect(fixture.cashier.sales.getSale(byTerminal[0].id)).resolves.toEqual(byTerminal[0]);
+    });
+
+    it('lists what was paid at one table, and not the counter sale rung up beside it', async () => {
+      const table = await fixture.newTable();
+      const coffee = await createProduct(fixture, 'Express', 1_900);
+      const item = await addToTable(fixture, table, coffee, 2);
+      const till = await openTill(fixture);
+
+      const atTable = await tablePaymentRecord(till, 1, table, [item]);
+      await recordCreated(fixture, atTable);
+      // A coffee taken away, rung up on the same till in the same session: it sat on no table.
+      const takeaway = await saleRecord(till, 2, cartOf([[coffee, 1]]), { method: 'card' });
+      await recordCreated(fixture, takeaway);
+
+      // A caisse asking what was paid at this table gets that receipt, not the day's takings.
+      const paid = await fixture.cashier.sales.listSales({ tableId: table.id });
+      expect(receiptsOf(paid)).toEqual([receipt(till, 1)]);
+      expect(paid[0]).toMatchObject({
+        id: atTable.id,
+        tableId: table.id,
+        tableName: table.name,
+        totalMillimes: 3_800,
+      });
+
+      // Both receipts are on the till, so the filter narrowed rather than finding nothing else.
+      const session = await fixture.cashier.sales.listSales({ sessionId: till.sessionId });
+      expect(receiptsOf(session)).toEqual([receipt(till, 2), receipt(till, 1)]);
+      // A table nobody paid at answers nothing, rather than everything.
+      const free = await fixture.newTable();
+      await expect(fixture.admin.sales.listSales({ tableId: free.id })).resolves.toEqual([]);
     });
 
     it('still records sales and refunds of an archived product', async () => {

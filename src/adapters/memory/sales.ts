@@ -505,12 +505,16 @@ export function createMemorySales(context: MemoryContext): SalesPort {
           filters.terminalId === undefined ? null : parseUuid(filters.terminalId, 'terminal_id');
         const sessionId =
           filters.sessionId === undefined ? null : parseUuid(filters.sessionId, 'session_id');
+        const tableId =
+          filters.tableId === undefined ? null : parseUuid(filters.tableId, 'table_id');
         const newestFirst = Array.from(store.sales.values())
           .filter(
             (sale) =>
               sale.shopId === profile.shopId &&
               (terminalId === null || sale.terminalId === terminalId) &&
-              (sessionId === null || sale.sessionId === sessionId),
+              (sessionId === null || sale.sessionId === sessionId) &&
+              // A refund is paid at no table, so asking for a table's receipts answers sales only.
+              (tableId === null || sale.tableId === tableId),
           )
           .reverse();
         return newestFirst

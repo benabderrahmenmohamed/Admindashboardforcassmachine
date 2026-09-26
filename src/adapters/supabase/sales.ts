@@ -163,7 +163,7 @@ export function createSupabaseSales(client: SupabaseDatabaseClient): SalesPort {
     },
 
     async listSales(query) {
-      const { terminalId, sessionId, limit } = parseInput(listSalesQuerySchema, query);
+      const { terminalId, sessionId, tableId, limit } = parseInput(listSalesQuerySchema, query);
       let request = client
         .from('sales')
         .select(SALE_COLUMNS)
@@ -174,6 +174,10 @@ export function createSupabaseSales(client: SupabaseDatabaseClient): SalesPort {
       }
       if (sessionId !== undefined) {
         request = request.eq('session_id', sessionId);
+      }
+      // A refund is paid at no table, so asking for a table's receipts answers sales only.
+      if (tableId !== undefined) {
+        request = request.eq('table_id', tableId);
       }
       if (limit !== undefined) {
         request = request.limit(limit);
