@@ -17,6 +17,7 @@ FILES = [
     "20260913000014_dining_table_names.sql",
     "20260913000015_removal_submitted_by.sql",
     "20260913000016_save_product_cafe_fields.sql",
+    "20260926000017_malformed_payloads.sql",
 ]
 
 PREAMBLE = """-- The café's schema, for the Symfony server.
