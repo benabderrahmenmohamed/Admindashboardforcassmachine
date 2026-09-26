@@ -169,6 +169,60 @@ final class LedgerTest extends MoneyTestCase
         self::assertSame($sale['receipt_number'], $answer['receipt_number']);
     }
 
+    /**
+     * A void keeps the error the till was stuck on, so a blank one is the admin's to fill in. It used
+     * to reach the column's check and come back as SERVER_ERROR, which a device retries for ever.
+     */
+    public function testAVoidSaysWhichErrorTheTillWasStuckOn(): void
+    {
+        $caisse = $this->caisse('C1');
+        $lost = $this->saleRecord($caisse, 1, [$this->line(1, self::EXPRESS, 'Express', 1, 1200)], [
+            'session_id' => 'eeeeeeee-eeee-4eee-8eee-999999999999',
+        ]);
+        $admin = $this->tokenFor(self::ADMIN);
+
+        foreach (['', '   '] as $blank) {
+            $refused = $this->call('POST', '/api/v1/receipt-voids', $admin, [
+                'record' => $lost,
+                'error_code' => $blank,
+                'reason' => 'The session was gone when it arrived',
+            ]);
+            self::assertSame(422, $this->httpStatus(), json_encode($blank) . ' answered ' . json_encode($refused));
+            self::assertSame('VALIDATION_ERROR', $this->errorCode($refused));
+            self::assertSame(['field' => 'error_code'], $refused['error']['details']);
+        }
+
+        $voided = $this->call('POST', '/api/v1/receipt-voids', $admin, [
+            'record' => $lost,
+            'error_code' => 'NOT_FOUND',
+            'reason' => 'The session was gone when it arrived',
+        ]);
+        self::assertSame(201, $this->httpStatus());
+        self::assertSame('C1-1', $voided['receipt_number'], 'the refused voids burnt no number');
+    }
+
+    /**
+     * Quantity times unit price is worked out before anything else about the line is checked, so a
+     * line that asks for more than the ledger can count once overflowed and came back as
+     * SERVER_ERROR. For a sale that is worse than for anything else: a till cannot throw a sale away,
+     * so it would retry that receipt for ever and nobody would see the line. It is a line whose
+     * amounts do not add up, and the answer says which.
+     */
+    public function testALineTooLargeToCountIsRefusedNamingTheLine(): void
+    {
+        $caisse = $this->caisse('C1');
+        $huge = $this->line(1, self::EXPRESS, 'Express', 10_000_000, 1_000_000_000_000, ['net_millimes' => 1200]);
+
+        $refused = $this->recordSale($this->saleRecord($caisse, 1, [$huge]));
+        self::assertSame(422, $this->httpStatus(), json_encode($refused));
+        self::assertSame('VALIDATION_ERROR', $this->errorCode($refused));
+        self::assertSame(['line_no' => 1], $refused['error']['details']);
+
+        $next = $this->recordSale($this->saleRecord($caisse, 1, [$this->line(1, self::EXPRESS, 'Express', 1, 1200)]));
+        self::assertSame(201, $this->httpStatus());
+        self::assertSame('C1-1', $next['receipt_number'], 'the refused sale took no number');
+    }
+
     public function testSomethingCountedLeavesTheShelfWhenItIsSoldAndComesBackWhenItIsGivenBack(): void
     {
         $caisse = $this->caisse('C1');

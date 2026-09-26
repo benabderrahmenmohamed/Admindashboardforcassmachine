@@ -166,6 +166,40 @@ final class RoomTest extends ApiTestCase
         self::assertSame('name', $taken['error']['details']['field']);
     }
 
+    /**
+     * In service or retired, and nothing in between. A value that is neither is the form's mistake to
+     * fix, so it is VALIDATION_ERROR naming the field - never SERVER_ERROR, which tells a device to
+     * send the same thing again.
+     */
+    public function testATableIsInServiceOrRetiredAndNothingElse(): void
+    {
+        $admin = $this->tokenFor(self::ADMIN);
+
+        // "maybe" failed the cast and came back as a server error; "yes" was read as true.
+        foreach (['maybe', 'yes', 2] as $neither) {
+            $refused = $this->call('POST', '/api/v1/dining-tables', $admin, [
+                'name' => 'Terrasse 4',
+                'sort_order' => 9,
+                'is_active' => $neither,
+            ]);
+            self::assertSame(422, $this->httpStatus(), json_encode($neither) . ' answered ' . json_encode($refused));
+            self::assertSame('VALIDATION_ERROR', $this->errorCode($refused));
+            self::assertSame(['field' => 'is_active'], $refused['error']['details']);
+        }
+
+        $refused = $this->call('PUT', '/api/v1/dining-tables/' . self::COMPTOIR, $admin, [
+            'name' => 'Comptoir',
+            'sort_order' => 8,
+            'is_active' => 'maybe',
+        ]);
+        self::assertSame(422, $this->httpStatus());
+        self::assertSame(['field' => 'is_active'], $refused['error']['details']);
+
+        $tables = $this->call('GET', '/api/v1/dining-tables', $admin);
+        self::assertCount(8, $tables, 'no refused save added a table');
+        self::assertTrue($this->tableIn($tables, self::COMPTOIR)['is_active'], 'and the one it was to change is as it was');
+    }
+
     public function testOneSendIsOneTicketAndPreparingTakesTheLineOffIt(): void
     {
         $waiter = $this->tokenFor(self::WAITER);

@@ -63,7 +63,7 @@ an identity and never by anything else a request carries; everything the request
 
 ## Where the schema comes from
 
-`migrations/sql/0001_schema.sql` is the café's schema in one file, derived from the 16 Supabase
+`migrations/sql/0001_schema.sql` is the café's schema in one file, derived from the 17 Supabase
 migrations by `migrations/sql/build_from_supabase.py`, which replays them in order and changes three
 things: `auth.users` becomes `public.users`, `auth.uid()` becomes `private.current_user_id()` reading
 `app.user_id`, and Supabase's three API roles become the single `cafe_app`. The key-value import of
