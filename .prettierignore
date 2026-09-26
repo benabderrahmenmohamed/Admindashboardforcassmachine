@@ -15,3 +15,7 @@ docs/spec.md
 
 # The Symfony server: PHP tooling formats it, not Prettier.
 api
+
+# Claude Code's session worktrees: whole other checkouts of this repository, which git excludes through
+# .git/info/exclude where neither Prettier nor ESLint looks. Linting them lints someone else's branch.
+.claude/worktrees

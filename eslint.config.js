@@ -56,7 +56,8 @@ const DETERMINISTIC_MESSAGE =
   'Domain modules stay deterministic: take the time or a random value as an argument.';
 
 export default defineConfig([
-  globalIgnores(['dist', 'coverage', 'api']),
+  // .claude/worktrees: other checkouts of this repo (see .prettierignore).
+  globalIgnores(['dist', 'coverage', 'api', '.claude/worktrees']),
   {
     files: ['**/*.{ts,tsx}'],
     extends: [
