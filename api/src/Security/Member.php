@@ -9,9 +9,13 @@ use Symfony\Component\Security\Core\User\UserInterface;
 
 /**
  * Who is signed in: a row of `users` joined to the `profiles` row that says which café they work in
- * and what they may do there. Roles and shop come from that profile and never from the token, which
- * carries nothing but the id — a member whose roles changed this morning gets the new ones on their
- * next request.
+ * and what they may do there.
+ *
+ * Roles and shop come from that profile on every request, never from the token. The token names the
+ * member by e-mail and carries a copy of the roles they had when it was signed, which this server
+ * ignores: the firewall loads the member again through App\Security\MemberProvider, so a member whose
+ * roles changed this morning gets the new ones on their next call, and nothing a token says about a
+ * café or a role is believed.
  */
 final readonly class Member implements UserInterface, PasswordAuthenticatedUserInterface
 {

@@ -297,10 +297,15 @@ export function describeOrdersPortContract(makeFixture: MakeFixture): void {
       });
       // The one taken off before the kitchen heard of it is not fraud, so it is not in the report.
       expect(report.some((line) => line.itemId === unsentItem.id)).toBe(false);
-      // A period that ended before the removal shows nothing.
-      await expect(
-        fixture.admin.orders.removedAfterSent({ from: minutesAgo(60), to: minutesAgo(30) }),
-      ).resolves.toEqual([]);
+      // A period that ended before the removal does not hold it. Asked about this item rather than
+      // about the whole report, because the report is the whole café's: a backend whose database keeps
+      // what earlier runs did has removals of its own in that half hour, and what is under test here
+      // is the period, not the café being empty.
+      const earlier = await fixture.admin.orders.removedAfterSent({
+        from: minutesAgo(60),
+        to: minutesAgo(30),
+      });
+      expect(earlier.some((line) => line.itemId === sentItem.id)).toBe(false);
     });
 
     it('credits the person a record names, who need not be the one who sends it', async () => {

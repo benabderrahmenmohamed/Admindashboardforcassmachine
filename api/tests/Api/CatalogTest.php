@@ -13,6 +13,9 @@ final class CatalogTest extends ApiTestCase
     private const EXPRESS = '55555555-5555-4555-8555-555555555505';
     private const WATER = '55555555-5555-4555-8555-555555555501';
 
+    /** What a timestamp looks like on this wire: UTC, `Z`, three digits of a second. */
+    private const AN_INSTANT = '/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/';
+
     public function testTheMenuIsTheCafesOwnAndCarriesWhatTheContractAsksFor(): void
     {
         $products = $this->call('GET', '/api/v1/products', $this->tokenFor(self::WAITER));
@@ -190,6 +193,59 @@ final class CatalogTest extends ApiTestCase
 
         self::assertSame(404, $this->httpStatus());
         self::assertSame('NOT_FOUND', $this->errorCode($answer));
+    }
+
+    /**
+     * The two category writes are the only ones the database guards with a policy on the table rather
+     * than a function of its own, so a refusal arrives as Postgres's own and has to be turned into the
+     * contract's answer. Told the wrong one, a device retries a refusal for ever.
+     */
+    public function testACashierIsRefusedACategoryRatherThanToldTheServerBroke(): void
+    {
+        $cashier = $this->tokenFor(self::CASHIER);
+
+        $refused = $this->call('POST', '/api/v1/categories', $cashier, ['name' => 'Glaces', 'color' => '#22d3ee']);
+        self::assertSame(403, $this->httpStatus());
+        self::assertSame('FORBIDDEN', $this->errorCode($refused));
+
+        $categories = $this->call('GET', '/api/v1/categories', $cashier);
+        self::assertCount(4, $categories, 'and nothing was added');
+    }
+
+    public function testACashierDeletingACategoryIsRefusedAndNotToldItIsGone(): void
+    {
+        $snacks = '44444444-4444-4444-8444-444444444403';
+
+        $refused = $this->call('DELETE', '/api/v1/categories/' . $snacks, $this->tokenFor(self::CASHIER));
+
+        self::assertSame(403, $this->httpStatus());
+        self::assertSame('FORBIDDEN', $this->errorCode($refused), 'a category they can see on the same screen is not missing');
+        self::assertContains($snacks, array_column($this->call('GET', '/api/v1/categories', $this->tokenFor(self::ADMIN)), 'id'));
+    }
+
+    public function testACategoryNeedsAColourTheColumnWillTake(): void
+    {
+        $admin = $this->tokenFor(self::ADMIN);
+
+        $wrong = $this->call('POST', '/api/v1/categories', $admin, ['name' => 'Glaces', 'color' => 'turquoise']);
+        self::assertSame(422, $this->httpStatus());
+        self::assertSame('VALIDATION_ERROR', $this->errorCode($wrong));
+        self::assertSame('color', $wrong['error']['details']['field']);
+
+        $missing = $this->call('POST', '/api/v1/categories', $admin, ['name' => 'Glaces']);
+        self::assertSame(422, $this->httpStatus(), 'the contract asks the form for a colour');
+        self::assertSame('color', $missing['error']['details']['field']);
+    }
+
+    public function testACategoryCarriesTheSameKindOfTimestampAsEverythingElse(): void
+    {
+        $admin = $this->tokenFor(self::ADMIN);
+        $created = $this->call('POST', '/api/v1/categories', $admin, ['name' => 'Glaces', 'color' => '#22d3ee']);
+
+        self::assertMatchesRegularExpression(self::AN_INSTANT, $created['created_at']);
+        foreach ($this->call('GET', '/api/v1/categories', $admin) as $category) {
+            self::assertMatchesRegularExpression(self::AN_INSTANT, $category['created_at'], "{$category['name']} is stamped in the contract's form");
+        }
     }
 
     public function testAProductWithoutAPriceIsRefusedWithTheFieldNamed(): void

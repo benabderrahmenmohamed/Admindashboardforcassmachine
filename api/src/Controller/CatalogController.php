@@ -21,6 +21,16 @@ use Symfony\Component\Routing\Attribute\Route;
  */
 final readonly class CatalogController extends ApiController
 {
+    /**
+     * The contract's Category, from a row of `c`. Built in the database like every other read here,
+     * so that `created_at` leaves as the contract's date-time: a timestamp handed straight from the
+     * driver is Postgres's own spelling, which is not the one this API answers with
+     * (App\Api\WireTimestamps).
+     */
+    private const CATEGORY = <<<'SQL'
+        json_build_object('id', c.id, 'name', c.name, 'color', c.color, 'created_at', c.created_at)
+        SQL;
+
     #[Route('/api/v1/products', methods: ['GET'])]
     public function products(): JsonResponse
     {
@@ -89,9 +99,12 @@ final readonly class CatalogController extends ApiController
     #[Route('/api/v1/categories', methods: ['GET'])]
     public function categories(): JsonResponse
     {
-        return new JsonResponse($this->cafe->rows(
-            'select id, name, color, created_at from public.categories order by created_at, id',
-        ));
+        $category = self::CATEGORY;
+
+        return $this->answer(<<<SQL
+            select coalesce(json_agg({$category} order by c.created_at, c.id), '[]'::json)
+            from public.categories c
+            SQL);
     }
 
     #[Route('/api/v1/categories', methods: ['POST'])]
@@ -99,27 +112,39 @@ final readonly class CatalogController extends ApiController
     {
         $body = Json::body($request);
         $name = trim(Json::string($body, 'name'));
-        $color = Json::text($body, 'color', '#3b82f6');
+        $color = Json::string($body, 'color');
+        // The column says the same thing, but a check constraint raises no code the contract knows,
+        // and a device told SERVER_ERROR would retry a colour that can never be accepted.
+        if (1 !== preg_match('/^#[0-9a-fA-F]{6}$/', $color)) {
+            throw ApiError::field('color', 'A colour is a hash and six hexadecimal digits.');
+        }
 
-        // The shop is the column's default and the policy's condition: a category cannot be created
-        // in a café the caller does not work in, whatever this controller sends.
-        $category = $this->cafe->row(
-            'insert into public.categories (name, color) values (?, ?) returning id, name, color, created_at',
-            [$name, $color],
+        // The shop is the column's default and the policy's condition, and that policy takes admins
+        // only: a cashier's insert matches nothing and Postgres refuses it, which leaves here as
+        // FORBIDDEN (App\Api\DatabaseErrors). This controller decides neither.
+        $category = self::CATEGORY;
+
+        return new JsonResponse(
+            $this->cafe->json(<<<SQL
+                insert into public.categories as c (name, color) values (?, ?)
+                returning {$category}
+                SQL, [$name, $color]),
+            Response::HTTP_CREATED,
         );
-
-        return new JsonResponse($category, Response::HTTP_CREATED);
     }
 
     #[Route('/api/v1/categories/{categoryId}', methods: ['DELETE'])]
     public function deleteCategory(string $categoryId): Response
     {
-        $deleted = $this->cafe->run(
-            'delete from public.categories where id = cast(? as uuid)',
-            [Json::uuid($categoryId, 'category_id')],
-        );
+        $id = Json::uuid($categoryId, 'category_id');
+        $deleted = $this->cafe->run('delete from public.categories where id = cast(? as uuid)', [$id]);
         if (0 === $deleted) {
-            throw ApiError::notFound('That category does not exist.', ['category_id' => $categoryId]);
+            // Nothing deleted is two different answers. The delete policy takes admins only and a
+            // policy that matches nothing deletes nothing quietly, so a category the caller can see
+            // but not delete would otherwise be reported as one that does not exist.
+            throw null === $this->cafe->value('select 1 from public.categories where id = cast(? as uuid)', [$id])
+                ? ApiError::notFound('That category does not exist.', ['category_id' => $categoryId])
+                : ApiError::forbidden('Only an admin can delete a category.', ['category_id' => $categoryId]);
         }
 
         return new Response(status: Response::HTTP_NO_CONTENT);

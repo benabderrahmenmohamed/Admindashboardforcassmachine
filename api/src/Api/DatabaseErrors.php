@@ -31,6 +31,16 @@ final class DatabaseErrors
     public static function raised(Throwable $error): ?ApiError
     {
         $state = self::sqlState($error);
+
+        // A policy refused the row, or a grant is missing. Most writes go through a function that
+        // raises its own FORBIDDEN, but a category added or deleted is a plain statement whose only
+        // guard is the policy on the table, and Postgres answers both cases with one state. Either
+        // way what it means is the contract's FORBIDDEN: this role cannot do that. PostgREST turned
+        // 42501 into 403 as well, so the Supabase backend and this one refuse it alike.
+        if ('42501' === $state) {
+            return ApiError::forbidden('Your role cannot do this.');
+        }
+
         if (null === $state || !preg_match('/^PT(\d{3})$/', $state, $status)) {
             return null;
         }
@@ -55,7 +65,7 @@ final class DatabaseErrors
             if ($current instanceof DriverException) {
                 return $current->getSQLState();
             }
-            if (preg_match('/SQLSTATE\[(PT\d{3})\]/', $current->getMessage(), $found)) {
+            if (preg_match('/SQLSTATE\[(\w{5})\]/', $current->getMessage(), $found)) {
                 return $found[1];
             }
         }

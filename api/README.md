@@ -47,12 +47,19 @@ php -S 127.0.0.1:8000 -t public               # the server
 | Connection | Role | For |
 | --- | --- | --- |
 | `default` (`DATABASE_URL`) | `cafe_app` | every request; row-level security applies to it |
-| `admin` (`DATABASE_ADMIN_URL`) | the owner | migrations and fixtures, nothing else |
+| `admin` (`DATABASE_ADMIN_URL`) | the owner | migrations, fixtures, and one read per request: which member it is for |
 
 A request tells the database who it is for with `set_config('app.user_id', …)`, and the policies do
 the rest: a member reads their own café and no other, and nobody writes the ledger by hand — not even
 this API, which records a sale by calling `record_sale`. `tests/Database/RowLevelSecurityTest.php`
 holds those promises down.
+
+The exception is worth naming, because it is the one place where row-level security does not apply to
+a request. A connection that has not said who it is for sees no profile at all, and at sign-in nobody
+has — so `src/Security/MemberProvider.php` reads the member over the owner's connection, by e-mail
+when they sign in and by id when a token brings them back. It reads that one row and nothing else, by
+an identity and never by anything else a request carries; everything the request then does runs as
+`cafe_app`, under the policies.
 
 ## Where the schema comes from
 
